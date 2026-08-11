@@ -4,11 +4,11 @@
 //! verified manually.
 
 use ratatui::crossterm::event::MouseEvent;
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::{Position as TermPos, Rect};
 use ratatui::prelude::{Color, Frame, Modifier, Style};
 use ratatui::widgets::Paragraph;
 
-use crate::core::{CellContent, CellState, Difficulty, Game, GameState};
+use crate::core::{CellContent, CellState, Difficulty, Game, GameState, Position};
 
 /// Clickable regions of the top bar and the board area.
 #[derive(Clone, Copy)]
@@ -148,8 +148,12 @@ fn render_board(frame: &mut Frame, ui: &UiLayout, game: &Game) {
         for col in 0..cols {
             let x = ui.board.x + (col as u16) * 2;
             let y = ui.board.y + row as u16;
-            let view = game.cell_state(row, col);
-            let (symbol, style) = cell_style(view.state, view.content, game.is_trigger(row, col));
+            let view = game.cell_state(Position::new(row, col));
+            let (symbol, style) = cell_style(
+                view.state,
+                view.content,
+                game.is_trigger(Position::new(row, col)),
+            );
             // Multi-width symbols (🚩, 💣) fill both cells; wide 2 spaces cover the rest.
             buf.set_stringn(x, y, symbol, 2, style);
             if let Some(CellContent::Number(n)) = view.content {
@@ -202,11 +206,17 @@ fn number_color(n: u8) -> Color {
     }
 }
 
-/// Maps a mouse event to a core action.
-pub fn handle_mouse(app: &mut App, mouse: MouseEvent) {
+/// Maps a mouse event to a core action. All clicks are ignored while the
+/// terminal is too small to fit the board, so the input path matches what
+/// is rendered.
+pub fn handle_mouse(app: &mut App, mouse: MouseEvent, area: Rect) {
     use ratatui::crossterm::event::{MouseButton, MouseEventKind};
 
-    let pos = Position::new(mouse.column, mouse.row);
+    if !fits(area, &app.game) {
+        return;
+    }
+
+    let pos = TermPos::new(mouse.column, mouse.row);
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             if let Some(action) = hit_test(app.ui, pos) {
@@ -217,18 +227,18 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) {
                         app.reset();
                     }
                 }
-            } else if let Some((row, col)) = board_cell(app.ui, pos) {
+            } else if let Some(pos) = board_cell(app.ui, pos) {
                 if app.right_pressed && app.game.game_state() == GameState::Playing {
-                    app.game.chord(row, col);
+                    app.game.chord(pos);
                 } else {
-                    app.game.reveal(row, col);
+                    app.game.reveal(pos);
                 }
             }
         }
         MouseEventKind::Down(MouseButton::Right) => {
             app.right_pressed = true;
-            if let Some((row, col)) = board_cell(app.ui, pos) {
-                app.game.toggle_flag(row, col);
+            if let Some(pos) = board_cell(app.ui, pos) {
+                app.game.toggle_flag(pos);
             }
         }
         MouseEventKind::Up(MouseButton::Right) => {
@@ -254,7 +264,7 @@ enum Hit {
     Difficulty(Difficulty),
 }
 
-fn hit_test(ui: UiLayout, pos: Position) -> Option<Hit> {
+fn hit_test(ui: UiLayout, pos: TermPos) -> Option<Hit> {
     if ui.new_game.contains(pos) {
         return Some(Hit::NewGame);
     }
@@ -267,13 +277,13 @@ fn hit_test(ui: UiLayout, pos: Position) -> Option<Hit> {
 }
 
 /// Maps a terminal position to a board Cell, if inside the board area.
-fn board_cell(ui: UiLayout, pos: Position) -> Option<(usize, usize)> {
+fn board_cell(ui: UiLayout, pos: TermPos) -> Option<Position> {
     if pos.x < ui.board.x || pos.y < ui.board.y {
         return None;
     }
     let col = ((pos.x - ui.board.x) / 2) as usize;
     let row = (pos.y - ui.board.y) as usize;
-    Some((row, col))
+    Some(Position::new(row, col))
 }
 
 /// Application state: the game plus UI-only state.

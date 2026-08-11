@@ -27,6 +27,10 @@ _Avoid_: Status, phase
 A Cell that ends the game if Revealed. Mines are never placed on or adjacent to the first-clicked Cell.
 _Avoid_: Bomb
 
+**Mine Counter**:
+The player-facing number of total Mines minus placed Flags. It never goes below zero — Flagging is refused once it reaches zero, so Flags can never exceed the total Mine count.
+_Avoid_: Remaining mines, mines left
+
 **Trigger Mine**:
 The Mine that was Revealed to cause `Lost`; it is highlighted in the final board reveal.
 
@@ -35,7 +39,7 @@ The act of opening a Hidden Cell, showing its content. Revealing a Mine loses th
 _Avoid_: Open, uncover, click
 
 **Flag**:
-A marker a player places on a Hidden Cell to indicate a suspected Mine. Flagged Cells cannot be Revealed. Flags do not affect the win condition — winning only requires all non-Mine Cells to be Revealed.
+A marker a player places on a Hidden Cell to indicate a suspected Mine. Flagged Cells cannot be Revealed. Flags do not affect the win condition — winning only requires all non-Mine Cells to be Revealed. The number of Flags can never exceed the total Mine count: once the Mine Counter reaches zero, placing further Flags is refused (removing a Flag is always allowed).
 _Avoid_: Mark, bookmark
 
 **Chord**:

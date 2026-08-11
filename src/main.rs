@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
 use ratatui::crossterm::execute;
+use ratatui::layout::Rect;
 
 fn main() -> std::io::Result<()> {
     let mut terminal = ratatui::init();
@@ -19,7 +20,10 @@ fn main() -> std::io::Result<()> {
         })?;
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
-                Event::Mouse(mouse) => ui::handle_mouse(&mut app, mouse),
+                Event::Mouse(mouse) => {
+                    let area: Rect = terminal.size()?.into();
+                    ui::handle_mouse(&mut app, mouse, area);
+                }
                 Event::Key(key) => {
                     if ui::handle_key(key) {
                         break;
