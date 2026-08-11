@@ -69,7 +69,7 @@ pub fn layout(game: &Game) -> UiLayout {
 /// Whether the terminal can fit the board and top bar.
 pub fn fits(area: Rect, game: &Game) -> bool {
     let (cols, rows) = game.size();
-    area.width >= (cols * 2) as u16 && area.height >= rows as u16 + 1
+    area.width >= (cols * 2) as u16 && area.height > rows as u16
 }
 
 /// Renders the whole screen.
@@ -160,7 +160,7 @@ fn render_board(frame: &mut Frame, ui: &UiLayout, game: &Game) {
                 buf.set_stringn(
                     x + 1,
                     y,
-                    &n.to_string(),
+                    n.to_string(),
                     1,
                     Style::default().fg(number_color(n)).bg(Color::White),
                 );
