@@ -55,5 +55,9 @@ An action on a Revealed numeric Cell: when the number of Flags around it equals 
 _Avoid_: Combo, sweep
 
 **First Click**:
-The first Reveal of a game. It is always safe: mines are placed only after it, never on or adjacent to the clicked Cell.
+The first Reveal of a game. It is always safe, except in Prank Mode: mines are placed only after it, never on or adjacent to the clicked Cell.
 _Avoid_: Initial click, opening move
+
+**Prank Mode**:
+A game variant in which the First Click is always a Mine, ending the game immediately in `Lost` — the game is unwinnable by design. Enabled by the `--prank` launch parameter; the UI never indicates it is active.
+_Avoid_: Trick mode, joke mode, jinx mode

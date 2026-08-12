@@ -8,7 +8,7 @@ use ratatui::layout::{Position as TermPos, Rect};
 use ratatui::prelude::{Color, Frame, Modifier, Style};
 use ratatui::widgets::Paragraph;
 
-use crate::core::{CellContent, CellState, Difficulty, Game, GameState, Position};
+use crate::core::{CellContent, CellState, Difficulty, Game, GameMode, GameState, Position};
 
 /// Clickable regions of the top bar and the board area.
 #[derive(Clone, Copy)]
@@ -216,7 +216,7 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, area: Rect) {
                 match action {
                     Hit::NewGame => app.reset(),
                     Hit::Difficulty(d) => {
-                        app.game = Game::new(d);
+                        app.game = Game::new(d, app.mode);
                         app.right_pressed = false;
                     }
                 }
@@ -285,14 +285,17 @@ fn board_cell(ui: UiLayout, pos: TermPos) -> Option<Position> {
 /// Application state: the game plus UI-only state.
 pub struct App {
     pub game: Game,
+    /// The mode every new game is created with, set once at launch.
+    pub mode: GameMode,
     pub right_pressed: bool,
     ui: UiLayout,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(mode: GameMode) -> Self {
         Self {
-            game: Game::new(Difficulty::Beginner),
+            game: Game::new(Difficulty::Beginner, mode),
+            mode,
             right_pressed: false,
             ui: UiLayout {
                 difficulty_buttons: [(Difficulty::Beginner, Rect::ZERO); 3],
@@ -309,7 +312,7 @@ impl App {
     }
 
     fn reset(&mut self) {
-        self.game = Game::new(self.game.difficulty());
+        self.game = Game::new(self.game.difficulty(), self.mode);
         self.right_pressed = false;
     }
 }
