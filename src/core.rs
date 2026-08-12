@@ -8,6 +8,19 @@ use std::time::{Duration, Instant};
 
 use rand::seq::SliceRandom;
 
+/// The Board's dimensions in Cells, in (rows, cols) order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoardSize {
+    pub rows: usize,
+    pub cols: usize,
+}
+
+impl BoardSize {
+    pub fn new(rows: usize, cols: usize) -> Self {
+        Self { rows, cols }
+    }
+}
+
 /// One of the three classic difficulty presets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Difficulty {
@@ -17,12 +30,12 @@ pub enum Difficulty {
 }
 
 impl Difficulty {
-    /// Board size as (columns, rows) in Cells.
-    pub fn size(self) -> (usize, usize) {
+    /// The classic board size for this difficulty.
+    pub fn size(self) -> BoardSize {
         match self {
-            Difficulty::Beginner => (9, 9),
-            Difficulty::Intermediate => (16, 16),
-            Difficulty::Expert => (30, 16),
+            Difficulty::Beginner => BoardSize::new(9, 9),
+            Difficulty::Intermediate => BoardSize::new(16, 16),
+            Difficulty::Expert => BoardSize::new(16, 30),
         }
     }
 
@@ -90,8 +103,7 @@ pub enum GameState {
 #[derive(Debug)]
 pub struct Game {
     difficulty: Difficulty,
-    width: usize,
-    height: usize,
+    size: BoardSize,
     state: GameState,
     /// Mine positions; `None` until the first Reveal places them.
     mines: Option<Vec<Position>>,
@@ -99,25 +111,24 @@ pub struct Game {
     flags: usize,
     trigger: Option<Position>,
     started_at: Option<Instant>,
-    ended_elapsed: Option<Duration>,
+    elapsed_at_end: Option<Duration>,
 }
 
 impl Game {
     /// Creates a game in `Ready` state. Mines are placed randomly on the
     /// first Reveal, never on or adjacent to the first-clicked Cell.
     pub fn new(difficulty: Difficulty) -> Self {
-        let (width, height) = difficulty.size();
+        let size = difficulty.size();
         Self {
             difficulty,
-            width,
-            height,
+            size,
             state: GameState::Ready,
             mines: None,
-            cells: vec![CellState::Hidden; width * height],
+            cells: vec![CellState::Hidden; size.rows * size.cols],
             flags: 0,
             trigger: None,
             started_at: None,
-            ended_elapsed: None,
+            elapsed_at_end: None,
         }
     }
 
@@ -136,9 +147,9 @@ impl Game {
         self.state
     }
 
-    /// The board size as (columns, rows).
-    pub fn size(&self) -> (usize, usize) {
-        (self.width, self.height)
+    /// The board size.
+    pub fn size(&self) -> BoardSize {
+        self.size
     }
 
     /// The difficulty this game was created with.
@@ -152,7 +163,7 @@ impl Game {
     }
 
     /// The visible state of a Cell.
-    pub fn cell_state(&self, pos: Position) -> CellView {
+    pub fn cell_view(&self, pos: Position) -> CellView {
         let idx = self.index(pos);
         let state = self.cells[idx];
         let content = match state {
@@ -166,9 +177,10 @@ impl Game {
         CellView { state, content }
     }
 
-    /// Total Mines minus Flags placed. Never below zero: Flagging is refused
-    /// once it reaches zero (Flags cannot exceed the Mine count).
-    pub fn mines_remaining(&self) -> usize {
+    /// The number of Flags the player can still place. Never below zero:
+    /// Flagging is refused once it reaches zero (Flags cannot exceed the
+    /// Mine count).
+    pub fn flags_remaining(&self) -> usize {
         self.difficulty.mine_count() - self.flags
     }
 
@@ -184,7 +196,7 @@ impl Game {
 
     /// Whether the Cell lies on the board.
     fn in_bounds(&self, pos: Position) -> bool {
-        pos.row < self.height && pos.col < self.width
+        pos.row < self.size.rows && pos.col < self.size.cols
     }
 
     /// Reveals a Cell. No-op when the game has ended, the Cell is Flagged,
@@ -213,7 +225,7 @@ impl Game {
         if self.adjacent_mines(pos) == 0 {
             let mut queue = VecDeque::from([pos]);
             while let Some(cell) = queue.pop_front() {
-                for neighbor in Self::neighbors(self.width, self.height, cell) {
+                for neighbor in Self::neighbors(self.size, cell) {
                     let nidx = self.index(neighbor);
                     if self.cells[nidx] != CellState::Hidden || self.is_mine(neighbor) {
                         continue;
@@ -230,16 +242,17 @@ impl Game {
     /// Places the Mines for a new game, excluding the first-clicked Cell and
     /// its 8 neighbors (ADR-0001). A preset list from `with_mines` is trusted
     /// as-is; random placement samples from the remaining Cells.
-    fn place_mines(&mut self, first: Position) {
+    fn place_mines(&mut self, first_click: Position) {
         let mines = match &self.mines {
             Some(preset) => preset.clone(),
             None => {
                 let mut candidates: Vec<Position> = Vec::new();
-                for row in 0..self.height {
-                    for col in 0..self.width {
+                for row in 0..self.size.rows {
+                    for col in 0..self.size.cols {
                         let cell = Position::new(row, col);
-                        let excluded = cell == first
-                            || (row.abs_diff(first.row) <= 1 && col.abs_diff(first.col) <= 1);
+                        let excluded = cell == first_click
+                            || (row.abs_diff(first_click.row) <= 1
+                                && col.abs_diff(first_click.col) <= 1);
                         if !excluded {
                             candidates.push(cell);
                         }
@@ -260,7 +273,7 @@ impl Game {
         if self.is_mine(pos) {
             self.lose(pos);
         } else {
-            self.check_win();
+            self.resolve_win();
         }
     }
 
@@ -270,15 +283,15 @@ impl Game {
         self.state = GameState::Lost;
         self.trigger = Some(pos);
         self.reveal_mines(false);
-        self.ended_elapsed = Some(self.elapsed());
+        self.elapsed_at_end = Some(self.elapsed());
     }
 
     /// Ends the game as Won when every non-Mine Cell is Revealed,
     /// auto-Revealing all Mines on the final board.
-    fn check_win(&mut self) {
+    fn resolve_win(&mut self) {
         let all_safe_revealed = self.mines.as_ref().is_some_and(|mines| {
-            (0..self.height).all(|row| {
-                (0..self.width).all(|col| {
+            (0..self.size.rows).all(|row| {
+                (0..self.size.cols).all(|col| {
                     let pos = Position::new(row, col);
                     mines.contains(&pos) || self.cells[self.index(pos)] == CellState::Revealed
                 })
@@ -287,7 +300,7 @@ impl Game {
         if all_safe_revealed {
             self.state = GameState::Won;
             self.reveal_mines(true);
-            self.ended_elapsed = Some(self.elapsed());
+            self.elapsed_at_end = Some(self.elapsed());
         }
     }
 
@@ -305,7 +318,7 @@ impl Game {
     }
 
     pub fn elapsed(&self) -> Duration {
-        match (self.started_at, self.ended_elapsed) {
+        match (self.started_at, self.elapsed_at_end) {
             (None, _) => Duration::ZERO,
             (Some(_), Some(ended)) => ended,
             (Some(started), None) => started.elapsed(),
@@ -319,20 +332,20 @@ impl Game {
     }
 
     fn adjacent_mines(&self, pos: Position) -> u8 {
-        Self::neighbors(self.width, self.height, pos)
+        Self::neighbors(self.size, pos)
             .filter(|&n| self.is_mine(n))
             .count() as u8
     }
 
-    fn neighbors(width: usize, height: usize, pos: Position) -> impl Iterator<Item = Position> {
-        let (min_r, max_r) = (pos.row.saturating_sub(1), (pos.row + 1).min(height - 1));
-        let (min_c, max_c) = (pos.col.saturating_sub(1), (pos.col + 1).min(width - 1));
+    fn neighbors(size: BoardSize, pos: Position) -> impl Iterator<Item = Position> {
+        let (min_r, max_r) = (pos.row.saturating_sub(1), (pos.row + 1).min(size.rows - 1));
+        let (min_c, max_c) = (pos.col.saturating_sub(1), (pos.col + 1).min(size.cols - 1));
         (min_r..=max_r).flat_map(move |r| (min_c..=max_c).map(move |c| Position::new(r, c)))
     }
 
     /// Toggles a Flag on a Hidden Cell. No-op otherwise: Revealed Cells and
-    /// ended games reject Flag toggling. Flagging is refused once the Mine
-    /// Counter has reached zero (Flags cannot exceed the Mine count);
+    /// ended games reject Flag toggling. Flagging is refused once the Flags
+    /// Remaining has reached zero (Flags cannot exceed the Mine count);
     /// removing a Flag is always allowed.
     pub fn toggle_flag(&mut self, pos: Position) {
         if !self.is_active(pos) {
@@ -367,14 +380,14 @@ impl Game {
         if number == 0 {
             return;
         }
-        let flagged = Self::neighbors(self.width, self.height, pos)
+        let flagged = Self::neighbors(self.size, pos)
             .filter(|&n| self.cells[self.index(n)] == CellState::Flagged)
             .count();
         if flagged != number as usize {
             return;
         }
         let mut hit_mine = None;
-        for neighbor in Self::neighbors(self.width, self.height, pos) {
+        for neighbor in Self::neighbors(self.size, pos) {
             let nidx = self.index(neighbor);
             if self.cells[nidx] == CellState::Hidden {
                 self.cells[nidx] = CellState::Revealed;
@@ -385,12 +398,12 @@ impl Game {
         }
         match hit_mine {
             Some(pos) => self.lose(pos),
-            None => self.check_win(),
+            None => self.resolve_win(),
         }
     }
 
     fn index(&self, pos: Position) -> usize {
-        pos.row * self.width + pos.col
+        pos.row * self.size.cols + pos.col
     }
 }
 
@@ -400,11 +413,11 @@ mod tests {
 
     #[test]
     fn difficulty_presets_have_classic_sizes_and_mine_counts() {
-        assert_eq!(Difficulty::Beginner.size(), (9, 9));
+        assert_eq!(Difficulty::Beginner.size(), BoardSize::new(9, 9));
         assert_eq!(Difficulty::Beginner.mine_count(), 10);
-        assert_eq!(Difficulty::Intermediate.size(), (16, 16));
+        assert_eq!(Difficulty::Intermediate.size(), BoardSize::new(16, 16));
         assert_eq!(Difficulty::Intermediate.mine_count(), 40);
-        assert_eq!(Difficulty::Expert.size(), (30, 16));
+        assert_eq!(Difficulty::Expert.size(), BoardSize::new(16, 30));
         assert_eq!(Difficulty::Expert.mine_count(), 99);
     }
 
@@ -412,25 +425,25 @@ mod tests {
     fn new_game_starts_ready_with_all_cells_hidden() {
         let game = Game::new(Difficulty::Beginner);
         assert_eq!(game.game_state(), GameState::Ready);
-        let (width, height) = Difficulty::Beginner.size();
-        for row in 0..height {
-            for col in 0..width {
+        let size = Difficulty::Beginner.size();
+        for row in 0..size.rows {
+            for col in 0..size.cols {
                 let pos = Position::new(row, col);
-                assert_eq!(game.cell_state(pos).state, CellState::Hidden);
-                assert_eq!(game.cell_state(pos).content, None);
+                assert_eq!(game.cell_view(pos).state, CellState::Hidden);
+                assert_eq!(game.cell_view(pos).content, None);
             }
         }
     }
 
     #[test]
-    fn mines_remaining_equals_total_before_any_flag() {
+    fn flags_remaining_equals_total_before_any_flag() {
         for difficulty in [
             Difficulty::Beginner,
             Difficulty::Intermediate,
             Difficulty::Expert,
         ] {
             let game = Game::new(difficulty);
-            assert_eq!(game.mines_remaining(), difficulty.mine_count());
+            assert_eq!(game.flags_remaining(), difficulty.mine_count());
         }
     }
 
@@ -460,20 +473,20 @@ mod tests {
         assert!(game.is_trigger(Position::new(0, 0)));
         // The Trigger Mine is Revealed and shown as Mine.
         assert_eq!(
-            game.cell_state(Position::new(0, 0)).state,
+            game.cell_view(Position::new(0, 0)).state,
             CellState::Revealed
         );
         assert_eq!(
-            game.cell_state(Position::new(0, 0)).content,
+            game.cell_view(Position::new(0, 0)).content,
             Some(CellContent::Mine)
         );
         // The other unflagged Mine is auto-Revealed too.
         assert_eq!(
-            game.cell_state(Position::new(5, 5)).state,
+            game.cell_view(Position::new(5, 5)).state,
             CellState::Revealed
         );
         assert_eq!(
-            game.cell_state(Position::new(5, 5)).content,
+            game.cell_view(Position::new(5, 5)).content,
             Some(CellContent::Mine)
         );
         // The Trigger Mine is the only one flagged as trigger.
@@ -486,11 +499,11 @@ mod tests {
         game.reveal(Position::new(1, 1));
         assert_eq!(game.game_state(), GameState::Playing);
         assert_eq!(
-            game.cell_state(Position::new(1, 1)).state,
+            game.cell_view(Position::new(1, 1)).state,
             CellState::Revealed
         );
         assert_eq!(
-            game.cell_state(Position::new(1, 1)).content,
+            game.cell_view(Position::new(1, 1)).content,
             Some(CellContent::Number(1))
         );
     }
@@ -501,28 +514,28 @@ mod tests {
         game.reveal(Position::new(0, 0));
         // The clicked Cell is a zero Cell.
         assert_eq!(
-            game.cell_state(Position::new(0, 0)).content,
+            game.cell_view(Position::new(0, 0)).content,
             Some(CellContent::Number(0))
         );
         // The numbered boundary of the flood fill is Revealed.
         assert_eq!(
-            game.cell_state(Position::new(3, 3)).content,
+            game.cell_view(Position::new(3, 3)).content,
             Some(CellContent::Number(1))
         );
         // A far corner in the zero region is Revealed.
         assert_eq!(
-            game.cell_state(Position::new(8, 8)).content,
+            game.cell_view(Position::new(8, 8)).content,
             Some(CellContent::Number(0))
         );
         // One lone Mine means the flood fill wins instantly: the game is Won
         // and the Mine is auto-Revealed on the final board.
         assert_eq!(game.game_state(), GameState::Won);
         assert_eq!(
-            game.cell_state(Position::new(4, 4)).state,
+            game.cell_view(Position::new(4, 4)).state,
             CellState::Revealed
         );
         assert_eq!(
-            game.cell_state(Position::new(4, 4)).content,
+            game.cell_view(Position::new(4, 4)).content,
             Some(CellContent::Mine)
         );
     }
@@ -530,9 +543,9 @@ mod tests {
     #[test]
     fn revealing_every_non_mine_cell_wins_and_reveals_mines() {
         let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
-        let (width, height) = Difficulty::Beginner.size();
-        for row in 0..height {
-            for col in 0..width {
+        let size = Difficulty::Beginner.size();
+        for row in 0..size.rows {
+            for col in 0..size.cols {
                 if Position::new(row, col) != Position::new(0, 0) {
                     game.reveal(Position::new(row, col));
                 }
@@ -541,11 +554,11 @@ mod tests {
         assert_eq!(game.game_state(), GameState::Won);
         // The Mine is auto-Revealed on the final board.
         assert_eq!(
-            game.cell_state(Position::new(0, 0)).state,
+            game.cell_view(Position::new(0, 0)).state,
             CellState::Revealed
         );
         assert_eq!(
-            game.cell_state(Position::new(0, 0)).content,
+            game.cell_view(Position::new(0, 0)).content,
             Some(CellContent::Mine)
         );
     }
@@ -558,10 +571,7 @@ mod tests {
         // Reveals after the end change nothing.
         game.reveal(Position::new(1, 1));
         assert_eq!(game.game_state(), GameState::Lost);
-        assert_eq!(
-            game.cell_state(Position::new(1, 1)).state,
-            CellState::Hidden
-        );
+        assert_eq!(game.cell_view(Position::new(1, 1)).state, CellState::Hidden);
     }
 
     #[test]
@@ -576,14 +586,11 @@ mod tests {
         let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
         game.toggle_flag(Position::new(1, 1));
         assert_eq!(
-            game.cell_state(Position::new(1, 1)).state,
+            game.cell_view(Position::new(1, 1)).state,
             CellState::Flagged
         );
         game.toggle_flag(Position::new(1, 1));
-        assert_eq!(
-            game.cell_state(Position::new(1, 1)).state,
-            CellState::Hidden
-        );
+        assert_eq!(game.cell_view(Position::new(1, 1)).state, CellState::Hidden);
     }
 
     #[test]
@@ -592,7 +599,7 @@ mod tests {
         game.reveal(Position::new(1, 1));
         game.toggle_flag(Position::new(1, 1));
         assert_eq!(
-            game.cell_state(Position::new(1, 1)).state,
+            game.cell_view(Position::new(1, 1)).state,
             CellState::Revealed
         );
     }
@@ -605,7 +612,7 @@ mod tests {
         // The Flag blocks the Reveal entirely: the game has not even started.
         assert_eq!(game.game_state(), GameState::Ready);
         assert_eq!(
-            game.cell_state(Position::new(0, 0)).state,
+            game.cell_view(Position::new(0, 0)).state,
             CellState::Flagged
         );
         // After unflagging, the first click goes through.
@@ -616,14 +623,14 @@ mod tests {
     }
 
     #[test]
-    fn mines_remaining_tracks_flags() {
+    fn flags_remaining_tracks_flags() {
         let mut game = Game::new(Difficulty::Beginner);
-        assert_eq!(game.mines_remaining(), 10);
+        assert_eq!(game.flags_remaining(), 10);
         game.toggle_flag(Position::new(1, 1));
         game.toggle_flag(Position::new(2, 2));
-        assert_eq!(game.mines_remaining(), 8);
+        assert_eq!(game.flags_remaining(), 8);
         game.toggle_flag(Position::new(1, 1));
-        assert_eq!(game.mines_remaining(), 9);
+        assert_eq!(game.flags_remaining(), 9);
     }
 
     #[test]
@@ -634,46 +641,43 @@ mod tests {
                 game.toggle_flag(Position::new(row, col));
             }
         }
-        assert_eq!(game.mines_remaining(), 0);
+        assert_eq!(game.flags_remaining(), 0);
         // The 11th Flag is refused.
         game.toggle_flag(Position::new(2, 2));
-        assert_eq!(
-            game.cell_state(Position::new(2, 2)).state,
-            CellState::Hidden
-        );
-        assert_eq!(game.mines_remaining(), 0);
+        assert_eq!(game.cell_view(Position::new(2, 2)).state, CellState::Hidden);
+        assert_eq!(game.flags_remaining(), 0);
         // Removing a Flag frees a slot again.
         game.toggle_flag(Position::new(0, 0));
-        assert_eq!(game.mines_remaining(), 1);
+        assert_eq!(game.flags_remaining(), 1);
         game.toggle_flag(Position::new(2, 2));
         assert_eq!(
-            game.cell_state(Position::new(2, 2)).state,
+            game.cell_view(Position::new(2, 2)).state,
             CellState::Flagged
         );
-        assert_eq!(game.mines_remaining(), 0);
+        assert_eq!(game.flags_remaining(), 0);
     }
 
     #[test]
-    fn chord_sweeps_unflagged_neighbors_when_flags_match() {
+    fn chord_reveals_unflagged_neighbors_when_flags_match() {
         let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
         game.reveal(Position::new(1, 1));
         assert_eq!(
-            game.cell_state(Position::new(1, 1)).content,
+            game.cell_view(Position::new(1, 1)).content,
             Some(CellContent::Number(1))
         );
         game.toggle_flag(Position::new(0, 0));
         game.chord(Position::new(1, 1));
         // The unflagged neighbors are Revealed; the Flagged Mine stays.
         assert_eq!(
-            game.cell_state(Position::new(0, 1)).state,
+            game.cell_view(Position::new(0, 1)).state,
             CellState::Revealed
         );
         assert_eq!(
-            game.cell_state(Position::new(1, 0)).state,
+            game.cell_view(Position::new(1, 0)).state,
             CellState::Revealed
         );
         assert_eq!(
-            game.cell_state(Position::new(0, 0)).state,
+            game.cell_view(Position::new(0, 0)).state,
             CellState::Flagged
         );
     }
@@ -683,14 +687,8 @@ mod tests {
         let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
         game.reveal(Position::new(1, 1));
         game.chord(Position::new(1, 1)); // zero Flags around a 1
-        assert_eq!(
-            game.cell_state(Position::new(0, 1)).state,
-            CellState::Hidden
-        );
-        assert_eq!(
-            game.cell_state(Position::new(1, 0)).state,
-            CellState::Hidden
-        );
+        assert_eq!(game.cell_view(Position::new(0, 1)).state, CellState::Hidden);
+        assert_eq!(game.cell_view(Position::new(1, 0)).state, CellState::Hidden);
         assert_eq!(game.game_state(), GameState::Playing);
     }
 
@@ -700,10 +698,7 @@ mod tests {
         game.reveal(Position::new(1, 1));
         // Hidden Cell: nothing happens.
         game.chord(Position::new(2, 2));
-        assert_eq!(
-            game.cell_state(Position::new(2, 2)).state,
-            CellState::Hidden
-        );
+        assert_eq!(game.cell_view(Position::new(2, 2)).state, CellState::Hidden);
         // Zero Cell: nothing happens either.
         game.reveal(Position::new(1, 1)); // already revealed; reveal a zero region first
         assert_eq!(game.game_state(), GameState::Playing);
@@ -720,7 +715,7 @@ mod tests {
         );
         game.reveal(Position::new(1, 1));
         assert_eq!(
-            game.cell_state(Position::new(1, 1)).content,
+            game.cell_view(Position::new(1, 1)).content,
             Some(CellContent::Number(2))
         );
         game.toggle_flag(Position::new(0, 0));
@@ -729,7 +724,7 @@ mod tests {
         assert_eq!(game.game_state(), GameState::Lost);
         assert!(game.is_trigger(Position::new(0, 2)));
         assert_eq!(
-            game.cell_state(Position::new(0, 2)).content,
+            game.cell_view(Position::new(0, 2)).content,
             Some(CellContent::Mine)
         );
     }
@@ -741,14 +736,8 @@ mod tests {
         assert_eq!(game.game_state(), GameState::Lost);
         game.toggle_flag(Position::new(1, 1));
         game.chord(Position::new(2, 2));
-        assert_eq!(
-            game.cell_state(Position::new(1, 1)).state,
-            CellState::Hidden
-        );
-        assert_eq!(
-            game.cell_state(Position::new(2, 2)).state,
-            CellState::Hidden
-        );
+        assert_eq!(game.cell_view(Position::new(1, 1)).state, CellState::Hidden);
+        assert_eq!(game.cell_view(Position::new(2, 2)).state, CellState::Hidden);
     }
 
     #[test]

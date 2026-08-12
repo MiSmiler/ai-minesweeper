@@ -14,7 +14,7 @@ use crate::core::{CellContent, CellState, Difficulty, Game, GameState, Position}
 #[derive(Clone, Copy)]
 pub struct UiLayout {
     pub difficulty_buttons: [(Difficulty, Rect); 3],
-    pub mine_counter: Rect,
+    pub flag_counter: Rect,
     pub timer: Rect,
     pub new_game: Rect,
     pub board: Rect,
@@ -33,10 +33,10 @@ fn label(difficulty: Difficulty) -> &'static str {
 /// Computes the layout of the whole screen. Pure function of the terminal
 /// area and the game, so both rendering and event hit-testing use it.
 pub fn layout(game: &Game) -> UiLayout {
-    let (cols, rows) = game.size();
-    let board = Rect::new(0, 1, (cols * 2) as u16, rows as u16);
+    let size = game.size();
+    let board = Rect::new(0, 1, (size.cols * 2) as u16, size.rows as u16);
 
-    // Top bar elements, left to right: difficulty buttons, mine counter, timer, New Game.
+    // Top bar elements, left to right: difficulty buttons, flag counter, timer, New Game.
     let mut x: u16 = 0;
     let mut difficulty_buttons = [(Difficulty::Beginner, Rect::ZERO); 3];
     for (i, difficulty) in [
@@ -51,15 +51,15 @@ pub fn layout(game: &Game) -> UiLayout {
         difficulty_buttons[i] = (difficulty, Rect::new(x, 0, width, 1));
         x += width;
     }
-    let mine_counter = Rect::new(x, 0, 9, 1);
-    x += mine_counter.width;
+    let flag_counter = Rect::new(x, 0, 9, 1);
+    x += flag_counter.width;
     let timer = Rect::new(x, 0, 6, 1);
     x += timer.width;
     let new_game = Rect::new(x, 0, NEW_GAME.len() as u16, 1);
 
     UiLayout {
         difficulty_buttons,
-        mine_counter,
+        flag_counter,
         timer,
         new_game,
         board,
@@ -68,8 +68,8 @@ pub fn layout(game: &Game) -> UiLayout {
 
 /// Whether the terminal can fit the board and top bar.
 pub fn fits(area: Rect, game: &Game) -> bool {
-    let (cols, rows) = game.size();
-    area.width >= (cols * 2) as u16 && area.height > rows as u16
+    let size = game.size();
+    area.width >= (size.cols * 2) as u16 && area.height > size.rows as u16
 }
 
 /// Renders the whole screen.
@@ -105,9 +105,9 @@ fn render_top_bar(frame: &mut Frame, ui: &UiLayout, game: &Game) {
     }
 
     frame.render_widget(
-        Paragraph::new(format!("Mines:{:>3}", game.mines_remaining()))
+        Paragraph::new(format!("Flags:{:>3}", game.flags_remaining()))
             .style(Style::default().fg(Color::Yellow)),
-        ui.mine_counter,
+        ui.flag_counter,
     );
 
     let secs = game.elapsed().as_secs();
@@ -123,32 +123,25 @@ fn render_top_bar(frame: &mut Frame, ui: &UiLayout, game: &Game) {
     );
 
     // Result banner on the right side of the top bar, if the game has ended.
-    let status = match game.game_state() {
-        GameState::Won => "WON",
-        GameState::Lost => "LOST",
-        _ => "",
+    let (text, color) = match game.game_state() {
+        GameState::Won => ("WON", Color::Green),
+        GameState::Lost => ("LOST", Color::Red),
+        _ => return,
     };
-    if !status.is_empty() {
-        let color = if game.game_state() == GameState::Won {
-            Color::Green
-        } else {
-            Color::Red
-        };
-        frame.render_widget(
-            Paragraph::new(status).style(Style::default().fg(color).add_modifier(Modifier::BOLD)),
-            Rect::new(ui.new_game.right() + 2, 0, status.len() as u16, 1),
-        );
-    }
+    frame.render_widget(
+        Paragraph::new(text).style(Style::default().fg(color).add_modifier(Modifier::BOLD)),
+        Rect::new(ui.new_game.right() + 2, 0, text.len() as u16, 1),
+    );
 }
 
 fn render_board(frame: &mut Frame, ui: &UiLayout, game: &Game) {
     let buf = frame.buffer_mut();
-    let (cols, rows) = game.size();
-    for row in 0..rows {
-        for col in 0..cols {
+    let size = game.size();
+    for row in 0..size.rows {
+        for col in 0..size.cols {
             let x = ui.board.x + (col as u16) * 2;
             let y = ui.board.y + row as u16;
-            let view = game.cell_state(Position::new(row, col));
+            let view = game.cell_view(Position::new(row, col));
             let (symbol, style) = cell_style(
                 view.state,
                 view.content,
@@ -216,18 +209,18 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, area: Rect) {
         return;
     }
 
-    let pos = TermPos::new(mouse.column, mouse.row);
+    let mouse_pos = TermPos::new(mouse.column, mouse.row);
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            if let Some(action) = hit_test(app.ui, pos) {
+            if let Some(action) = hit_test(app.ui, mouse_pos) {
                 match action {
                     Hit::NewGame => app.reset(),
                     Hit::Difficulty(d) => {
-                        app.difficulty = d;
-                        app.reset();
+                        app.game = Game::new(d);
+                        app.right_pressed = false;
                     }
                 }
-            } else if let Some(pos) = board_cell(app.ui, pos) {
+            } else if let Some(pos) = board_cell(app.ui, mouse_pos) {
                 if app.right_pressed && app.game.game_state() == GameState::Playing {
                     app.game.chord(pos);
                 } else {
@@ -237,7 +230,7 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, area: Rect) {
         }
         MouseEventKind::Down(MouseButton::Right) => {
             app.right_pressed = true;
-            if let Some(pos) = board_cell(app.ui, pos) {
+            if let Some(pos) = board_cell(app.ui, mouse_pos) {
                 app.game.toggle_flag(pos);
             }
         }
@@ -248,9 +241,9 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, area: Rect) {
     }
 }
 
-/// Handles keyboard events: only app-lifecycle keys (q / Ctrl+C) — the game
-/// itself is mouse-only by design.
-pub fn handle_key(key: ratatui::crossterm::event::KeyEvent) -> bool {
+/// Whether the key asks the app to quit: only app-lifecycle keys (q / Ctrl+C)
+/// — the game itself is mouse-only by design.
+pub fn should_quit(key: ratatui::crossterm::event::KeyEvent) -> bool {
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     match key.code {
         KeyCode::Char('q') => true,
@@ -283,27 +276,27 @@ fn board_cell(ui: UiLayout, pos: TermPos) -> Option<Position> {
     }
     let col = ((pos.x - ui.board.x) / 2) as usize;
     let row = (pos.y - ui.board.y) as usize;
+    if col >= (ui.board.width / 2) as usize || row >= ui.board.height as usize {
+        return None;
+    }
     Some(Position::new(row, col))
 }
 
 /// Application state: the game plus UI-only state.
 pub struct App {
     pub game: Game,
-    pub difficulty: Difficulty,
     pub right_pressed: bool,
     ui: UiLayout,
 }
 
 impl App {
     pub fn new() -> Self {
-        let difficulty = Difficulty::Beginner;
         Self {
-            game: Game::new(difficulty),
-            difficulty,
+            game: Game::new(Difficulty::Beginner),
             right_pressed: false,
             ui: UiLayout {
                 difficulty_buttons: [(Difficulty::Beginner, Rect::ZERO); 3],
-                mine_counter: Rect::ZERO,
+                flag_counter: Rect::ZERO,
                 timer: Rect::ZERO,
                 new_game: Rect::ZERO,
                 board: Rect::ZERO,
@@ -316,7 +309,7 @@ impl App {
     }
 
     fn reset(&mut self) {
-        self.game = Game::new(self.difficulty);
+        self.game = Game::new(self.game.difficulty());
         self.right_pressed = false;
     }
 }

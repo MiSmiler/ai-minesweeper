@@ -25,7 +25,7 @@ fn main() -> std::io::Result<()> {
                     ui::handle_mouse(&mut app, mouse, area);
                 }
                 Event::Key(key) => {
-                    if ui::handle_key(key) {
+                    if ui::should_quit(key) {
                         break;
                     }
                 }
