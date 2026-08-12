@@ -86,6 +86,15 @@ pub struct CellView {
     pub content: Option<CellContent>,
 }
 
+/// The game variant being played.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameMode {
+    /// Standard rules: the First Click is never a Mine (ADR-0001).
+    Classic,
+    /// Prank: the First Click is always a Mine, losing the game instantly.
+    Prank,
+}
+
 /// The state of a game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameState {
@@ -103,6 +112,7 @@ pub enum GameState {
 #[derive(Debug)]
 pub struct Game {
     difficulty: Difficulty,
+    mode: GameMode,
     size: BoardSize,
     state: GameState,
     /// Mine positions; `None` until the first Reveal places them.
@@ -116,11 +126,13 @@ pub struct Game {
 
 impl Game {
     /// Creates a game in `Ready` state. Mines are placed randomly on the
-    /// first Reveal, never on or adjacent to the first-clicked Cell.
-    pub fn new(difficulty: Difficulty) -> Self {
+    /// first Reveal, never on or adjacent to the first-clicked Cell
+    /// (Classic), or always including it (Prank, ADR-0002).
+    pub fn new(difficulty: Difficulty, mode: GameMode) -> Self {
         let size = difficulty.size();
         Self {
             difficulty,
+            mode,
             size,
             state: GameState::Ready,
             mines: None,
@@ -132,12 +144,13 @@ impl Game {
         }
     }
 
-    /// Creates a game with a preset Mine list (test use). The caller is
-    /// responsible for first-click safety: Mines on or adjacent to the
-    /// first-clicked Cell are NOT filtered.
+    /// Creates a game with a preset Mine list (test use). In Classic mode
+    /// the caller is responsible for first-click safety: Mines on or
+    /// adjacent to the first-clicked Cell are NOT filtered. In Prank mode
+    /// the first-clicked Cell is always forced into the Mine list.
     #[cfg(test)]
-    pub fn with_mines(difficulty: Difficulty, mines: &[Position]) -> Self {
-        let mut game = Self::new(difficulty);
+    pub fn with_mines(difficulty: Difficulty, mode: GameMode, mines: &[Position]) -> Self {
+        let mut game = Self::new(difficulty, mode);
         game.mines = Some(mines.to_vec());
         game
     }
@@ -239,11 +252,13 @@ impl Game {
         }
     }
 
-    /// Places the Mines for a new game, excluding the first-clicked Cell and
-    /// its 8 neighbors (ADR-0001). A preset list from `with_mines` is trusted
-    /// as-is; random placement samples from the remaining Cells.
+    /// Places the Mines for a new game. Classic (ADR-0001): Mines are
+    /// sampled from the Cells excluding the first-clicked Cell and its 8
+    /// neighbors. Prank (ADR-0002): the first-clicked Cell is forced into
+    /// the Mine list — for presets by union, for random placement by
+    /// sampling one fewer Mine and adding the Cell back.
     fn place_mines(&mut self, first_click: Position) {
-        let mines = match &self.mines {
+        let mut mines = match &self.mines {
             Some(preset) => preset.clone(),
             None => {
                 let mut candidates: Vec<Position> = Vec::new();
@@ -251,7 +266,8 @@ impl Game {
                     for col in 0..self.size.cols {
                         let cell = Position::new(row, col);
                         let excluded = cell == first_click
-                            || (row.abs_diff(first_click.row) <= 1
+                            || (self.mode == GameMode::Classic
+                                && row.abs_diff(first_click.row) <= 1
                                 && col.abs_diff(first_click.col) <= 1);
                         if !excluded {
                             candidates.push(cell);
@@ -260,10 +276,18 @@ impl Game {
                 }
                 let mut rng = rand::rng();
                 candidates.shuffle(&mut rng);
-                candidates.truncate(self.difficulty.mine_count());
+                let take = if self.mode == GameMode::Prank {
+                    self.difficulty.mine_count() - 1
+                } else {
+                    self.difficulty.mine_count()
+                };
+                candidates.truncate(take);
                 candidates
             }
         };
+        if self.mode == GameMode::Prank && !mines.contains(&first_click) {
+            mines.push(first_click);
+        }
         self.mines = Some(mines);
     }
 
@@ -423,7 +447,7 @@ mod tests {
 
     #[test]
     fn new_game_starts_ready_with_all_cells_hidden() {
-        let game = Game::new(Difficulty::Beginner);
+        let game = Game::new(Difficulty::Beginner, GameMode::Classic);
         assert_eq!(game.game_state(), GameState::Ready);
         let size = Difficulty::Beginner.size();
         for row in 0..size.rows {
@@ -442,7 +466,7 @@ mod tests {
             Difficulty::Intermediate,
             Difficulty::Expert,
         ] {
-            let game = Game::new(difficulty);
+            let game = Game::new(difficulty, GameMode::Classic);
             assert_eq!(game.flags_remaining(), difficulty.mine_count());
         }
     }
@@ -452,7 +476,7 @@ mod tests {
         // Property test: for many random games, the first click and its 8
         // neighbors are never Mines (ADR-0001).
         for _ in 0..20 {
-            let mut game = Game::new(Difficulty::Beginner);
+            let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
             game.reveal(Position::new(0, 0));
             assert_eq!(game.game_state(), GameState::Playing);
             for (row, col) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
@@ -466,6 +490,7 @@ mod tests {
     fn reveal_mine_loses_and_auto_reveals_board() {
         let mut game = Game::with_mines(
             Difficulty::Beginner,
+            GameMode::Classic,
             &[Position::new(0, 0), Position::new(5, 5)],
         );
         game.reveal(Position::new(0, 0));
@@ -495,7 +520,11 @@ mod tests {
 
     #[test]
     fn reveal_shows_neighbor_count() {
-        let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(2, 2)]);
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(2, 2)],
+        );
         game.reveal(Position::new(1, 1));
         assert_eq!(game.game_state(), GameState::Playing);
         assert_eq!(
@@ -510,7 +539,11 @@ mod tests {
 
     #[test]
     fn zero_cell_flood_fills_until_numbered_boundary() {
-        let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(4, 4)]);
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(4, 4)],
+        );
         game.reveal(Position::new(0, 0));
         // The clicked Cell is a zero Cell.
         assert_eq!(
@@ -542,7 +575,11 @@ mod tests {
 
     #[test]
     fn revealing_every_non_mine_cell_wins_and_reveals_mines() {
-        let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0)],
+        );
         let size = Difficulty::Beginner.size();
         for row in 0..size.rows {
             for col in 0..size.cols {
@@ -565,7 +602,11 @@ mod tests {
 
     #[test]
     fn ended_game_rejects_reveals() {
-        let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0)],
+        );
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Lost);
         // Reveals after the end change nothing.
@@ -576,14 +617,18 @@ mod tests {
 
     #[test]
     fn reveal_out_of_bounds_is_noop() {
-        let mut game = Game::new(Difficulty::Beginner);
+        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
         game.reveal(Position::new(99, 99));
         assert_eq!(game.game_state(), GameState::Ready);
     }
 
     #[test]
     fn flag_toggles_hidden_to_flagged_and_back() {
-        let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0)],
+        );
         game.toggle_flag(Position::new(1, 1));
         assert_eq!(
             game.cell_view(Position::new(1, 1)).state,
@@ -595,7 +640,11 @@ mod tests {
 
     #[test]
     fn flag_on_revealed_cell_is_noop() {
-        let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0)],
+        );
         game.reveal(Position::new(1, 1));
         game.toggle_flag(Position::new(1, 1));
         assert_eq!(
@@ -606,7 +655,11 @@ mod tests {
 
     #[test]
     fn flagged_cell_blocks_reveal() {
-        let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0)],
+        );
         game.toggle_flag(Position::new(0, 0));
         game.reveal(Position::new(0, 0));
         // The Flag blocks the Reveal entirely: the game has not even started.
@@ -624,7 +677,7 @@ mod tests {
 
     #[test]
     fn flags_remaining_tracks_flags() {
-        let mut game = Game::new(Difficulty::Beginner);
+        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
         assert_eq!(game.flags_remaining(), 10);
         game.toggle_flag(Position::new(1, 1));
         game.toggle_flag(Position::new(2, 2));
@@ -635,7 +688,7 @@ mod tests {
 
     #[test]
     fn flagging_is_refused_when_all_flags_are_used() {
-        let mut game = Game::new(Difficulty::Beginner); // 10 mines
+        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic); // 10 mines
         for row in 0..2 {
             for col in 0..5 {
                 game.toggle_flag(Position::new(row, col));
@@ -659,7 +712,11 @@ mod tests {
 
     #[test]
     fn chord_reveals_unflagged_neighbors_when_flags_match() {
-        let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0)],
+        );
         game.reveal(Position::new(1, 1));
         assert_eq!(
             game.cell_view(Position::new(1, 1)).content,
@@ -684,7 +741,11 @@ mod tests {
 
     #[test]
     fn chord_is_noop_when_flag_count_mismatches() {
-        let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0)],
+        );
         game.reveal(Position::new(1, 1));
         game.chord(Position::new(1, 1)); // zero Flags around a 1
         assert_eq!(game.cell_view(Position::new(0, 1)).state, CellState::Hidden);
@@ -694,7 +755,11 @@ mod tests {
 
     #[test]
     fn chord_is_noop_on_hidden_and_zero_cells() {
-        let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0)],
+        );
         game.reveal(Position::new(1, 1));
         // Hidden Cell: nothing happens.
         game.chord(Position::new(2, 2));
@@ -711,6 +776,7 @@ mod tests {
         // so the chord Reveals the Mine at (0,2) and loses.
         let mut game = Game::with_mines(
             Difficulty::Beginner,
+            GameMode::Classic,
             &[Position::new(0, 0), Position::new(0, 2)],
         );
         game.reveal(Position::new(1, 1));
@@ -731,7 +797,11 @@ mod tests {
 
     #[test]
     fn flag_and_chord_after_end_are_noop() {
-        let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0)],
+        );
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Lost);
         game.toggle_flag(Position::new(1, 1));
@@ -742,14 +812,18 @@ mod tests {
 
     #[test]
     fn elapsed_is_zero_while_ready() {
-        let game = Game::new(Difficulty::Beginner);
+        let game = Game::new(Difficulty::Beginner, GameMode::Classic);
         assert_eq!(game.elapsed(), Duration::ZERO);
     }
 
     #[test]
     fn elapsed_runs_after_first_reveal() {
         // Reveal a numeric Cell so the game stays Playing (no flood fill, no win).
-        let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0)],
+        );
         game.reveal(Position::new(1, 1));
         assert_eq!(game.game_state(), GameState::Playing);
         std::thread::sleep(Duration::from_millis(20));
@@ -758,10 +832,62 @@ mod tests {
 
     #[test]
     fn elapsed_freezes_at_game_end() {
-        let mut game = Game::with_mines(Difficulty::Beginner, &[Position::new(0, 0)]);
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0)],
+        );
         game.reveal(Position::new(0, 0)); // instant Lost
         let frozen = game.elapsed();
         std::thread::sleep(Duration::from_millis(30));
         assert_eq!(game.elapsed(), frozen);
+    }
+
+    #[test]
+    fn prank_mode_first_reveal_is_always_a_mine() {
+        // Property test: for many random Prank games, the first click always
+        // reveals a Mine and loses instantly (ADR-0002).
+        for _ in 0..20 {
+            let mut game = Game::new(Difficulty::Beginner, GameMode::Prank);
+            game.reveal(Position::new(0, 0));
+            assert_eq!(game.game_state(), GameState::Lost);
+            assert!(game.is_trigger(Position::new(0, 0)));
+            assert_eq!(
+                game.cell_view(Position::new(0, 0)).content,
+                Some(CellContent::Mine)
+            );
+        }
+    }
+
+    #[test]
+    fn prank_mode_forces_first_click_into_the_mine_list() {
+        // Preset without the first-clicked Cell: the Cell is unioned in.
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Prank,
+            &[Position::new(5, 5)],
+        );
+        game.reveal(Position::new(0, 0));
+        assert_eq!(game.game_state(), GameState::Lost);
+        assert!(game.is_trigger(Position::new(0, 0)));
+        assert_eq!(
+            game.cell_view(Position::new(0, 0)).content,
+            Some(CellContent::Mine)
+        );
+        // The preset Mine is still a Mine on the final board.
+        assert_eq!(
+            game.cell_view(Position::new(5, 5)).content,
+            Some(CellContent::Mine)
+        );
+
+        // Preset already containing the first-clicked Cell: no change.
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Prank,
+            &[Position::new(0, 0)],
+        );
+        game.reveal(Position::new(0, 0));
+        assert_eq!(game.game_state(), GameState::Lost);
+        assert!(game.is_trigger(Position::new(0, 0)));
     }
 }
