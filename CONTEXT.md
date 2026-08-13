@@ -13,8 +13,12 @@ A rectangular grid of Cells, sized by the active Difficulty.
 _Avoid_: Grid, field, minefield
 
 **Cell**:
-A single square of the Board. A Cell either contains a Mine or a neighbor count (the number of Mines in its 8 surrounding Cells).
+A single square of the Board, identified by its Position. A Cell either contains a Mine or a neighbor count (the number of Mines in its 8 surrounding Cells).
 _Avoid_: Tile, square, block
+
+**Position**:
+The coordinates of a Cell on the Board, in (row, col) order; the way a Cell is addressed.
+_Avoid_: cell (as a name for coordinates), coords, point
 
 **Difficulty**:
 One of three classic presets: Beginner (9×9, 10 mines), Intermediate (16×16, 40 mines), Expert (30×16, 99 mines).

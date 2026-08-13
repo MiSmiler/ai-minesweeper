@@ -117,7 +117,8 @@ pub struct Game {
     state: GameState,
     /// Mine positions; `None` until the first Reveal places them.
     mines: Option<Vec<Position>>,
-    cells: Vec<CellState>,
+    /// CellState per Cell, indexed by Position (row-major).
+    cell_states: Vec<CellState>,
     flags: usize,
     /// The Flag Budget: the number of Flags the player may place this game,
     /// set at creation from the Difficulty's Mine count (the "recipe");
@@ -141,7 +142,7 @@ impl Game {
             size,
             state: GameState::Ready,
             mines: None,
-            cells: vec![CellState::Hidden; size.rows * size.cols],
+            cell_states: vec![CellState::Hidden; size.rows * size.cols],
             flags: 0,
             flag_budget: difficulty.mine_count(),
             trigger: None,
@@ -185,7 +186,7 @@ impl Game {
 
     /// The visible state of a Cell.
     pub fn cell_view(&self, pos: Position) -> CellView {
-        let state = self.cell(pos);
+        let state = self.cell_state(pos);
         let content = match state {
             CellState::Revealed => Some(if self.is_mine(pos) {
                 CellContent::Mine
@@ -227,7 +228,7 @@ impl Game {
         if !self.can_operate(pos) {
             return;
         }
-        if self.cell(pos) != CellState::Hidden {
+        if self.cell_state(pos) != CellState::Hidden {
             return;
         }
         if self.state == GameState::Ready {
@@ -240,19 +241,19 @@ impl Game {
     }
 
     fn reveal_at(&mut self, pos: Position) {
-        self.set_cell(pos, CellState::Revealed);
+        self.set_cell_state(pos, CellState::Revealed);
         // A Mine never flood-fills: the game ends on it in `resolve_end`.
         if self.is_mine(pos) {
             return;
         }
         if self.adjacent_mines(pos) == 0 {
             let mut queue = VecDeque::from([pos]);
-            while let Some(cell) = queue.pop_front() {
-                for neighbor in Self::neighbors(self.size, cell) {
-                    if self.cell(neighbor) != CellState::Hidden || self.is_mine(neighbor) {
+            while let Some(pos) = queue.pop_front() {
+                for neighbor in Self::neighbors(self.size, pos) {
+                    if self.cell_state(neighbor) != CellState::Hidden || self.is_mine(neighbor) {
                         continue;
                     }
-                    self.set_cell(neighbor, CellState::Revealed);
+                    self.set_cell_state(neighbor, CellState::Revealed);
                     if self.adjacent_mines(neighbor) == 0 {
                         queue.push_back(neighbor);
                     }
@@ -273,16 +274,16 @@ impl Game {
                 let mut candidates: Vec<Position> = Vec::new();
                 for row in 0..self.size.rows {
                     for col in 0..self.size.cols {
-                        let cell = Position::new(row, col);
-                        if cell == first_click {
+                        let pos = Position::new(row, col);
+                        if pos == first_click {
                             continue;
                         }
                         if self.mode == GameMode::Classic
-                            && Self::neighbors(self.size, first_click).any(|n| n == cell)
+                            && Self::neighbors(self.size, first_click).any(|n| n == pos)
                         {
                             continue;
                         }
-                        candidates.push(cell);
+                        candidates.push(pos);
                     }
                 }
                 let mut rng = rand::rng();
@@ -314,11 +315,11 @@ impl Game {
         // is Revealed — the game is Won.
         for row in 0..self.size.rows {
             for col in 0..self.size.cols {
-                let cell = Position::new(row, col);
-                if mines.contains(&cell) {
+                let pos = Position::new(row, col);
+                if mines.contains(&pos) {
                     continue;
                 }
-                if self.cell(cell) != CellState::Revealed {
+                if self.cell_state(pos) != CellState::Revealed {
                     return;
                 }
             }
@@ -349,8 +350,8 @@ impl Game {
             return;
         };
         for pos in mines {
-            if include_flagged || self.cell(pos) != CellState::Flagged {
-                self.set_cell(pos, CellState::Revealed);
+            if include_flagged || self.cell_state(pos) != CellState::Flagged {
+                self.set_cell_state(pos, CellState::Revealed);
             }
         }
     }
@@ -393,13 +394,13 @@ impl Game {
         if !self.can_operate(pos) {
             return;
         }
-        match self.cell(pos) {
+        match self.cell_state(pos) {
             CellState::Hidden if self.flags_remaining() > 0 => {
-                self.set_cell(pos, CellState::Flagged);
+                self.set_cell_state(pos, CellState::Flagged);
                 self.flags += 1;
             }
             CellState::Flagged => {
-                self.set_cell(pos, CellState::Hidden);
+                self.set_cell_state(pos, CellState::Hidden);
                 self.flags -= 1;
             }
             CellState::Revealed | CellState::Hidden => {}
@@ -414,7 +415,7 @@ impl Game {
         if !self.can_operate(pos) {
             return;
         }
-        if self.cell(pos) != CellState::Revealed {
+        if self.cell_state(pos) != CellState::Revealed {
             return;
         }
         let number = self.adjacent_mines(pos);
@@ -422,15 +423,15 @@ impl Game {
             return;
         }
         let flagged = Self::neighbors(self.size, pos)
-            .filter(|&n| self.cell(n) == CellState::Flagged)
+            .filter(|&n| self.cell_state(n) == CellState::Flagged)
             .count();
         if flagged != number as usize {
             return;
         }
         let mut hit_mine = None;
         for neighbor in Self::neighbors(self.size, pos) {
-            if self.cell(neighbor) == CellState::Hidden {
-                self.set_cell(neighbor, CellState::Revealed);
+            if self.cell_state(neighbor) == CellState::Hidden {
+                self.set_cell_state(neighbor, CellState::Revealed);
                 if self.is_mine(neighbor) && hit_mine.is_none() {
                     hit_mine = Some(neighbor);
                 }
@@ -442,17 +443,17 @@ impl Game {
         }
     }
 
-    /// The Cell state at `pos`. The caller must ensure `pos` is in bounds.
-    fn cell(&self, pos: Position) -> CellState {
+    /// The CellState of the Cell at `pos`. The caller must ensure `pos` is in bounds.
+    fn cell_state(&self, pos: Position) -> CellState {
         debug_assert!(self.in_bounds(pos));
-        self.cells[self.index(pos)]
+        self.cell_states[self.index(pos)]
     }
 
-    /// Sets the Cell state at `pos`. The caller must ensure `pos` is in bounds.
-    fn set_cell(&mut self, pos: Position, state: CellState) {
+    /// Sets the CellState of the Cell at `pos`. The caller must ensure `pos` is in bounds.
+    fn set_cell_state(&mut self, pos: Position, state: CellState) {
         debug_assert!(self.in_bounds(pos));
         let idx = self.index(pos);
-        self.cells[idx] = state;
+        self.cell_states[idx] = state;
     }
 
     fn index(&self, pos: Position) -> usize {
