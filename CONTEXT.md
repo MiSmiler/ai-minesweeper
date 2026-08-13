@@ -31,8 +31,12 @@ _Avoid_: Status, phase
 A Cell that ends the game if Revealed. Mines are never placed on or adjacent to the first-clicked Cell.
 _Avoid_: Bomb
 
+**Flag Budget**:
+The number of Flags the player may place in a game, set at game start from the Difficulty's Mine count; it does not change during the game.
+_Avoid_: Mine budget, flag quota
+
 **Flags Remaining**:
-The number of Flags the player can still place: total Mines minus placed Flags.
+The number of Flags the player can still place: the Flag Budget minus placed Flags.
 _Avoid_: Mine counter, mines remaining, mines left
 
 **Trigger Mine**:

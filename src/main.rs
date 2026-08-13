@@ -11,6 +11,19 @@ use ratatui::layout::Rect;
 
 use crate::core::GameMode;
 
+/// Restores the terminal to its original state when dropped: disables mouse
+/// capture and leaves raw mode / the alternate screen. Covers normal exit,
+/// early `?` returns, and panics alike — ratatui's panic hook restores raw
+/// mode / alt screen first, and the duplicate restore is harmless.
+struct TermGuard;
+
+impl Drop for TermGuard {
+    fn drop(&mut self) {
+        let _ = execute!(stdout(), DisableMouseCapture);
+        ratatui::restore();
+    }
+}
+
 /// Command-line options for the game.
 #[derive(Parser)]
 #[command(
@@ -31,6 +44,7 @@ fn main() -> std::io::Result<()> {
     };
 
     let mut terminal = ratatui::init();
+    let _guard = TermGuard;
     execute!(stdout(), EnableMouseCapture)?;
 
     let mut app = ui::App::new(mode);
@@ -55,7 +69,5 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    execute!(stdout(), DisableMouseCapture)?;
-    ratatui::restore();
     Ok(())
 }
