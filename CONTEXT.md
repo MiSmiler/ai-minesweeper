@@ -36,12 +36,16 @@ A Cell that ends the game if Revealed. Mines are never placed on or adjacent to 
 _Avoid_: Bomb
 
 **Flag Budget**:
-The number of Flags the player may place in a game, set at game start from the Difficulty's Mine count; it does not change during the game.
+The zero reference of the Flag counter, equal to the Difficulty's Mine count; fixed at game start and never changes during the game. It is not a cap: the player may place more Flags than the Flag Budget (Over-flagging).
 _Avoid_: Mine budget, flag quota
 
 **Flags Remaining**:
-The number of Flags the player can still place: the Flag Budget minus placed Flags.
+The Flag Budget minus the number of placed Flags. It goes negative when the player has over-flagged and rises back toward zero as Flags are removed.
 _Avoid_: Mine counter, mines remaining, mines left
+
+**Over-flagging**:
+Placing more Flags than the Flag Budget, driving Flags Remaining negative; a deliberate technique for temporary marking while reasoning about the Board.
+_Avoid_: Overdraft, overflagging
 
 **Trigger Mine**:
 The Mine that was Revealed to cause `Lost`; it is highlighted in the final board reveal.
@@ -51,7 +55,7 @@ The act of opening a Hidden Cell, showing its content. Revealing a Mine loses th
 _Avoid_: Open, uncover, click *(as a synonym for Reveal — the player's input gesture is still called a click; see First Click)*
 
 **Flag**:
-A marker a player places on a Hidden Cell to indicate a suspected Mine. Flagged Cells cannot be Revealed. Flags do not affect the win condition — winning only requires all non-Mine Cells to be Revealed. The number of Flags can never exceed the total Mine count: once the Flags Remaining reaches zero, placing further Flags is refused (removing a Flag is always allowed).
+A marker a player places on a Hidden Cell to indicate a suspected Mine. Flagged Cells cannot be Revealed. Flags do not affect the win condition — winning only requires all non-Mine Cells to be Revealed. Any Hidden Cell may be Flagged regardless of how many Flags are already placed (Over-flagging); removing a Flag is always allowed.
 _Avoid_: Mark, bookmark
 
 **Timer**:

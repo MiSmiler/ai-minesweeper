@@ -53,7 +53,7 @@ impl UiLayout {
             difficulty_buttons[i] = (difficulty, Rect::new(x, 0, width, 1));
             x += width;
         }
-        let flag_counter = Rect::new(x, 0, 9, 1);
+        let flag_counter = Rect::new(x, 0, 10, 1);
         x += flag_counter.width;
         let timer = Rect::new(x, 0, 6, 1);
         x += timer.width;
@@ -107,7 +107,7 @@ fn render_top_bar(frame: &mut Frame, layout: &UiLayout, game: &Game) {
     }
 
     frame.render_widget(
-        Paragraph::new(format!("Flags:{:>3}", game.flags_remaining()))
+        Paragraph::new(format!("Flags:{:>4}", game.flags_remaining()))
             .style(Style::default().fg(Color::Yellow)),
         layout.flag_counter,
     );

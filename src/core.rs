@@ -120,10 +120,10 @@ pub struct Game {
     /// CellState per Cell, indexed by Position (row-major).
     cell_states: Vec<CellState>,
     flags: usize,
-    /// The Flag Budget: the number of Flags the player may place this game,
-    /// set at creation from the Difficulty's Mine count (the "recipe");
-    /// it never changes during the game.
-    flag_budget: usize,
+    /// The number of Mines on the Board, fixed at creation from the
+    /// Difficulty's Mine count (the "recipe"); it never changes during the
+    /// game. Also the zero reference of the Flag counter.
+    mine_count: usize,
     /// Trigger Mine position; `None` unless the game is Lost.
     trigger: Option<Position>,
     started_at: Option<Instant>,
@@ -144,7 +144,7 @@ impl Game {
             mines: None,
             cell_states: vec![CellState::Hidden; size.rows * size.cols],
             flags: 0,
-            flag_budget: difficulty.mine_count(),
+            mine_count: difficulty.mine_count(),
             trigger: None,
             started_at: None,
             elapsed_at_end: None,
@@ -155,7 +155,7 @@ impl Game {
     /// the caller is responsible for first-click safety: Mines on or
     /// adjacent to the first-clicked Cell are NOT filtered. In Prank mode
     /// the first-clicked Cell is always forced into the Mine list. The
-    /// Flag Budget is still set from the Difficulty (the recipe) and is
+    /// mine count is still set from the Difficulty (the recipe) and is
     /// independent of the preset length.
     #[cfg(test)]
     pub fn with_mines(difficulty: Difficulty, mode: GameMode, mines: &[Position]) -> Self {
@@ -198,11 +198,11 @@ impl Game {
         CellView { state, content }
     }
 
-    /// The number of Flags the player can still place. Never below zero:
-    /// Flagging is refused once it reaches zero (Flags cannot exceed the
-    /// Flag Budget).
-    pub fn flags_remaining(&self) -> usize {
-        self.flag_budget.saturating_sub(self.flags)
+    /// The mine count minus the number of placed Flags. It goes negative
+    /// when the player has over-flagged and rises back toward zero as
+    /// Flags are removed.
+    pub fn flags_remaining(&self) -> i32 {
+        self.mine_count as i32 - self.flags as i32
     }
 
     /// Whether the game has ended (Won or Lost).
@@ -289,9 +289,9 @@ impl Game {
                 let mut rng = rand::rng();
                 candidates.shuffle(&mut rng);
                 let take = if self.mode == GameMode::Prank {
-                    self.flag_budget - 1
+                    self.mine_count - 1
                 } else {
-                    self.flag_budget
+                    self.mine_count
                 };
                 candidates.truncate(take);
                 candidates
@@ -387,15 +387,15 @@ impl Game {
     }
 
     /// Toggles a Flag on a Hidden Cell. No-op otherwise: Revealed Cells and
-    /// ended games reject Flag toggling. Flagging is refused once the Flags
-    /// Remaining has reached zero (Flags cannot exceed the Flag Budget);
+    /// ended games reject Flag toggling. Any Hidden Cell may be Flagged
+    /// regardless of how many Flags are already placed (over-flagging);
     /// removing a Flag is always allowed.
     pub fn toggle_flag(&mut self, pos: Position) {
         if !self.can_operate(pos) {
             return;
         }
         match self.cell_state(pos) {
-            CellState::Hidden if self.flags_remaining() > 0 => {
+            CellState::Hidden => {
                 self.set_cell_state(pos, CellState::Flagged);
                 self.flags += 1;
             }
@@ -403,7 +403,7 @@ impl Game {
                 self.set_cell_state(pos, CellState::Hidden);
                 self.flags -= 1;
             }
-            CellState::Revealed | CellState::Hidden => {}
+            CellState::Revealed => {}
         }
     }
 
@@ -497,7 +497,7 @@ mod tests {
             Difficulty::Expert,
         ] {
             let game = Game::new(difficulty, GameMode::Classic);
-            assert_eq!(game.flags_remaining(), difficulty.mine_count());
+            assert_eq!(game.flags_remaining(), difficulty.mine_count() as i32);
         }
     }
 
@@ -717,7 +717,7 @@ mod tests {
     }
 
     #[test]
-    fn flagging_is_refused_when_all_flags_are_used() {
+    fn flagging_allows_more_flags_than_mines() {
         let mut game = Game::new(Difficulty::Beginner, GameMode::Classic); // 10 mines
         for row in 0..2 {
             for col in 0..5 {
@@ -725,19 +725,52 @@ mod tests {
             }
         }
         assert_eq!(game.flags_remaining(), 0);
-        // The 11th Flag is refused.
-        game.toggle_flag(Position::new(2, 2));
-        assert_eq!(game.cell_view(Position::new(2, 2)).state, CellState::Hidden);
-        assert_eq!(game.flags_remaining(), 0);
-        // Removing a Flag frees a slot again.
-        game.toggle_flag(Position::new(0, 0));
-        assert_eq!(game.flags_remaining(), 1);
+        // The 11th Flag is allowed: the counter goes negative.
         game.toggle_flag(Position::new(2, 2));
         assert_eq!(
             game.cell_view(Position::new(2, 2)).state,
             CellState::Flagged
         );
+        assert_eq!(game.flags_remaining(), -1);
+        // More Flags keep driving the counter further negative.
+        game.toggle_flag(Position::new(2, 3));
+        assert_eq!(game.flags_remaining(), -2);
+        // Removing Flags raises the counter back toward zero.
+        game.toggle_flag(Position::new(0, 0));
+        assert_eq!(game.flags_remaining(), -1);
+        game.toggle_flag(Position::new(2, 3));
+        game.toggle_flag(Position::new(2, 2));
+        assert_eq!(game.flags_remaining(), 1);
+    }
+
+    #[test]
+    fn chord_is_noop_when_flags_exceed_the_number() {
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0)],
+        );
+        game.reveal(Position::new(1, 1));
+        assert_eq!(
+            game.cell_view(Position::new(1, 1)).content,
+            Some(CellContent::Number(1))
+        );
+        // Burn the whole budget, then keep flagging: 2 Flags around a 1.
+        for col in 0..9 {
+            game.toggle_flag(Position::new(3, col));
+        }
+        game.toggle_flag(Position::new(0, 0));
         assert_eq!(game.flags_remaining(), 0);
+        game.toggle_flag(Position::new(0, 1)); // the 11th Flag: beyond the mine count
+        assert_eq!(game.flags_remaining(), -1);
+        game.chord(Position::new(1, 1));
+        // Flag count (2) exceeds the number (1): the chord stays a no-op.
+        assert_eq!(game.game_state(), GameState::Playing);
+        assert_eq!(
+            game.cell_view(Position::new(0, 1)).state,
+            CellState::Flagged
+        );
+        assert_eq!(game.cell_view(Position::new(1, 0)).state, CellState::Hidden);
     }
 
     #[test]
