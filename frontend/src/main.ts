@@ -1,56 +1,36 @@
-import { fetchState, type GameState } from "./api";
+import { fetchState, postAction, type Action, type GameState } from "./api";
+import { renderBoard } from "./render";
 import "./style.css";
 
 const app = document.getElementById("app")!;
 
-/** Renders the board grid from the server state. Pure function of state. */
-export function renderBoard(state: GameState, container: HTMLElement): void {
-  const board = document.createElement("div");
-  board.className = "board";
-  board.style.gridTemplateColumns = `repeat(${state.cols}, var(--cell-size))`;
+let state: GameState | null = null;
+// Guards against out-of-order responses: only the latest action's result
+// is rendered, so a slow earlier response can never show stale state.
+let seq = 0;
 
-  for (let i = 0; i < state.cells.length; i++) {
-    const cell = state.cells[i];
-    const row = Math.floor(i / state.cols);
-    const col = i % state.cols;
-    const el = document.createElement("div");
-    el.className = "cell";
-    el.dataset.row = String(row);
-    el.dataset.col = String(col);
-    el.textContent = cellText(cell);
-
-    if (cell.state === "flagged") {
-      el.classList.add("cell-flagged");
-    } else if (cell.state === "revealed") {
-      el.classList.add("cell-revealed");
-      if (cell.content === "mine") {
-        el.classList.add("cell-mine");
-        if (state.trigger && state.trigger.row === row && state.trigger.col === col) {
-          el.classList.add("cell-trigger");
-        }
-      } else if (typeof cell.content === "number" && cell.content > 0) {
-        el.classList.add(`n${cell.content}`);
-      }
-    }
-    board.appendChild(el);
-  }
-
-  container.replaceChildren(board);
+async function applyAction(action: Action): Promise<void> {
+  const id = ++seq;
+  const next = await postAction(action);
+  if (id !== seq) return;
+  state = next;
+  renderBoard(state, app);
 }
 
-function cellText(cell: { state: string; content: unknown }): string {
-  if (cell.state === "flagged") return "🚩";
-  if (cell.state === "revealed") {
-    if (cell.content === "mine") return "💣";
-    if (typeof cell.content === "number" && cell.content > 0) return String(cell.content);
-  }
-  return "";
+function onBoardClick(ev: MouseEvent): void {
+  if (ev.button !== 0) return;
+  const cell = (ev.target as HTMLElement).closest<HTMLElement>(".cell");
+  if (!cell) return;
+  const row = Number(cell.dataset.row);
+  const col = Number(cell.dataset.col);
+  void applyAction({ type: "reveal", row, col });
 }
 
 async function main(): Promise<void> {
   try {
-    const state = await fetchState();
+    state = await fetchState();
     renderBoard(state, app);
+    app.addEventListener("click", onBoardClick);
   } catch (err) {
     app.textContent = `Failed to load game: ${err instanceof Error ? err.message : err}`;
   }

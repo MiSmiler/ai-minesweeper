@@ -39,6 +39,7 @@ body {
   font-size: 14px;
   line-height: 1;
   user-select: none;
+  cursor: pointer;
   background: var(--hidden);
   border-top: 2px solid var(--hidden-light);
   border-left: 2px solid var(--hidden-light);
