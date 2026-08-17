@@ -43,6 +43,11 @@ export function renderTopBar(state: GameState): void {
 
   counter.textContent = `🚩 ${state.flags_remaining}`;
 
+  // Highlight the active difficulty button.
+  document.querySelectorAll<HTMLElement>("[data-difficulty]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.difficulty === state.difficulty);
+  });
+
   if (state.game_state === "won") {
     banner.textContent = "WON";
     banner.className = "banner won";

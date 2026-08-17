@@ -78,6 +78,23 @@ function onContextMenu(ev: Event): void {
   ev.preventDefault();
 }
 
+function onTopBarClick(ev: Event): void {
+  const target = ev.target as HTMLElement;
+  const difficultyBtn = target.closest<HTMLElement>("[data-difficulty]");
+  if (difficultyBtn) {
+    // A difficulty button starts a fresh game of that difficulty.
+    void applyAction({
+      type: "new-game",
+      difficulty: difficultyBtn.dataset.difficulty as GameState["difficulty"],
+    });
+    return;
+  }
+  if (target.closest("#new-game")) {
+    // New Game restarts with the current difficulty.
+    void applyAction({ type: "new-game" });
+  }
+}
+
 async function main(): Promise<void> {
   try {
     state = await fetchState();
@@ -85,6 +102,7 @@ async function main(): Promise<void> {
     renderTopBar(state);
     boardEl.addEventListener("mousedown", onBoardMouseDown);
     boardEl.addEventListener("contextmenu", onContextMenu);
+    document.querySelector(".top-bar")!.addEventListener("click", onTopBarClick);
     window.addEventListener("mouseup", onWindowMouseUp);
     window.addEventListener("blur", onWindowBlur);
     window.setInterval(() => void pollTimer(), 1000);
