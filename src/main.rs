@@ -1,41 +1,37 @@
 mod core;
-mod ui;
+mod server;
 
-use std::io::stdout;
-use std::time::Duration;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 
+use axum::Router;
+use axum::routing::{get, post};
 use clap::Parser;
-use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
-use ratatui::crossterm::execute;
-use ratatui::layout::Rect;
+use tower_http::services::{ServeDir, ServeFile};
 
-use crate::core::GameMode;
+use crate::core::{Difficulty, Game, GameMode};
+use crate::server::AppState;
 
-/// Restores the terminal to its original state when dropped: disables mouse
-/// capture and leaves raw mode / the alternate screen. Covers normal exit,
-/// early `?` returns, and panics alike — ratatui's panic hook restores raw
-/// mode / alt screen first, and the duplicate restore is harmless.
-struct TermGuard;
-
-impl Drop for TermGuard {
-    fn drop(&mut self) {
-        let _ = execute!(stdout(), DisableMouseCapture);
-        ratatui::restore();
-    }
-}
-
-/// Command-line options for the game.
+/// Command-line options for the game server.
 #[derive(Parser)]
-#[command(
-    about = "A terminal Minesweeper game rendered with ratatui, controlled entirely by mouse."
-)]
+#[command(about = "A Minesweeper web app: a Rust game server with a TypeScript frontend.")]
 struct Cli {
-    /// Prank Mode: the First Click of every game is always a Mine.
+    /// Prank Mode: the First Click of every game is always a Mine. The UI
+    /// never indicates the mode is active (ADR-0002).
     #[arg(long)]
     prank: bool,
+
+    /// Port to listen on.
+    #[arg(long, default_value_t = 8080)]
+    port: u16,
+
+    /// Interface to bind.
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
 }
 
-fn main() -> std::io::Result<()> {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
     let mode = if cli.prank {
         GameMode::Prank
@@ -43,31 +39,26 @@ fn main() -> std::io::Result<()> {
         GameMode::Classic
     };
 
-    let mut terminal = ratatui::init();
-    let _guard = TermGuard;
-    execute!(stdout(), EnableMouseCapture)?;
+    let state = Arc::new(AppState {
+        game: std::sync::Mutex::new(Game::new(Difficulty::Beginner, mode)),
+        mode,
+    });
 
-    let mut app = ui::App::new(mode);
-    loop {
-        terminal.draw(|frame| {
-            app.update_layout();
-            ui::render(frame, &app.game);
-        })?;
-        if event::poll(Duration::from_millis(100))? {
-            match event::read()? {
-                Event::Mouse(mouse) => {
-                    let area: Rect = terminal.size()?.into();
-                    ui::handle_mouse(&mut app, mouse, area);
-                }
-                Event::Key(key) => {
-                    if ui::should_quit(key) {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
+    // The built frontend (frontend/dist) is served at the root; unknown
+    // paths fall back to index.html so client-side routing never 404s.
+    let app = Router::new()
+        .route("/state", get(server::get_state))
+        .route("/action", post(server::post_action))
+        .fallback_service(
+            ServeDir::new("frontend/dist").fallback(ServeFile::new("frontend/dist/index.html")),
+        )
+        .with_state(state);
 
-    Ok(())
+    let ip: IpAddr = cli.host.parse().expect("invalid host address");
+    let addr = SocketAddr::new(ip, cli.port);
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .expect("failed to bind");
+    println!("Minesweeper web UI at http://{addr}");
+    axum::serve(listener, app).await.expect("server error");
 }

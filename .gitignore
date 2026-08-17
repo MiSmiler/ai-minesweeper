@@ -2,3 +2,5 @@
 .review_suggestion/
 /.trash
 /.scratch
+/frontend/node_modules
+/frontend/dist

@@ -1,0 +1,75 @@
+:root {
+  --cell-size: 24px;
+  --bg: #38383e;
+  --hidden: #7b7b83;
+  --hidden-light: #9c9ca5;
+  --hidden-dark: #5c5c63;
+  --revealed: #d8d8dd;
+  --mine-bg: #8b0000;
+  --trigger-bg: #e04040;
+  --text: #f0f0f2;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, sans-serif;
+}
+
+.board {
+  display: grid;
+  gap: 0;
+  width: max-content;
+  padding: 4px;
+  background: var(--hidden-dark);
+}
+
+.cell {
+  width: var(--cell-size);
+  height: var(--cell-size);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  user-select: none;
+  background: var(--hidden);
+  border-top: 2px solid var(--hidden-light);
+  border-left: 2px solid var(--hidden-light);
+  border-bottom: 2px solid var(--hidden-dark);
+  border-right: 2px solid var(--hidden-dark);
+}
+
+.cell-flagged {
+  font-size: 15px;
+}
+
+.cell-revealed {
+  background: var(--revealed);
+  border: 1px solid #b6b6bc;
+  color: #1a1a1f;
+}
+
+.cell-mine {
+  background: var(--mine-bg);
+  color: var(--text);
+}
+
+.cell-trigger {
+  background: var(--trigger-bg);
+}
+
+.n1 { color: #0000cc; }
+.n2 { color: #008000; }
+.n3 { color: #cc0000; }
+.n4 { color: #000080; }
+.n5 { color: #800000; }
+.n6 { color: #008080; }
+.n7 { color: #101010; }
+.n8 { color: #606060; }
