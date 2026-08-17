@@ -1,4 +1,4 @@
-import type { GameState } from "./api";
+import type { CellView, GameState } from "./api";
 
 /** Renders the board grid from the server state. Pure function of state. */
 export function renderBoard(state: GameState, container: HTMLElement): void {
@@ -68,7 +68,7 @@ export function formatTimer(secs: number): string {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
-function cellText(cell: { state: string; content: unknown }): string {
+function cellText(cell: CellView): string {
   if (cell.state === "flagged") return "🚩";
   if (cell.state === "revealed") {
     if (cell.content === "mine") return "💣";
