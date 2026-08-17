@@ -35,6 +35,34 @@ export function renderBoard(state: GameState, container: HTMLElement): void {
   container.replaceChildren(board);
 }
 
+/** Renders the top bar (flag counter, result banner, timer) from state. */
+export function renderTopBar(state: GameState): void {
+  const counter = document.getElementById("counter")!;
+  const banner = document.getElementById("banner")!;
+  const timer = document.getElementById("timer")!;
+
+  counter.textContent = `🚩 ${state.flags_remaining}`;
+
+  if (state.game_state === "won") {
+    banner.textContent = "WON";
+    banner.className = "banner won";
+  } else if (state.game_state === "lost") {
+    banner.textContent = "LOST";
+    banner.className = "banner lost";
+  } else {
+    banner.textContent = "";
+    banner.className = "banner";
+  }
+
+  timer.textContent = formatTimer(state.elapsed_secs);
+}
+
+export function formatTimer(secs: number): string {
+  const minutes = Math.floor(secs / 60);
+  const seconds = secs % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 function cellText(cell: { state: string; content: unknown }): string {
   if (cell.state === "flagged") return "🚩";
   if (cell.state === "revealed") {

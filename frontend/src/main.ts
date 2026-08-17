@@ -1,8 +1,8 @@
 import { fetchState, postAction, type Action, type GameState } from "./api";
-import { renderBoard } from "./render";
+import { formatTimer, renderBoard, renderTopBar } from "./render";
 import "./style.css";
 
-const app = document.getElementById("app")!;
+const boardEl = document.getElementById("board")!;
 
 let state: GameState | null = null;
 // Guards against out-of-order responses: only the latest action's result
@@ -18,7 +18,20 @@ async function applyAction(action: Action): Promise<void> {
   const next = await postAction(action);
   if (id !== seq) return;
   state = next;
-  renderBoard(state, app);
+  renderBoard(state, boardEl);
+  renderTopBar(state);
+}
+
+/** Polls the state once per second to drive the Timer; the counter and
+ * banner come from action responses, which are always fresher. */
+async function pollTimer(): Promise<void> {
+  try {
+    const next = await fetchState();
+    const timer = document.getElementById("timer")!;
+    timer.textContent = formatTimer(next.elapsed_secs);
+  } catch {
+    // Transient network errors are ignored; the next poll retries.
+  }
 }
 
 function cellAt(ev: MouseEvent): HTMLElement | null {
@@ -68,13 +81,15 @@ function onContextMenu(ev: Event): void {
 async function main(): Promise<void> {
   try {
     state = await fetchState();
-    renderBoard(state, app);
-    app.addEventListener("mousedown", onBoardMouseDown);
-    app.addEventListener("contextmenu", onContextMenu);
+    renderBoard(state, boardEl);
+    renderTopBar(state);
+    boardEl.addEventListener("mousedown", onBoardMouseDown);
+    boardEl.addEventListener("contextmenu", onContextMenu);
     window.addEventListener("mouseup", onWindowMouseUp);
     window.addEventListener("blur", onWindowBlur);
+    window.setInterval(() => void pollTimer(), 1000);
   } catch (err) {
-    app.textContent = `Failed to load game: ${err instanceof Error ? err.message : err}`;
+    boardEl.textContent = `Failed to load game: ${err instanceof Error ? err.message : err}`;
   }
 }
 
