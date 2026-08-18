@@ -9,8 +9,8 @@ let state: GameState | null = null;
 // is rendered, so a slow earlier response can never show stale state.
 let seq = 0;
 
-// Chord gesture state (matches the terminal): pressing Left while Right is
-// held triggers a Chord instead of a Reveal (ADR-0003 keeps the gesture).
+// Chord gesture state: pressing Left while Right is held triggers a Chord
+// instead of a Reveal (ADR-0003).
 let rightHeld = false;
 
 async function applyAction(action: Action): Promise<void> {
@@ -39,21 +39,31 @@ function cellAt(ev: MouseEvent): HTMLElement | null {
 }
 
 function onBoardMouseDown(ev: MouseEvent): void {
-  const cell = cellAt(ev);
-
   if (ev.button === 2) {
-    // Right-click toggles a Flag on Hidden Cells; the server ignores
-    // Revealed Cells. The press is also remembered for the chord gesture.
-    rightHeld = true;
-    if (!cell) return;
-    ev.preventDefault();
-    const row = Number(cell.dataset.row);
-    const col = Number(cell.dataset.col);
-    void applyAction({ type: "flag", row, col });
-    return;
+    handleRightDown(ev);
+  } else if (ev.button === 0) {
+    handleLeftDown(ev);
   }
+}
 
-  if (ev.button !== 0 || !cell) return;
+function handleRightDown(ev: MouseEvent): void {
+  // The press is remembered for the chord gesture. The gesture starts on
+  // any Right press within the Board (the mousedown listener lives on the
+  // Board element), so even Right presses on non-Cell areas start it.
+  rightHeld = true;
+  const cell = cellAt(ev);
+  if (!cell) return;
+  ev.preventDefault();
+  // Right-click toggles a Flag on Hidden Cells; the server ignores
+  // Revealed Cells.
+  const row = Number(cell.dataset.row);
+  const col = Number(cell.dataset.col);
+  void applyAction({ type: "flag", row, col });
+}
+
+function handleLeftDown(ev: MouseEvent): void {
+  const cell = cellAt(ev);
+  if (!cell) return;
   ev.preventDefault();
   const row = Number(cell.dataset.row);
   const col = Number(cell.dataset.col);

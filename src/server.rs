@@ -135,18 +135,16 @@ pub fn snapshot(game: &Game) -> StateDto {
             });
         }
     }
-    let trigger = if game.game_state() == GameState::Lost {
-        let size = game.size();
-        (0..size.rows)
-            .flat_map(|row| (0..size.cols).map(move |col| Position::new(row, col)))
-            .find(|&pos| game.is_trigger(pos))
-            .map(|pos| PosDto {
-                row: pos.row,
-                col: pos.col,
-            })
-    } else {
-        None
-    };
+    // trigger is Some iff the game is Lost: `lose()` sets both together and
+    // is the only writer of either (pinned by the assert below).
+    debug_assert_eq!(
+        game.trigger().is_some(),
+        game.game_state() == GameState::Lost
+    );
+    let trigger = game.trigger().map(|pos| PosDto {
+        row: pos.row,
+        col: pos.col,
+    });
     StateDto {
         game_state: game_state_str(game.game_state()),
         difficulty: difficulty_str(game.difficulty()),

@@ -179,9 +179,9 @@ impl Game {
         self.difficulty
     }
 
-    /// Whether the Cell is the Trigger Mine of a Lost game.
-    pub fn is_trigger(&self, pos: Position) -> bool {
-        self.trigger == Some(pos)
+    /// The Trigger Mine of a Lost game; `None` otherwise.
+    pub fn trigger(&self) -> Option<Position> {
+        self.trigger
     }
 
     /// The visible state of a Cell.
@@ -525,7 +525,7 @@ mod tests {
         );
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Lost);
-        assert!(game.is_trigger(Position::new(0, 0)));
+        assert_eq!(game.trigger(), Some(Position::new(0, 0)));
         // The Trigger Mine is Revealed and shown as Mine.
         assert_eq!(
             game.cell_view(Position::new(0, 0)).state,
@@ -545,7 +545,7 @@ mod tests {
             Some(CellContent::Mine)
         );
         // The Trigger Mine is the only one flagged as trigger.
-        assert!(!game.is_trigger(Position::new(5, 5)));
+        assert_ne!(game.trigger(), Some(Position::new(5, 5)));
     }
 
     #[test]
@@ -702,7 +702,7 @@ mod tests {
         game.toggle_flag(Position::new(0, 0));
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Lost);
-        assert!(game.is_trigger(Position::new(0, 0)));
+        assert_eq!(game.trigger(), Some(Position::new(0, 0)));
     }
 
     #[test]
@@ -851,7 +851,7 @@ mod tests {
         game.toggle_flag(Position::new(0, 1));
         game.chord(Position::new(1, 1));
         assert_eq!(game.game_state(), GameState::Lost);
-        assert!(game.is_trigger(Position::new(0, 2)));
+        assert_eq!(game.trigger(), Some(Position::new(0, 2)));
         assert_eq!(
             game.cell_view(Position::new(0, 2)).content,
             Some(CellContent::Mine)
@@ -914,7 +914,7 @@ mod tests {
             let mut game = Game::new(Difficulty::Beginner, GameMode::Prank);
             game.reveal(Position::new(0, 0));
             assert_eq!(game.game_state(), GameState::Lost);
-            assert!(game.is_trigger(Position::new(0, 0)));
+            assert_eq!(game.trigger(), Some(Position::new(0, 0)));
             assert_eq!(
                 game.cell_view(Position::new(0, 0)).content,
                 Some(CellContent::Mine)
@@ -932,7 +932,7 @@ mod tests {
         );
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Lost);
-        assert!(game.is_trigger(Position::new(0, 0)));
+        assert_eq!(game.trigger(), Some(Position::new(0, 0)));
         assert_eq!(
             game.cell_view(Position::new(0, 0)).content,
             Some(CellContent::Mine)
@@ -951,6 +951,6 @@ mod tests {
         );
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Lost);
-        assert!(game.is_trigger(Position::new(0, 0)));
+        assert_eq!(game.trigger(), Some(Position::new(0, 0)));
     }
 }
