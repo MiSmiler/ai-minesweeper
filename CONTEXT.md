@@ -1,6 +1,6 @@
 # ai-minesweeper
 
-A terminal Minesweeper game rendered with ratatui, controlled entirely by mouse.
+A Minesweeper game with a web UI: a TypeScript frontend over a Rust backend, controlled entirely by mouse.
 
 ## Language
 

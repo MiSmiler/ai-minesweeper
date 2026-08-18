@@ -1,0 +1,9 @@
+# Web UI: TypeScript frontend, Rust backend
+
+The terminal UI (ratatui/crossterm) is replaced with a web UI: the game runs in a browser, and a Rust HTTP server hosts both the built frontend and the game itself. A Bevy prototype (`feat/bevy-migration`) reached a playable window but the effect did not meet expectations; the web was chosen instead because UI layout is more convenient there, and to try a TypeScript-frontend/Rust-backend architecture.
+
+The `Game` stays a pure-logic module in `core.rs` (zero dependencies, all unit tests preserved) and lives server-side as a single instance, like the terminal's `App`: the browser is a thin client that sends actions and renders state. Transport is REST — `POST /action` returns the new state immediately (Reveals stay instant), and `GET /state` is polled once per second to drive the Timer, whose display granularity is 1s. The wire format is JSON; the server maps core types to DTOs so `core.rs` stays free of serde. The frontend is vanilla TypeScript + Vite in `frontend/`, rendered with DOM + CSS; looks are iterated on rather than pixel-perfect.
+
+Feature parity with the terminal UI: difficulty buttons (switch starts a new game), New Game button, flag counter, timer, WON/LOST banner, left-click Reveal, right-click Flag, and Chord by holding right while left-clicking a Revealed numeric Cell. The server keeps the `--prank` launch parameter — the UI never indicates Prank Mode is active (ADR-0002) — and gains `--port`/`--host`; difficulty and New Game go through the API, with initial difficulty Beginner. The classic-look layout (#15) is deferred.
+
+Trade-off: the game no longer runs in a terminal; every action is a localhost round-trip (latency negligible); the Timer needs 1-second polling; the server holds one Game, so multiple browser tabs share it just as the terminal's single `App` was shared by one player.

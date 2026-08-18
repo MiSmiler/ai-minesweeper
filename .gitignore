@@ -1,4 +1,19 @@
-/target
-.review_suggestion/
-/.trash
-/.scratch
+# Rust
+target/
+
+# Frontend (Vite)
+node_modules/
+/frontend/dist/
+/frontend/.env*.local
+
+# Local tooling state
+/.trash/
+/.scratch/
+/.review_suggestion/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

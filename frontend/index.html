@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Minesweeper</title>
+  </head>
+  <body>
+    <div id="app">
+      <div class="top-bar">
+        <div class="top-left">
+          <button class="difficulty" data-difficulty="beginner">Beginner</button>
+          <button class="difficulty" data-difficulty="intermediate">Intermediate</button>
+          <button class="difficulty" data-difficulty="expert">Expert</button>
+          <span id="counter" class="counter"></span>
+        </div>
+        <span id="banner" class="banner"></span>
+        <div class="top-right">
+          <span id="timer" class="timer"></span>
+          <button id="new-game" class="new-game">New Game</button>
+        </div>
+      </div>
+      <div id="board"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
