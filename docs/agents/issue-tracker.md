@@ -16,7 +16,7 @@ Issues and specs for this repo live in **two trackers**: a Local Tracker (markdo
 
 The tracker for a publish is determined by how it is invoked — **calling the tracker-specific skill IS the choice**:
 
-- **Direct**: `/to-tickets-local` publishes to the Local Tracker; `/to-tickets-github` publishes to the GitHub Tracker. No confirmation — the invocation commits.
+- **Direct**: `/to-tickets-local` publishes to the Local Tracker; `/to-tickets-github` publishes to the GitHub Tracker. The invocation commits the **tracker choice** — it does not commit the tickets. The breakdown is still drafted, presented to the user, and approved before anything is published; if the conversation holds no approved breakdown yet, the skill runs the full workflow first (see the Publish gate in each repo skill).
 - **Via `/to-tickets` or `/to-spec`**: the full workflow (gathering context, slicing, quizzing the user) runs first; at publish, ask "Local (default) / GitHub?" and follow the matching repo skill. One run publishes its whole batch to the chosen tracker. Non-interactive / AFK sessions silently use Local.
 - **Feature stickiness (soft)**: a feature's tickets usually stay in the tracker they started in; when confirming, a gentle reminder ("this feature's existing tickets live in <tracker> — continue there?") helps, but the user's call always wins.
 - **Dispatch**: publish mechanics live in `.pi/skills/to-tickets-local/` and `.pi/skills/to-tickets-github/`. When a skill's generic instructions hardcode one tracker's shape (e.g. the global `to-tickets` step 5 writes to `.scratch/<feature-slug>/issues/`), follow THIS doc and the matching repo skill instead.

@@ -6,16 +6,23 @@ disable-model-invocation: true
 
 # To Tickets — Local Tracker
 
-Publish approved tickets as markdown files in the Local Tracker. This skill covers ONLY the Local Tracker mechanics; the ticket breakdown (gathering context, slicing, quizzing the user) comes from the global `/to-tickets` skill.
+Publish approved tickets as markdown files in the Local Tracker. This skill covers the Local Tracker mechanics; the ticket breakdown (gathering context, slicing, quizzing the user) follows the global `/to-tickets` skill.
 
 ## When to use
 
 Two entry paths (see `docs/agents/issue-tracker.md`):
 
-- **Direct**: the user invokes `/to-tickets-local` — publish to the Local Tracker, no confirmation.
+- **Direct**: the user invokes `/to-tickets-local` — publish to the Local Tracker. The invocation commits the tracker choice only, never the tickets.
 - **Dispatched**: `/to-tickets` or `/to-spec` runs the full workflow and at publish the user picks Local (the default) — then follow this skill for the publish mechanics.
 
 Read operations and wayfinding live in `docs/agents/issue-tracker.md`, not here.
+
+## Publish gate
+
+This skill never invents tickets — it publishes ones the user has approved:
+
+- **Dispatched path**: the breakdown was just approved via `/to-tickets` / `/to-spec`; publish it as-is.
+- **Direct path**: if the conversation already holds an approved breakdown (the user explicitly approved a proposal), publish it as-is. Otherwise run the breakdown first — gather context, draft the vertical slices, and present them to the user for approval, exactly as the global `/to-tickets` skill does before publishing (its steps 1–4) — then publish only after the user approves. Never publish tickets the user has not seen and approved.
 
 ## Conventions
 
