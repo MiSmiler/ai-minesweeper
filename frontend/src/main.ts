@@ -1,29 +1,50 @@
 import { fetchState, postAction, type Action, type GameState, type Pos } from "./api";
 import { chordPreviewCells } from "./chordPreview";
+import { createActionController } from "./controller";
+import { createGestureMachine, type GestureEvent, type GestureOutput } from "./gesture";
 import { formatTimer, renderBoard, renderTopBar } from "./render";
 import "./style.css";
 
 const boardEl = document.getElementById("board")!;
 
 let state: GameState | null = null;
-// Guards against out-of-order responses: only the latest action's result
-// is rendered, so a slow earlier response can never show stale state.
-let seq = 0;
 
-// Chord gesture state: pressing Left while Right is held arms a Chord, which
-// shows a Chord Preview while Left is held down and solves when Left is
-// released (ADR-0003).
-let rightHeld = false;
-// The Cell whose Chord Preview is currently showing; null when none is.
-let preview: Pos | null = null;
+const gesture = createGestureMachine();
+const controller = createActionController(postAction);
 
-async function applyAction(action: Action): Promise<void> {
-  const id = ++seq;
-  const next = await postAction(action);
-  if (id !== seq) return;
-  state = next;
-  renderBoard(state, boardEl);
-  renderTopBar(state);
+/** Sends an Action through the controller and renders the fresh state. Only
+ * the latest action's result is ever rendered — stale responses are dropped
+ * by the controller (see createActionController). */
+async function applyAndRender(action: Action): Promise<void> {
+  const next = await controller.apply(action);
+  if (next) {
+    state = next;
+    renderBoard(state, boardEl);
+    renderTopBar(state);
+  }
+}
+
+/** Renders the Chord Preview: highlights exactly the Cells in `preview`. */
+function renderPreview(preview: GestureOutput["preview"]): void {
+  boardEl
+    .querySelectorAll(".cell-chord-preview")
+    .forEach((el) => el.classList.remove("cell-chord-preview"));
+  if (preview) {
+    for (const pos of preview.cells) {
+      boardEl
+        .querySelector(`[data-row="${pos.row}"][data-col="${pos.col}"]`)
+        ?.classList.add("cell-chord-preview");
+    }
+  }
+}
+
+/** Feeds a gesture event to the machine and applies its output. */
+function dispatchGesture(event: GestureEvent): void {
+  const out = gesture.handle(event);
+  renderPreview(out.preview);
+  if (out.action) {
+    void applyAndRender(out.action);
+  }
 }
 
 /** Polls the state once per second to drive the Timer; the counter and
@@ -42,82 +63,50 @@ function cellAt(ev: MouseEvent): HTMLElement | null {
   return (ev.target as HTMLElement).closest<HTMLElement>(".cell");
 }
 
+function cellPos(cell: HTMLElement): Pos {
+  return { row: Number(cell.dataset.row), col: Number(cell.dataset.col) };
+}
+
 function onBoardMouseDown(ev: MouseEvent): void {
   if (ev.button === 2) {
-    handleRightDown(ev);
+    const cell = cellAt(ev);
+    if (cell) {
+      ev.preventDefault();
+      dispatchGesture({ kind: "right-down", cell: cellPos(cell) });
+    } else {
+      // The press is still remembered for the chord gesture, even off a Cell.
+      dispatchGesture({ kind: "right-down", cell: null });
+    }
   } else if (ev.button === 0) {
     handleLeftDown(ev);
   }
-}
-
-function handleRightDown(ev: MouseEvent): void {
-  // The press is remembered for the chord gesture. The gesture starts on
-  // any Right press within the Board (the mousedown listener lives on the
-  // Board element), so even Right presses on non-Cell areas start it.
-  rightHeld = true;
-  const cell = cellAt(ev);
-  if (!cell) return;
-  ev.preventDefault();
-  // Right-click toggles a Flag on Hidden Cells; the server ignores
-  // Revealed Cells.
-  const row = Number(cell.dataset.row);
-  const col = Number(cell.dataset.col);
-  void applyAction({ type: "flag", row, col });
 }
 
 function handleLeftDown(ev: MouseEvent): void {
   const cell = cellAt(ev);
   if (!cell || !state) return;
   ev.preventDefault();
-  const row = Number(cell.dataset.row);
-  const col = Number(cell.dataset.col);
-  if (rightHeld) {
-    // Arming the Chord: show the Chord Preview over the Cells the Chord
-    // would Reveal. No action is sent yet — the Chord solves on Left
-    // release (see onWindowMouseUp).
-    const cells = chordPreviewCells(state, row, col);
-    if (cells.length > 0) {
-      preview = { row, col };
-      for (const pos of cells) {
-        boardEl
-          .querySelector(`[data-row="${pos.row}"][data-col="${pos.col}"]`)
-          ?.classList.add("cell-chord-preview");
-      }
-    }
-    return;
-  }
-  void applyAction({ type: "reveal", row, col });
-}
-
-function clearChordPreview(): void {
-  if (!preview) return;
-  preview = null;
-  boardEl
-    .querySelectorAll(".cell-chord-preview")
-    .forEach((el) => el.classList.remove("cell-chord-preview"));
+  const pos = cellPos(cell);
+  dispatchGesture({
+    kind: "left-down",
+    cell: { pos, previewCells: chordPreviewCells(state, pos.row, pos.col) },
+  });
 }
 
 function onWindowMouseUp(ev: MouseEvent): void {
   if (ev.button === 2) {
-    rightHeld = false;
-    clearChordPreview();
-  } else if (ev.button === 0 && rightHeld && preview) {
-    // Solving the Chord: the preview disarms and the flagged-consistent
-    // neighbors Reveal. Only sent when a Chord Preview was shown, i.e. the
-    // pressed Cell was a Revealed numeric Cell.
-    const { row, col } = preview;
-    clearChordPreview();
-    void applyAction({ type: "chord", row, col });
+    dispatchGesture({ kind: "right-up" });
+  } else if (ev.button === 0) {
+    dispatchGesture({ kind: "left-up" });
   }
 }
 
 function onWindowBlur(): void {
-  rightHeld = false;
-  clearChordPreview();
+  dispatchGesture({ kind: "blur" });
 }
 
 function onBoardPointerLeave(): void {
-  clearChordPreview();
+  dispatchGesture({ kind: "pointer-leave" });
 }
 
 function onContextMenu(ev: Event): void {
@@ -129,7 +118,7 @@ function onTopBarClick(ev: Event): void {
   const difficultyBtn = target.closest<HTMLElement>("[data-difficulty]");
   if (difficultyBtn) {
     // A difficulty button starts a fresh game of that difficulty.
-    void applyAction({
+    void applyAndRender({
       type: "new-game",
       difficulty: difficultyBtn.dataset.difficulty as GameState["difficulty"],
     });
@@ -137,7 +126,7 @@ function onTopBarClick(ev: Event): void {
   }
   if (target.closest("#new-game")) {
     // New Game restarts with the current difficulty.
-    void applyAction({ type: "new-game" });
+    void applyAndRender({ type: "new-game" });
   }
 }
 
