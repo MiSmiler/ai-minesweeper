@@ -1,23 +1,25 @@
 # Issue tracker: Local + GitHub (dual-tracker)
 
-Issues and specs for this repo live in **two trackers**: a Local Tracker (markdown files under `.scratch/`) and a GitHub Tracker (`MiSmiler/ai-minesweeper` issues). Before creating any ticket or spec, always confirm with the user which tracker to use — the **Default Tracker is Local**.
+Issues and specs for this repo live in **two trackers**: a Local Tracker (markdown files under `.scratch/`) and a GitHub Tracker (the current repo's GitHub issues — resolve the repo at runtime with `gh`, never hardcode). The tracker for a publish is the user's call: invoke `/to-tickets-local` or `/to-tickets-github` directly, or let `/to-tickets` / `/to-spec` confirm with Local as the default (see Tracker Choice).
 
 ## Vocabulary
 
 - **Tracker** — the place where Tickets live. This repo runs two: Local and GitHub.
 - **Local Tracker** — markdown ticket files under `.scratch/<feature-slug>/tickets/`.
-- **GitHub Tracker** — issues on `MiSmiler/ai-minesweeper`.
+- **GitHub Tracker** — the current repo's GitHub issues; resolve the repo with `gh repo view --json nameWithOwner --jq .nameWithOwner` (`gh` infers it automatically inside a clone).
 - **Ticket** — a unit of work published to a tracker; the canonical word for what `to-tickets` produces. Use it everywhere in our own artifacts.
 - **Issue** — GitHub's platform term for a ticket. The `gh issue` CLI verb and GitHub's UI say "issue"; we don't fight that, but our own titles, bodies, and references say "ticket". No "Ticket: " title prefix.
-- **Tracker Choice** — the confirmation step before creating tickets: ask "Local (default) or GitHub?".
+- **Tracker Choice** — how the tracker for a publish gets chosen: directly by invoking `/to-tickets-local` / `/to-tickets-github`, or via the "Local (default) / GitHub?" confirmation in `/to-tickets` / `/to-spec`.
 - **Qualified reference** — cross-tracker references are `ticket:local:<feature-slug>/<NN>` and `ticket:github:<number>`. Local numbers restart at `01` per feature directory; GitHub numbers are repo-global, so a bare `#3` is ambiguous.
 
 ## Tracker Choice
 
-- **When to ask**: before ANY creation-type publish — `/to-tickets` ticket batches and `/to-spec` specs. Triage and read operations never prompt; they follow the ticket's own tracker.
-- **Default**: Local. Interactive sessions prompt "Local (default) / GitHub?" and accept Enter for Local; non-interactive / AFK sessions silently use Local.
-- **Batch stickiness**: one `/to-tickets` run publishes its whole batch to one tracker. **Feature stickiness**: a feature's tickets stay in the tracker they started in; when confirming, note "this feature's existing tickets live in <tracker> — continue there?".
-- **Dispatch**: publish mechanics live in the repo-local skills `.pi/skills/to-tickets-local/` and `.pi/skills/to-tickets-github/`. When a skill's generic instructions hardcode one tracker's shape (e.g. the global `to-tickets` step 5 writes to `.scratch/<feature-slug>/issues/`), follow THIS doc and the matching repo skill instead.
+The tracker for a publish is determined by how it is invoked — **calling the tracker-specific skill IS the choice**:
+
+- **Direct**: `/to-tickets-local` publishes to the Local Tracker; `/to-tickets-github` publishes to the GitHub Tracker. No confirmation — the invocation commits.
+- **Via `/to-tickets` or `/to-spec`**: the full workflow (gathering context, slicing, quizzing the user) runs first; at publish, ask "Local (default) / GitHub?" and follow the matching repo skill. One run publishes its whole batch to the chosen tracker. Non-interactive / AFK sessions silently use Local.
+- **Feature stickiness (soft)**: a feature's tickets usually stay in the tracker they started in; when confirming, a gentle reminder ("this feature's existing tickets live in <tracker> — continue there?") helps, but the user's call always wins.
+- **Dispatch**: publish mechanics live in `.pi/skills/to-tickets-local/` and `.pi/skills/to-tickets-github/`. When a skill's generic instructions hardcode one tracker's shape (e.g. the global `to-tickets` step 5 writes to `.scratch/<feature-slug>/issues/`), follow THIS doc and the matching repo skill instead.
 
 ## Local Tracker conventions
 
@@ -37,7 +39,7 @@ Issues and specs for this repo live in **two trackers**: a Local Tracker (markdo
 
 Infer the repo from `git remote -v` — `gh` does this automatically when run inside a clone.
 
-## Pull requests as a request surface
+## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
 

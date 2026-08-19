@@ -1,6 +1,7 @@
 ---
 name: to-tickets-local
-description: Publish tracer-bullet tickets to this repo's Local Tracker — markdown files under .scratch/<feature>/tickets/. Use when /to-tickets or /to-spec chooses the Local Tracker (the default).
+description: Publish tracer-bullet tickets to this repo's Local Tracker — markdown files under .scratch/<feature>/tickets/. Invoke directly, or via /to-tickets / /to-spec when the user picks Local (the default).
+disable-model-invocation: true
 ---
 
 # To Tickets — Local Tracker
@@ -9,7 +10,12 @@ Publish approved tickets as markdown files in the Local Tracker. This skill cove
 
 ## When to use
 
-Use this skill when the Tracker Choice (see `docs/agents/issue-tracker.md`) selects the Local Tracker — the default. The dispatch happens inside `/to-tickets` step 5: confirm the tracker with the user first, then follow the matching skill. Read operations and wayfinding live in `docs/agents/issue-tracker.md`, not here.
+Two entry paths (see `docs/agents/issue-tracker.md`):
+
+- **Direct**: the user invokes `/to-tickets-local` — publish to the Local Tracker, no confirmation.
+- **Dispatched**: `/to-tickets` or `/to-spec` runs the full workflow and at publish the user picks Local (the default) — then follow this skill for the publish mechanics.
+
+Read operations and wayfinding live in `docs/agents/issue-tracker.md`, not here.
 
 ## Conventions
 

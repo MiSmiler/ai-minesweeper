@@ -1,6 +1,7 @@
 ---
 name: to-tickets-github
-description: Publish tracer-bullet tickets to this repo's GitHub Tracker (MiSmiler/ai-minesweeper) with the gh CLI. Use when /to-tickets or /to-spec chooses the GitHub Tracker.
+description: Publish tracer-bullet tickets to this repo's GitHub Tracker — the current repo's issues — with the gh CLI. Invoke directly, or via /to-tickets / /to-spec when the user picks GitHub.
+disable-model-invocation: true
 ---
 
 # To Tickets — GitHub Tracker
@@ -9,11 +10,16 @@ Publish approved tickets as GitHub issues. This skill covers ONLY the GitHub Tra
 
 ## When to use
 
-Use this skill when the Tracker Choice (see `docs/agents/issue-tracker.md`) selects the GitHub Tracker. The dispatch happens inside `/to-tickets` step 5: confirm the tracker with the user first, then follow the matching skill. Read operations, wayfinding, and native-blocking mechanics live in `docs/agents/issue-tracker.md`, not here.
+Two entry paths (see `docs/agents/issue-tracker.md`):
+
+- **Direct**: the user invokes `/to-tickets-github` — publish to the GitHub Tracker, no confirmation.
+- **Dispatched**: `/to-tickets` or `/to-spec` runs the full workflow and at publish the user picks GitHub — then follow this skill for the publish mechanics.
+
+Read operations, wayfinding, and native-blocking mechanics live in `docs/agents/issue-tracker.md`, not here.
 
 ## Conventions
 
-- Each ticket is a GitHub issue on `MiSmiler/ai-minesweeper` — infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
+- Each ticket is a GitHub issue on the current repo — `gh` resolves the repo automatically inside a clone (`gh repo view --json nameWithOwner --jq .nameWithOwner`); never hardcode a repo name.
 - Call them **tickets** in every artifact we write (titles, bodies, comments, references). GitHub's own UI and the `gh issue` CLI verb still say "issue" — platform vocabulary we don't fight.
 - Do NOT prefix titles with "Ticket: " — keep titles clean for the issue list.
 - Reference a ticket as `ticket:github:<number>` in cross-tracker contexts; within GitHub, the bare `#<number>` is fine.
