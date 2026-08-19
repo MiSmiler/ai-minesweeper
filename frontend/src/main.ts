@@ -1,7 +1,7 @@
 import { fetchState, postAction, type Action, type GameState, type Pos } from "./api";
-import { chordPreviewCells } from "./chordPreview";
+import { chordPreviewCells, isRevealedNumericCell } from "./chordPreview";
 import { createActionController } from "./controller";
-import { createGestureMachine, type GestureEvent, type GestureOutput } from "./gesture";
+import { createGestureMachine, type ChordTarget, type GestureEvent, type GestureOutput } from "./gesture";
 import { formatTimer, renderBoard, renderTopBar } from "./render";
 import "./style.css";
 
@@ -67,12 +67,25 @@ function cellPos(cell: HTMLElement): Pos {
   return { row: Number(cell.dataset.row), col: Number(cell.dataset.col) };
 }
 
+/** Builds the hit-test payload for the gesture machine: the Cell's Preview
+ * scope plus whether it is a Revealed numeric Cell (the arming criterion). */
+function chordTarget(state: GameState, pos: Pos): ChordTarget {
+  return {
+    pos,
+    previewCells: chordPreviewCells(state, pos.row, pos.col),
+    isNumericCell: isRevealedNumericCell(state, pos.row, pos.col),
+  };
+}
+
 function onBoardMouseDown(ev: MouseEvent): void {
   if (ev.button === 2) {
     const cell = cellAt(ev);
     if (cell) {
       ev.preventDefault();
-      dispatchGesture({ kind: "right-down", cell: cellPos(cell) });
+      dispatchGesture({
+        kind: "right-down",
+        cell: state ? chordTarget(state, cellPos(cell)) : null,
+      });
     } else {
       // The press is still remembered for the chord gesture, even off a Cell.
       dispatchGesture({ kind: "right-down", cell: null });
@@ -86,11 +99,7 @@ function handleLeftDown(ev: MouseEvent): void {
   const cell = cellAt(ev);
   if (!cell || !state) return;
   ev.preventDefault();
-  const pos = cellPos(cell);
-  dispatchGesture({
-    kind: "left-down",
-    cell: { pos, previewCells: chordPreviewCells(state, pos.row, pos.col) },
-  });
+  dispatchGesture({ kind: "left-down", cell: chordTarget(state, cellPos(cell)) });
 }
 
 function onWindowMouseUp(ev: MouseEvent): void {
@@ -105,8 +114,36 @@ function onWindowBlur(): void {
   dispatchGesture({ kind: "blur" });
 }
 
+/** Tracks the last hit-tested Cell so pointer-move events are only
+ * dispatched when the pointer actually crosses onto/off a Cell — pointermove
+ * fires far more often than the Chord Preview needs to change. */
+let lastPointerCell: Pos | null = null;
+
 function onBoardPointerLeave(): void {
+  // Reset the move guard so re-entering the Board reports the first Cell
+  // even if it is the one the pointer left on (restoring a cleared Preview).
+  lastPointerCell = null;
   dispatchGesture({ kind: "pointer-leave" });
+}
+
+function onBoardPointerMove(ev: PointerEvent): void {
+  const cell = cellAt(ev);
+  const pos = cell ? cellPos(cell) : null;
+  // Equal when both are null (moving within Board space that is no Cell) or
+  // both name the same Cell — anything else is a change worth dispatching.
+  const sameCell =
+    (pos === null && lastPointerCell === null) ||
+    (pos !== null &&
+      lastPointerCell !== null &&
+      pos.row === lastPointerCell.row &&
+      pos.col === lastPointerCell.col);
+  if (sameCell) return;
+  lastPointerCell = pos;
+  if (!state) return;
+  dispatchGesture({
+    kind: "pointer-move",
+    cell: pos ? chordTarget(state, pos) : null,
+  });
 }
 
 function onContextMenu(ev: Event): void {
@@ -136,6 +173,7 @@ async function main(): Promise<void> {
     renderBoard(state, boardEl);
     renderTopBar(state);
     boardEl.addEventListener("mousedown", onBoardMouseDown);
+    boardEl.addEventListener("pointermove", onBoardPointerMove);
     boardEl.addEventListener("pointerleave", onBoardPointerLeave);
     boardEl.addEventListener("contextmenu", onContextMenu);
     document.querySelector(".top-bar")!.addEventListener("click", onTopBarClick);

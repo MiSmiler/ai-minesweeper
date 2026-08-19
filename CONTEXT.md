@@ -63,11 +63,11 @@ The elapsed time since the First Click, shown in the top bar; it shows 00:00 whi
 _Avoid_: Clock, stopwatch
 
 **Chord**:
-An action on a Revealed numeric Cell: when the number of Flags around it equals the Cell's number, all remaining unflagged neighboring Cells are Revealed. Triggered by pressing Left while Right is held, only on Revealed numeric Cells; anywhere else it does nothing. The Chord solves (Reveals) when Left is released; while Left is held down the Chord Preview shows first.
+An action on a Revealed numeric Cell: when the number of Flags around it equals the Cell's number, all remaining unflagged neighboring Cells are Revealed. Triggered by pressing Right on a Revealed numeric Cell and then Left while Right is held; anywhere else it does nothing. The Chord solves (Reveals) when Left is released; while Left is held down the Chord Preview follows the pointer.
 _Avoid_: Combo, sweep
 
 **Chord Preview**:
-The transient highlight shown while the Chord gesture is armed: holding Right and pressing (not yet releasing) Left on a Revealed numeric Cell renders all of its unflagged neighboring Cells as empty Revealed Cells, showing the scope of a pending Chord. It clears when the gesture disarms (Left or Right released, window blurred, or pointer leaves the Board). It is a pure visual — no action is sent — and independent of whether the Chord would actually solve.
+The transient highlight shown while the Chord gesture is armed: pressing Right on a Revealed numeric Cell and then pressing (not yet releasing) Left renders all of its unflagged neighboring Cells as empty Revealed Cells, showing the scope of the pending Chord. While Left is held, moving the pointer over other Revealed numeric Cells moves the Preview (and the pending Chord's target) with it; the Preview clears whenever the pointer is not over a Revealed numeric Cell. Releasing Right does not clear it — once armed, the Preview is driven by Left alone. It also clears when Left is released, the window blurs, or the pointer leaves the Board. It is a pure visual — no action is sent — and independent of whether the Chord would actually solve.
 _Avoid_: try-chord, preview
 
 **First Click**:

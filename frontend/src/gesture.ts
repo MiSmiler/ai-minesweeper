@@ -1,13 +1,24 @@
 import type { Action, Pos } from "./api";
 
+/** A hit-tested Cell plus the Cells its Chord Preview would highlight
+ * (computed by the caller from the game state), and whether it is a Revealed
+ * numeric Cell — the arming criterion for the Chord, independent of how many
+ * neighbors the Preview would highlight. */
+export interface ChordTarget {
+  pos: Pos;
+  previewCells: Pos[];
+  isNumericCell: boolean;
+}
+
 /** Abstract player-input events fed to the chord gesture machine. The DOM
- * layer translates mouse events into these: a `right-down` carries the
- * hit-tested Cell to Flag (if any), and a `left-down` carries the hit-tested
- * Cell plus the Cells its Chord Preview would highlight (computed by
- * chordPreviewCells). */
+ * layer translates mouse events into these: every event carries the
+ * hit-tested Cell (with its preview Cells) so the machine stays pure — the
+ * `right-down` payload lets it tell whether Right was pressed on a Revealed
+ * numeric Cell, which is the arming requirement. */
 export type GestureEvent =
-  | { kind: "right-down"; cell: Pos | null }
-  | { kind: "left-down"; cell: { pos: Pos; previewCells: Pos[] } | null }
+  | { kind: "right-down"; cell: ChordTarget | null }
+  | { kind: "left-down"; cell: ChordTarget | null }
+  | { kind: "pointer-move"; cell: ChordTarget | null }
   | { kind: "left-up" }
   | { kind: "right-up" }
   | { kind: "blur" }
@@ -27,12 +38,16 @@ export interface GestureOutput {
   preview: ChordPreview | null;
 }
 
-/** The chord gesture state machine (ADR-0003): pressing Left while Right is
- * held arms a Chord, shows its Chord Preview while Left is held, and solves
- * (Reveals the flagged-consistent neighbors) when Left is released. Pure: no
- * DOM, no I/O — the caller renders the output. */
+/** The chord gesture state machine (ADR-0003): pressing Right on a Revealed
+ * numeric Cell and then Left arms a Chord, shows its Chord Preview while
+ * Left is held — following the pointer over other Revealed numeric Cells —
+ * and solves (Reveals the flagged-consistent neighbors) when Left is
+ * released. Once armed the Preview is driven by Left alone: releasing Right
+ * does not clear it. Pure: no DOM, no I/O — the caller renders the output. */
 export function createGestureMachine() {
   let rightHeld = false;
+  let rightOnNumberCell = false;
+  let chordArmed = false;
   let preview: ChordPreview | null = null;
 
   const clearPreview = (): GestureOutput => {
@@ -40,9 +55,12 @@ export function createGestureMachine() {
     return { preview: null };
   };
 
-  const disarm = (): GestureOutput => {
-    rightHeld = false;
-    return clearPreview();
+  /** Shows the Preview over the given Cell's neighbors, or clears it when the
+   * Cell has none to highlight. Callers have already confirmed isNumericCell. */
+  const setPreview = (cell: ChordTarget): GestureOutput => {
+    preview =
+      cell.previewCells.length > 0 ? { pos: cell.pos, cells: cell.previewCells } : null;
+    return { preview };
   };
 
   return {
@@ -51,11 +69,17 @@ export function createGestureMachine() {
         case "right-down": {
           // The press is remembered for the chord gesture, even off a Cell.
           // A press on a Cell Flags it immediately; the server ignores
-          // Revealed Cells.
+          // Revealed Cells. Only a press on a Revealed numeric Cell enables
+          // arming the Chord (see left-down).
           rightHeld = true;
+          rightOnNumberCell = event.cell?.isNumericCell ?? false;
           const out: GestureOutput = { preview };
           if (event.cell) {
-            out.action = { type: "flag", row: event.cell.row, col: event.cell.col };
+            out.action = {
+              type: "flag",
+              row: event.cell.pos.row,
+              col: event.cell.pos.col,
+            };
           }
           return out;
         }
@@ -69,15 +93,26 @@ export function createGestureMachine() {
               preview,
             };
           }
-          if (event.cell.previewCells.length > 0) {
-            // Arming the Chord: show the Chord Preview over the Cells the
-            // Chord would Reveal. No action is sent yet — the Chord solves
-            // on left-up.
-            preview = { pos: event.cell.pos, cells: event.cell.previewCells };
+          if (rightOnNumberCell) {
+            // Arming the Chord: Right was pressed on a Revealed numeric Cell.
+            // From here on the Preview is driven by Left alone; no action is
+            // sent yet — the Chord solves on left-up.
+            chordArmed = true;
+            return setPreview(event.cell);
           }
           return { preview };
         }
+        case "pointer-move": {
+          if (!chordArmed) {
+            return { preview };
+          }
+          if (!event.cell || !event.cell.isNumericCell) {
+            return clearPreview();
+          }
+          return setPreview(event.cell);
+        }
         case "left-up": {
+          chordArmed = false;
           if (preview) {
             const pos = preview.pos;
             preview = null;
@@ -85,13 +120,20 @@ export function createGestureMachine() {
           }
           return { preview };
         }
-        case "right-up":
-          return disarm();
+        case "right-up": {
+          // Releasing Right does not disarm a Chord in progress: once armed,
+          // the Preview is driven by Left alone.
+          rightHeld = false;
+          return { preview };
+        }
         case "blur":
-          return disarm();
+          rightHeld = false;
+          chordArmed = false;
+          return clearPreview();
         case "pointer-leave":
-          // Leaving the Board disarms the Preview but keeps Right held:
-          // re-entering and pressing Left again re-arms it.
+          // Leaving the Board clears the Preview but keeps the gesture
+          // armed: re-entering and moving over a Revealed numeric Cell
+          // restores it.
           return clearPreview();
       }
     },
