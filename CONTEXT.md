@@ -63,8 +63,12 @@ The elapsed time since the First Click, shown in the top bar; it shows 00:00 whi
 _Avoid_: Clock, stopwatch
 
 **Chord**:
-An action on a Revealed numeric Cell: when the number of Flags around it equals the Cell's number, all remaining unflagged neighboring Cells are Revealed. Triggered by pressing Left while Right is held, only on Revealed numeric Cells; anywhere else it does nothing.
+An action on a Revealed numeric Cell: when the number of Flags around it equals the Cell's number, all remaining unflagged neighboring Cells are Revealed. Triggered by pressing Left while Right is held, only on Revealed numeric Cells; anywhere else it does nothing. The Chord solves (Reveals) when Left is released; while Left is held down the Chord Preview shows first.
 _Avoid_: Combo, sweep
+
+**Chord Preview**:
+The transient highlight shown while the Chord gesture is armed: holding Right and pressing (not yet releasing) Left on a Revealed numeric Cell renders all of its unflagged neighboring Cells as empty Revealed Cells, showing the scope of a pending Chord. It clears when the gesture disarms (Left or Right released, window blurred, or pointer leaves the Board). It is a pure visual — no action is sent — and independent of whether the Chord would actually solve.
+_Avoid_: try-chord, preview
 
 **First Click**:
 The first Reveal of a game. It is always safe, except in Prank Mode: mines are placed only after it, never on or adjacent to the clicked Cell.

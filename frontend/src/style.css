@@ -123,9 +123,13 @@ button:hover {
   font-size: 15px;
 }
 
+.cell-chord-preview,
 .cell-revealed {
   background: var(--revealed);
   border: 1px solid #b6b6bc;
+}
+
+.cell-revealed {
   color: #1a1a1f;
 }
 
