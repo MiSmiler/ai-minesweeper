@@ -21,7 +21,7 @@ Before executing `git commit`, **show the proposed commit message and wait for c
 
 ### Issue tracker
 
-Issues are tracked as GitHub issues. Use the `gh` CLI for all operations. See `docs/agents/issue-tracker.md`.
+Tickets are tracked in two places: the Local Tracker (`.scratch/<feature>/tickets/`) and the GitHub Tracker (`MiSmiler/ai-minesweeper`). Before creating tickets or specs, always confirm with the user which tracker to use — Local is the default. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
