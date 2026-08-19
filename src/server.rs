@@ -10,6 +10,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
+use tracing::{debug, info, warn};
 
 use crate::core::{CellContent, CellState, Difficulty, Game, GameMode, GameState, Position};
 
@@ -74,7 +75,7 @@ impl Serialize for ContentDto {
 }
 
 /// A player action from the client.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct ActionDto {
     #[serde(rename = "type")]
     pub kind: ActionKind,
@@ -84,7 +85,7 @@ pub struct ActionDto {
     pub difficulty: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ActionKind {
     Reveal,
@@ -209,14 +210,15 @@ pub fn parse_difficulty(s: &str) -> Result<Difficulty, String> {
     }
 }
 
-/// Prints the Seed of a freshly created Game to the terminal so a layout
-/// can be replayed with `--seed`. Plain output until proper logging lands
-/// (issue #27).
-pub fn log_new_game(game: &Game) {
-    println!(
-        "new game: seed={} difficulty={}",
-        game.seed(),
-        difficulty_str(game.difficulty())
+/// Logs a freshly created Game's Seed and difficulty at `info`: the Seed is
+/// the reproducibility anchor for replaying a layout with `--seed`. `source`
+/// distinguishes the initial game from player-triggered New Games.
+pub fn log_new_game(game: &Game, source: &str) {
+    info!(
+        seed = game.seed(),
+        difficulty = difficulty_str(game.difficulty()),
+        source,
+        "new game"
     );
 }
 
@@ -231,10 +233,30 @@ pub async fn post_action(
     Json(action): Json<ActionDto>,
 ) -> Result<Json<StateDto>, (StatusCode, String)> {
     let mut game = app.game.lock().unwrap();
-    let created = apply_action(&mut game, app.mode, app.seed, &action)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let before = game.game_state();
+    let created = apply_action(&mut game, app.mode, app.seed, &action).map_err(|e| {
+        // Malformed actions are client bugs; the raw payload makes them
+        // diagnosable from the log alone.
+        warn!(action = ?action, error = %e, "rejected action");
+        (StatusCode::BAD_REQUEST, e)
+    })?;
     if created.is_some() {
-        log_new_game(&game);
+        log_new_game(&game, "player");
+    }
+    let after = game.game_state();
+    debug!(
+        action = ?action,
+        from = game_state_str(before),
+        to = game_state_str(after),
+        "action applied"
+    );
+    if before != after && matches!(after, GameState::Won | GameState::Lost) {
+        info!(
+            game_state = game_state_str(after),
+            elapsed_secs = game.elapsed().as_secs(),
+            flags_remaining = game.flags_remaining(),
+            "game over"
+        );
     }
     Ok(Json(snapshot(&game)))
 }

@@ -2,6 +2,7 @@ import { fetchState, postAction, type Action, type GameState, type Pos } from ".
 import { chordPreviewCells, isRevealedNumericCell } from "./chordPreview";
 import { createActionController } from "./controller";
 import { createGestureMachine, type ChordTarget, type GestureEvent, type GestureOutput } from "./gesture";
+import { log } from "./log";
 import { formatTimer, renderBoard, renderTopBar } from "./render";
 import "./style.css";
 
@@ -181,7 +182,9 @@ async function main(): Promise<void> {
     window.addEventListener("blur", onWindowBlur);
     window.setInterval(() => void pollTimer(), 1000);
   } catch (err) {
-    boardEl.textContent = `Failed to load game: ${err instanceof Error ? err.message : err}`;
+    const message = err instanceof Error ? err.message : err;
+    log.error(`Failed to load game: ${message}`);
+    boardEl.textContent = `Failed to load game: ${message}`;
   }
 }
 

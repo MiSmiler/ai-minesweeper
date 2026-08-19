@@ -8,6 +8,8 @@ use axum::Router;
 use axum::routing::{get, post};
 use clap::Parser;
 use tower_http::services::{ServeDir, ServeFile};
+use tracing::info;
+use tracing_subscriber::EnvFilter;
 
 use crate::core::{Difficulty, Game, GameMode};
 use crate::server::AppState;
@@ -38,6 +40,14 @@ struct Cli {
 
 #[tokio::main]
 async fn main() {
+    // Logging is initialized before anything else so every startup path is
+    // visible; RUST_LOG overrides the default `info` level (issue #27).
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .init();
+
     let cli = Cli::parse();
     let mode = if cli.prank {
         GameMode::Prank
@@ -47,7 +57,7 @@ async fn main() {
 
     let seed = cli.seed.unwrap_or_else(rand::random);
     let game = Game::with_seed(Difficulty::Beginner, mode, seed);
-    server::log_new_game(&game);
+    server::log_new_game(&game, "startup");
     let state = Arc::new(AppState {
         game: std::sync::Mutex::new(game),
         mode,
@@ -69,6 +79,16 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("failed to bind");
-    println!("Minesweeper web UI at http://{addr}");
+    let mode_str = match mode {
+        GameMode::Classic => "classic",
+        GameMode::Prank => "prank",
+    };
+    info!(
+        host = %cli.host,
+        port = cli.port,
+        mode = mode_str,
+        seed,
+        "Minesweeper web UI ready"
+    );
     axum::serve(listener, app).await.expect("server error");
 }

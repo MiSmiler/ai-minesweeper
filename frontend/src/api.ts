@@ -1,5 +1,7 @@
 // Wire types mirroring the server DTOs (src/server.rs).
 
+import { log } from "./log";
+
 export type GameStateName = "ready" | "playing" | "won" | "lost";
 export type Difficulty = "beginner" | "intermediate" | "expert";
 export type CellState = "hidden" | "flagged" | "revealed";
@@ -36,7 +38,10 @@ export type Action =
 /** Fetches the current game state. */
 export async function fetchState(): Promise<GameState> {
   const res = await fetch("/state");
-  if (!res.ok) throw new Error(`GET /state failed: ${res.status}`);
+  if (!res.ok) {
+    log.error(`GET /state failed: ${res.status}`);
+    throw new Error(`GET /state failed: ${res.status}`);
+  }
   return (await res.json()) as GameState;
 }
 
@@ -47,6 +52,9 @@ export async function postAction(action: Action): Promise<GameState> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(action),
   });
-  if (!res.ok) throw new Error(`POST /action failed: ${res.status}`);
+  if (!res.ok) {
+    log.error(`POST /action failed: ${res.status}`, action);
+    throw new Error(`POST /action failed: ${res.status}`);
+  }
   return (await res.json()) as GameState;
 }
