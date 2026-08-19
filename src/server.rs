@@ -13,11 +13,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::{CellContent, CellState, Difficulty, Game, GameMode, GameState, Position};
 
-/// The shared server state: the single live Game plus the fixed GameMode.
-/// Mirrors the terminal `App`: one game at a time, mode set once at launch.
+/// The shared server state: the single live Game, the fixed GameMode, and
+/// the Seed policy. Mirrors the terminal `App`: one game at a time, mode
+/// set once at launch.
 pub struct AppState {
     pub game: Mutex<Game>,
     pub mode: GameMode,
+    /// The Seed pinned for every game of this session (`--seed`); `None`
+    /// draws a fresh random Seed per game.
+    pub seed: Option<u32>,
 }
 
 // --- Wire DTOs ---
@@ -157,17 +161,24 @@ pub fn snapshot(game: &Game) -> StateDto {
     }
 }
 
-/// Applies an action to the game, replacing it for a new-game. Returns an
-/// error message for malformed actions (missing coordinates, bad difficulty).
-pub fn apply_action(game: &mut Game, mode: GameMode, action: &ActionDto) -> Result<(), String> {
+/// Applies an action to the game, replacing it for a new-game. Returns the
+/// Seed of a newly created game (`None` for other actions), or an error
+/// message for malformed actions (missing coordinates, bad difficulty).
+pub fn apply_action(
+    game: &mut Game,
+    mode: GameMode,
+    fixed_seed: Option<u32>,
+    action: &ActionDto,
+) -> Result<Option<u32>, String> {
     match action.kind {
         ActionKind::NewGame => {
             let difficulty = match &action.difficulty {
                 Some(raw) => parse_difficulty(raw)?,
                 None => game.difficulty(),
             };
-            *game = Game::new(difficulty, mode);
-            Ok(())
+            let seed = fixed_seed.unwrap_or_else(rand::random);
+            *game = Game::with_seed(difficulty, mode, seed);
+            Ok(Some(seed))
         }
         ActionKind::Reveal | ActionKind::Flag | ActionKind::Chord => {
             let (row, col) = match (action.row, action.col) {
@@ -181,7 +192,7 @@ pub fn apply_action(game: &mut Game, mode: GameMode, action: &ActionDto) -> Resu
                 ActionKind::Chord => game.chord(pos),
                 ActionKind::NewGame => unreachable!(),
             }
-            Ok(())
+            Ok(None)
         }
     }
 }
@@ -198,6 +209,17 @@ pub fn parse_difficulty(s: &str) -> Result<Difficulty, String> {
     }
 }
 
+/// Prints the Seed of a freshly created Game to the terminal so a layout
+/// can be replayed with `--seed`. Plain output until proper logging lands
+/// (issue #27).
+pub fn log_new_game(game: &Game) {
+    println!(
+        "new game: seed={} difficulty={}",
+        game.seed(),
+        difficulty_str(game.difficulty())
+    );
+}
+
 // --- Handlers ---
 
 pub async fn get_state(State(app): State<Arc<AppState>>) -> Json<StateDto> {
@@ -209,7 +231,11 @@ pub async fn post_action(
     Json(action): Json<ActionDto>,
 ) -> Result<Json<StateDto>, (StatusCode, String)> {
     let mut game = app.game.lock().unwrap();
-    apply_action(&mut game, app.mode, &action).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let created = apply_action(&mut game, app.mode, app.seed, &action)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    if created.is_some() {
+        log_new_game(&game);
+    }
     Ok(Json(snapshot(&game)))
 }
 
@@ -252,10 +278,18 @@ mod tests {
 
     #[test]
     fn reveal_action_places_mines_and_starts_playing() {
-        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
+        // Preset Mines so the First Click is deterministically safe: #19
+        // removed the protection, so a random game could lose on (0, 0).
+        // Two Mines adjacent to (0, 0) make it reveal a Number, not flood.
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 1), Position::new(1, 0)],
+        );
         apply_action(
             &mut game,
             GameMode::Classic,
+            None,
             &action(ActionKind::Reveal, Some(0), Some(0), None),
         )
         .unwrap();
@@ -268,6 +302,7 @@ mod tests {
         apply_action(
             &mut game,
             GameMode::Classic,
+            None,
             &action(ActionKind::NewGame, None, None, Some("expert")),
         )
         .unwrap();
@@ -281,6 +316,7 @@ mod tests {
         apply_action(
             &mut game,
             GameMode::Classic,
+            None,
             &action(ActionKind::NewGame, None, None, None),
         )
         .unwrap();
@@ -293,6 +329,7 @@ mod tests {
         let err = apply_action(
             &mut game,
             GameMode::Classic,
+            None,
             &action(ActionKind::Reveal, None, None, None),
         )
         .unwrap_err();
@@ -305,6 +342,7 @@ mod tests {
         let err = apply_action(
             &mut game,
             GameMode::Classic,
+            None,
             &action(ActionKind::NewGame, None, None, Some("insane")),
         )
         .unwrap_err();
@@ -317,6 +355,7 @@ mod tests {
         apply_action(
             &mut game,
             GameMode::Prank,
+            None,
             &action(ActionKind::Reveal, Some(0), Some(0), None),
         )
         .unwrap();
@@ -382,5 +421,69 @@ mod tests {
             "\"mine\""
         );
         assert_eq!(serde_json::to_string(&ContentDto::Number(3)).unwrap(), "3");
+    }
+
+    #[test]
+    fn fixed_seed_is_reused_for_every_new_game() {
+        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
+        apply_action(
+            &mut game,
+            GameMode::Classic,
+            Some(42),
+            &action(ActionKind::NewGame, None, None, None),
+        )
+        .unwrap();
+        assert_eq!(game.seed(), 42);
+        apply_action(
+            &mut game,
+            GameMode::Classic,
+            Some(42),
+            &action(ActionKind::NewGame, None, None, Some("expert")),
+        )
+        .unwrap();
+        assert_eq!(game.seed(), 42);
+    }
+
+    #[test]
+    fn new_game_without_fixed_seed_draws_fresh_seeds() {
+        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
+        apply_action(
+            &mut game,
+            GameMode::Classic,
+            None,
+            &action(ActionKind::NewGame, None, None, None),
+        )
+        .unwrap();
+        let first = game.seed();
+        apply_action(
+            &mut game,
+            GameMode::Classic,
+            None,
+            &action(ActionKind::NewGame, None, None, None),
+        )
+        .unwrap();
+        assert_ne!(game.seed(), first);
+    }
+
+    #[test]
+    fn new_game_action_reports_the_created_seed() {
+        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
+        let seed = apply_action(
+            &mut game,
+            GameMode::Classic,
+            Some(7),
+            &action(ActionKind::NewGame, None, None, None),
+        )
+        .unwrap()
+        .expect("a new game was created");
+        assert_eq!(seed, 7);
+        let created = apply_action(
+            &mut game,
+            GameMode::Classic,
+            None,
+            &action(ActionKind::Reveal, Some(0), Some(0), None),
+        )
+        .unwrap();
+        assert_eq!(created, None);
     }
 }

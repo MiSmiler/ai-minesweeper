@@ -21,6 +21,12 @@ struct Cli {
     #[arg(long)]
     prank: bool,
 
+    /// Pin one Seed for every game of this session: each Difficulty
+    /// reproduces the same Mine layout. Absent, every New Game draws a
+    /// fresh random Seed, printed to the terminal.
+    #[arg(long)]
+    seed: Option<u32>,
+
     /// Port to listen on.
     #[arg(long, default_value_t = 8080)]
     port: u16,
@@ -39,9 +45,13 @@ async fn main() {
         GameMode::Classic
     };
 
+    let seed = cli.seed.unwrap_or_else(rand::random);
+    let game = Game::with_seed(Difficulty::Beginner, mode, seed);
+    server::log_new_game(&game);
     let state = Arc::new(AppState {
-        game: std::sync::Mutex::new(Game::new(Difficulty::Beginner, mode)),
+        game: std::sync::Mutex::new(game),
         mode,
+        seed: cli.seed,
     });
 
     // The built frontend (frontend/dist) is served at the root; unknown

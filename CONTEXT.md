@@ -28,11 +28,11 @@ The player-visible state of a Cell: `Hidden` (not yet touched), `Revealed` (show
 _Avoid_: Unopened, opened, marked
 
 **GameState**:
-The state of a game: `Ready` (Board exists but mines are not yet placed), `Playing` (mines placed, in progress), `Won` (all non-Mine Cells Revealed), `Lost` (a Mine was revealed).
+The state of a game: `Ready` (Board exists, no Cell has been Revealed, the Timer has not started), `Playing` (First Click made, in progress), `Won` (all non-Mine Cells Revealed), `Lost` (a Mine was revealed).
 _Avoid_: Status, phase
 
 **Mine**:
-A Cell that ends the game if Revealed. Mines are never placed on or adjacent to the first-clicked Cell.
+A Cell that ends the game if Revealed. In Classic Mode, Mines are placed at Game creation and the First Click is unprotected — it may be a Mine; in Prank Mode, the First Clicked Cell is always a Mine.
 _Avoid_: Bomb
 
 **Flag Budget**:
@@ -71,8 +71,16 @@ The transient highlight shown while the Chord gesture is armed: holding Right an
 _Avoid_: try-chord, preview
 
 **First Click**:
-The first Reveal of a game. It is always safe, except in Prank Mode: mines are placed only after it, never on or adjacent to the clicked Cell.
+The first Reveal of a game; the Timer starts at it. In Classic Mode it has no protection — it may be a Mine; in Prank Mode it is always a Mine, ending the game immediately in `Lost`.
 _Avoid_: Initial click, opening move
+
+**Classic Mode**:
+The standard game variant: Mines are placed when the Game is created, the First Click is unprotected (it may be a Mine), and the Seed pins the layout exactly.
+_Avoid_: Normal mode, standard mode
+
+**Seed**:
+The value fixed when a Game is created that determines the Mine layout. In Classic Mode the layout is fixed at creation, so the Seed alone (with the Difficulty) pins it exactly; in Prank Mode the First Clicked Cell is always a Mine, so the Seed pins the layout only given the First Click. The Seed is a backend detail — the player never sees it — and reproducibility is guaranteed only within the same build.
+_Avoid_: Layout seed, RNG key
 
 **Prank Mode**:
 A game variant in which the First Click is always a Mine, ending the game immediately in `Lost` — the game is unwinnable by design. Enabled by the `--prank` launch parameter; the UI never indicates it is active.
