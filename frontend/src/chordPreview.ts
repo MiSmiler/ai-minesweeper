@@ -12,7 +12,7 @@ const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
   [1, 1],
 ];
 
-function isRevealedNumericCell(state: GameState, row: number, col: number): boolean {
+export function isRevealedNumericCell(state: GameState, row: number, col: number): boolean {
   const cell = state.cells[row * state.cols + col];
   return cell?.state === "revealed" && typeof cell.content === "number" && cell.content > 0;
 }
