@@ -348,6 +348,8 @@ impl Game {
             Some(preset) => preset.clone(),
             None => Self::sample_mines(self.size, self.mine_count, self.seed, Some(first_click)),
         };
+        // `sample_mines` above already forces the First Click in for the
+        // random path; this union only matters for preset Mines (test use).
         if self.mode == GameMode::Prank && !mines.contains(&first_click) {
             mines.push(first_click);
         }
