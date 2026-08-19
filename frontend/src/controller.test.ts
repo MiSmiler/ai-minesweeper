@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Action, CellView, GameState } from "./api";
+import type { Action, GameState } from "./api";
 import { createActionController } from "./controller";
+import { gameState } from "./testUtils";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -10,39 +11,22 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function gameState(elapsed: number): GameState {
-  const cells: CellView[] = [];
-  for (let i = 0; i < 4; i++) {
-    cells.push({ state: "hidden", content: null });
-  }
-  return {
-    game_state: "playing",
-    difficulty: "beginner",
-    rows: 2,
-    cols: 2,
-    flags_remaining: 1,
-    elapsed_secs: elapsed,
-    trigger: null,
-    cells,
-  };
-}
-
 const reveal: Action = { type: "reveal", row: 0, col: 0 };
 const flag: Action = { type: "flag", row: 1, col: 1 };
 
 describe("createActionController", () => {
   it("applies an action through post and resolves with the fresh state", async () => {
-    const post = vi.fn().mockResolvedValue(gameState(5));
+    const post = vi.fn().mockResolvedValue(gameState({ elapsed_secs: 5 }));
     const controller = createActionController(post);
-    await expect(controller.apply(reveal)).resolves.toEqual(gameState(5));
+    await expect(controller.apply(reveal)).resolves.toEqual(gameState({ elapsed_secs: 5 }));
     expect(post).toHaveBeenCalledWith(reveal);
   });
 
   it("resolves the state of every non-superseded action in order", async () => {
-    const post = vi.fn().mockResolvedValue(gameState(7));
+    const post = vi.fn().mockResolvedValue(gameState({ elapsed_secs: 7 }));
     const controller = createActionController(post);
-    await expect(controller.apply(reveal)).resolves.toEqual(gameState(7));
-    await expect(controller.apply(flag)).resolves.toEqual(gameState(7));
+    await expect(controller.apply(reveal)).resolves.toEqual(gameState({ elapsed_secs: 7 }));
+    await expect(controller.apply(flag)).resolves.toEqual(gameState({ elapsed_secs: 7 }));
   });
 
   it("drops the stale response of a superseded action", async () => {
@@ -55,10 +39,10 @@ describe("createActionController", () => {
     const pendingFirst = controller.apply(reveal);
     const pendingSecond = controller.apply(flag);
     // The newer action resolves first; the stale one resolves later.
-    second.resolve(gameState(2));
-    first.resolve(gameState(1));
+    second.resolve(gameState({ elapsed_secs: 2 }));
+    first.resolve(gameState({ elapsed_secs: 1 }));
 
     await expect(pendingFirst).resolves.toBeNull();
-    await expect(pendingSecond).resolves.toEqual(gameState(2));
+    await expect(pendingSecond).resolves.toEqual(gameState({ elapsed_secs: 2 }));
   });
 });

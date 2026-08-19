@@ -13,11 +13,18 @@ export type GestureEvent =
   | { kind: "blur" }
   | { kind: "pointer-leave" };
 
+/** The transient highlight shown while the Chord gesture is armed: the Cell
+ * the Chord would be applied to and the Cells it would Reveal. */
+export interface ChordPreview {
+  pos: Pos;
+  cells: Pos[];
+}
+
 /** The effect of a gesture event: at most one Action to send to the server,
  * and the Chord Preview state to render (`null` when nothing is armed). */
 export interface GestureOutput {
   action?: Action;
-  preview: { pos: Pos; cells: Pos[] } | null;
+  preview: ChordPreview | null;
 }
 
 /** The chord gesture state machine (ADR-0003): pressing Left while Right is
@@ -26,7 +33,17 @@ export interface GestureOutput {
  * DOM, no I/O — the caller renders the output. */
 export function createGestureMachine() {
   let rightHeld = false;
-  let preview: { pos: Pos; cells: Pos[] } | null = null;
+  let preview: ChordPreview | null = null;
+
+  const clearPreview = (): GestureOutput => {
+    preview = null;
+    return { preview: null };
+  };
+
+  const disarm = (): GestureOutput => {
+    rightHeld = false;
+    return clearPreview();
+  };
 
   return {
     handle(event: GestureEvent): GestureOutput {
@@ -69,18 +86,13 @@ export function createGestureMachine() {
           return { preview };
         }
         case "right-up":
-          rightHeld = false;
-          preview = null;
-          return { preview: null };
+          return disarm();
         case "blur":
-          rightHeld = false;
-          preview = null;
-          return { preview: null };
+          return disarm();
         case "pointer-leave":
           // Leaving the Board disarms the Preview but keeps Right held:
           // re-entering and pressing Left again re-arms it.
-          preview = null;
-          return { preview: null };
+          return clearPreview();
       }
     },
   };

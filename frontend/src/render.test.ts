@@ -2,25 +2,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CellView, GameState } from "./api";
 import { formatTimer, renderBoard, renderTopBar } from "./render";
+import { gameState } from "./testUtils";
 
 const cell = (state: CellView["state"], content: CellView["content"]): CellView => ({
   state,
   content,
 });
-
-function gameState(over: Partial<GameState> = {}): GameState {
-  return {
-    game_state: "playing",
-    difficulty: "beginner",
-    rows: 2,
-    cols: 2,
-    flags_remaining: 0,
-    elapsed_secs: 0,
-    trigger: null,
-    cells: [],
-    ...over,
-  };
-}
 
 /** Renders a board into a fresh container and returns its .cell elements. */
 function renderCells(state: GameState): HTMLElement[] {
@@ -69,7 +56,7 @@ describe("renderBoard", () => {
     ]);
   });
 
-  it("sizes the grid to the Board's column count", () => {
+  it("sizes the Board to its column count", () => {
     const container = document.createElement("div");
     renderBoard(gameState({ rows: 3, cols: 4, cells: [] }), container);
     const board = container.firstElementChild as HTMLElement;
