@@ -30,14 +30,14 @@ describe("createGestureMachine", () => {
     expect(out.preview).toBeNull();
   });
 
-  it("sends no action on right-down off a Cell and does not enable arming", () => {
+  it("arms on left-down even when Right was pressed off a Cell, without sending an action", () => {
     const out = run([
       { kind: "right-down", cell: null },
       { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
     ]);
     expect(out[0].action).toBeUndefined();
     expect(out[1].action).toBeUndefined();
-    expect(out[1].preview).toBeNull();
+    expect(out[1].preview).toEqual({ pos: pos(1, 1), cells: [pos(0, 0)] });
   });
 
   it("sends a Reveal action on left-down without Right held, carrying the Position", () => {
@@ -148,17 +148,17 @@ describe("createGestureMachine", () => {
     expect(out[2].action).toEqual({ type: "flag", row: 0, col: 1 });
   });
 
-  it("does not arm when Right was pressed on a non-previewable Cell, and pointer-move does nothing", () => {
+  it("arms when Right was pressed on a non-previewable Cell, rendering on pointer-move over a previewable Cell", () => {
     const out = run([
       rightDown(previewable(1, 1, [])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
+      { kind: "left-down", cell: previewable(1, 1, []) },
       { kind: "pointer-move", cell: previewable(2, 2, [pos(1, 2)]) },
       { kind: "left-up" },
     ]);
     expect(out[1].action).toBeUndefined();
     expect(out[1].preview).toBeNull();
-    expect(out[2].preview).toBeNull();
-    expect(out[3].action).toBeUndefined();
+    expect(out[2].preview).toEqual({ pos: pos(2, 2), cells: [pos(1, 2)] });
+    expect(out[3].action).toEqual({ type: "chord", row: 2, col: 2 });
   });
 
   it("does nothing on pointer-move when no gesture is armed", () => {
@@ -226,14 +226,14 @@ describe("createGestureMachine", () => {
     expect(out[3].action).toBeUndefined();
   });
 
-  it("does not arm on a Left-then-Right order, even when moving over a previewable Cell", () => {
+  it("arms on a Left-then-Right order, rendering on pointer-move over a previewable Cell", () => {
     const out = run([
       { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
       rightDown(previewable(1, 1, [pos(0, 0)])),
       { kind: "pointer-move", cell: previewable(2, 2, [pos(1, 2)]) },
     ]);
     expect(out[0].action).toEqual({ type: "reveal", row: 1, col: 1 });
-    expect(out[2].preview).toBeNull();
+    expect(out[2].preview).toEqual({ pos: pos(2, 2), cells: [pos(1, 2)] });
   });
 
   it("enters the gesture on left-down over a non-previewable Cell, rendering only once the pointer moves over a previewable Cell", () => {
