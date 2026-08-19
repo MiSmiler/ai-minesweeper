@@ -304,7 +304,8 @@ impl Game {
     }
 
     /// After a Reveal, transitions the game to Lost or Won when the
-    /// condition holds, auto-Revealing the Mines on the final board.
+    /// condition holds, resolving the final board: Lost Reveals unflagged
+    /// Mines, Won auto-Flags every Mine.
     fn resolve_end(&mut self, pos: Position) {
         if self.is_mine(pos) {
             self.lose(pos);
@@ -332,28 +333,46 @@ impl Game {
     fn lose(&mut self, pos: Position) {
         self.state = GameState::Lost;
         self.trigger = Some(pos);
-        self.reveal_mines(false);
+        self.reveal_mines();
         self.elapsed_at_end = Some(self.elapsed());
     }
 
-    /// Ends the game as Won, auto-Revealing all Mines on the final board.
+    /// Ends the game as Won, auto-Flagging every Mine on the final board:
+    /// player-placed Flags are kept, the remaining Mines are marked by the
+    /// game.
     fn win(&mut self) {
         self.state = GameState::Won;
-        self.reveal_mines(true);
+        self.auto_flag_mines();
         self.elapsed_at_end = Some(self.elapsed());
     }
 
-    /// Reveals the Mines. When `include_flagged` is false, Flagged Mines
-    /// keep their Flag (Lost board); when true, all Mines are Revealed (Won).
-    fn reveal_mines(&mut self, include_flagged: bool) {
+    /// Reveals the unflagged Mines (the Lost board); wrongly Flagged Cells
+    /// stay Flagged.
+    fn reveal_mines(&mut self) {
         let Some(mines) = self.mines.clone() else {
             return;
         };
         for pos in mines {
-            if include_flagged || self.cell_state(pos) != CellState::Flagged {
+            if self.cell_state(pos) != CellState::Flagged {
                 self.set_cell_state(pos, CellState::Revealed);
             }
         }
+    }
+
+    /// Flags every Mine that is not already Flagged (the Won board). Only
+    /// reachable on a Won board, where every Flag necessarily sits on a
+    /// Mine, so afterwards the Flag count is exactly the Mine count and
+    /// Flags Remaining is zero.
+    fn auto_flag_mines(&mut self) {
+        let Some(mines) = self.mines.clone() else {
+            return;
+        };
+        for pos in mines {
+            if self.cell_state(pos) == CellState::Hidden {
+                self.set_cell_state(pos, CellState::Flagged);
+            }
+        }
+        self.flags = self.mine_count;
     }
 
     pub fn elapsed(&self) -> Duration {
@@ -591,20 +610,19 @@ mod tests {
             Some(CellContent::Number(0))
         );
         // One lone Mine means the flood fill wins instantly: the game is Won
-        // and the Mine is auto-Revealed on the final board.
+        // and the Mine is auto-Flagged on the final board.
         assert_eq!(game.game_state(), GameState::Won);
         assert_eq!(
             game.cell_view(Position::new(4, 4)).state,
-            CellState::Revealed
+            CellState::Flagged
         );
-        assert_eq!(
-            game.cell_view(Position::new(4, 4)).content,
-            Some(CellContent::Mine)
-        );
+        assert_eq!(game.cell_view(Position::new(4, 4)).content, None);
+        // Every Mine is Flagged, so nothing is left to find.
+        assert_eq!(game.flags_remaining(), 0);
     }
 
     #[test]
-    fn revealing_every_non_mine_cell_wins_and_reveals_mines() {
+    fn revealing_every_non_mine_cell_wins_and_auto_flags_mines() {
         let mut game = Game::with_mines(
             Difficulty::Beginner,
             GameMode::Classic,
@@ -619,15 +637,45 @@ mod tests {
             }
         }
         assert_eq!(game.game_state(), GameState::Won);
-        // The Mine is auto-Revealed on the final board.
+        // The Mine is auto-Flagged on the final board.
         assert_eq!(
             game.cell_view(Position::new(0, 0)).state,
-            CellState::Revealed
+            CellState::Flagged
         );
+        assert_eq!(game.cell_view(Position::new(0, 0)).content, None);
+        assert_eq!(game.flags_remaining(), 0);
+    }
+
+    #[test]
+    fn win_keeps_player_flags_and_auto_flags_the_rest() {
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0), Position::new(1, 1)],
+        );
+        // Pre-flag one Mine; the other stays Hidden.
+        game.toggle_flag(Position::new(0, 0));
+        let size = Difficulty::Beginner.size();
+        for row in 0..size.rows {
+            for col in 0..size.cols {
+                let pos = Position::new(row, col);
+                if pos != Position::new(0, 0) && pos != Position::new(1, 1) {
+                    game.reveal(pos);
+                }
+            }
+        }
+        assert_eq!(game.game_state(), GameState::Won);
+        // The player's Flag is kept on the Won board.
         assert_eq!(
-            game.cell_view(Position::new(0, 0)).content,
-            Some(CellContent::Mine)
+            game.cell_view(Position::new(0, 0)).state,
+            CellState::Flagged
         );
+        // The previously Hidden Mine is auto-Flagged.
+        assert_eq!(
+            game.cell_view(Position::new(1, 1)).state,
+            CellState::Flagged
+        );
+        assert_eq!(game.flags_remaining(), 0);
     }
 
     #[test]

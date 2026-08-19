@@ -24,7 +24,7 @@ _Avoid_: cell (as a name for coordinates), coords, point
 One of three classic presets: Beginner (9×9, 10 mines), Intermediate (16×16, 40 mines), Expert (30×16, 99 mines).
 
 **CellState**:
-The player-visible state of a Cell: `Hidden` (not yet touched), `Revealed` (shows its content), or `Flagged` (marked by the player as suspected Mine). There is no question-mark state.
+The player-visible state of a Cell: `Hidden` (not yet touched), `Revealed` (shows its content), or `Flagged` (marked as a suspected Mine — by the player during play, or by the game on a Won board). There is no question-mark state.
 _Avoid_: Unopened, opened, marked
 
 **GameState**:
@@ -55,7 +55,7 @@ The act of opening a Hidden Cell, showing its content. Revealing a Mine loses th
 _Avoid_: Open, uncover, click *(as a synonym for Reveal — the player's input gesture is still called a click; see First Click)*
 
 **Flag**:
-A marker a player places on a Hidden Cell to indicate a suspected Mine. Flagged Cells cannot be Revealed. Flags do not affect the win condition — winning only requires all non-Mine Cells to be Revealed. Any Hidden Cell may be Flagged regardless of how many Flags are already placed (Over-flagging); removing a Flag is always allowed.
+A marker a player places on a Hidden Cell to indicate a suspected Mine. On a Won board, the game auto-Flags every Mine: player-placed Flags are kept, the rest are marked by the game. Flagged Cells cannot be Revealed. Flags do not affect the win condition — winning only requires all non-Mine Cells to be Revealed. Any Hidden Cell may be Flagged regardless of how many Flags are already placed (Over-flagging); removing a Flag is always allowed.
 _Avoid_: Mark, bookmark
 
 **Timer**:

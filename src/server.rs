@@ -353,6 +353,29 @@ mod tests {
     }
 
     #[test]
+    fn won_snapshot_flags_all_mines() {
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0)],
+        );
+        let size = Difficulty::Beginner.size();
+        for row in 0..size.rows {
+            for col in 0..size.cols {
+                if Position::new(row, col) != Position::new(0, 0) {
+                    game.reveal(Position::new(row, col));
+                }
+            }
+        }
+        let dto = snapshot(&game);
+        assert_eq!(dto.game_state, "won");
+        assert_eq!(dto.flags_remaining, 0);
+        // The lone Mine is serialized as a Flag on the Won board.
+        assert_eq!(dto.cells[0].state, "flagged");
+        assert_eq!(dto.cells[0].content, None);
+    }
+
+    #[test]
     fn content_serializes_to_the_wire_shape() {
         assert_eq!(
             serde_json::to_string(&ContentDto::Mine).unwrap(),
