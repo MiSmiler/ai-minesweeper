@@ -1,4 +1,5 @@
-import { fetchState, postAction, type Action, type GameState } from "./api";
+import { fetchState, postAction, type Action, type GameState, type Pos } from "./api";
+import { chordPreviewCells } from "./chordPreview";
 import { formatTimer, renderBoard, renderTopBar } from "./render";
 import "./style.css";
 
@@ -9,9 +10,12 @@ let state: GameState | null = null;
 // is rendered, so a slow earlier response can never show stale state.
 let seq = 0;
 
-// Chord gesture state: pressing Left while Right is held triggers a Chord
-// instead of a Reveal (ADR-0003).
+// Chord gesture state: pressing Left while Right is held arms a Chord, which
+// shows a Chord Preview while Left is held down and solves when Left is
+// released (ADR-0003).
 let rightHeld = false;
+// The Cell whose Chord Preview is currently showing; null when none is.
+let preview: Pos | null = null;
 
 async function applyAction(action: Action): Promise<void> {
   const id = ++seq;
@@ -63,25 +67,57 @@ function handleRightDown(ev: MouseEvent): void {
 
 function handleLeftDown(ev: MouseEvent): void {
   const cell = cellAt(ev);
-  if (!cell) return;
+  if (!cell || !state) return;
   ev.preventDefault();
   const row = Number(cell.dataset.row);
   const col = Number(cell.dataset.col);
   if (rightHeld) {
-    // Chord: Reveals the unflagged neighbors of a Revealed numeric Cell;
-    // a no-op anywhere else (Hidden Cells, zero Cells, mismatched counts).
-    void applyAction({ type: "chord", row, col });
-  } else {
-    void applyAction({ type: "reveal", row, col });
+    // Arming the Chord: show the Chord Preview over the Cells the Chord
+    // would Reveal. No action is sent yet — the Chord solves on Left
+    // release (see onWindowMouseUp).
+    const cells = chordPreviewCells(state, row, col);
+    if (cells.length > 0) {
+      preview = { row, col };
+      for (const pos of cells) {
+        boardEl
+          .querySelector(`[data-row="${pos.row}"][data-col="${pos.col}"]`)
+          ?.classList.add("cell-chord-preview");
+      }
+    }
+    return;
   }
+  void applyAction({ type: "reveal", row, col });
+}
+
+function clearChordPreview(): void {
+  if (!preview) return;
+  preview = null;
+  boardEl
+    .querySelectorAll(".cell-chord-preview")
+    .forEach((el) => el.classList.remove("cell-chord-preview"));
 }
 
 function onWindowMouseUp(ev: MouseEvent): void {
-  if (ev.button === 2) rightHeld = false;
+  if (ev.button === 2) {
+    rightHeld = false;
+    clearChordPreview();
+  } else if (ev.button === 0 && rightHeld && preview) {
+    // Solving the Chord: the preview disarms and the flagged-consistent
+    // neighbors Reveal. Only sent when a Chord Preview was shown, i.e. the
+    // pressed Cell was a Revealed numeric Cell.
+    const { row, col } = preview;
+    clearChordPreview();
+    void applyAction({ type: "chord", row, col });
+  }
 }
 
 function onWindowBlur(): void {
   rightHeld = false;
+  clearChordPreview();
+}
+
+function onBoardPointerLeave(): void {
+  clearChordPreview();
 }
 
 function onContextMenu(ev: Event): void {
@@ -111,6 +147,7 @@ async function main(): Promise<void> {
     renderBoard(state, boardEl);
     renderTopBar(state);
     boardEl.addEventListener("mousedown", onBoardMouseDown);
+    boardEl.addEventListener("pointerleave", onBoardPointerLeave);
     boardEl.addEventListener("contextmenu", onContextMenu);
     document.querySelector(".top-bar")!.addEventListener("click", onTopBarClick);
     window.addEventListener("mouseup", onWindowMouseUp);
