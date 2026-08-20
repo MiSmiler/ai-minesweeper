@@ -21,7 +21,7 @@ Before executing `git commit`, **show the proposed commit message and wait for c
 
 ### Issue tracker
 
-Tickets live in two trackers: Local (`.scratch/<feature>/tickets/`) and GitHub (the current repo's issues, resolved via `gh` — never hardcoded). Creating tickets/specs: `/to-tickets`/`/to-spec` confirm Local (default) or GitHub; direct path: `/to-tickets-local` or `/to-tickets-github`. See `docs/agents/issue-tracker.md`.
+Issues are tracked as local markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
