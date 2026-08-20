@@ -213,7 +213,11 @@ export function createGestureMachine() {
           rightHeld: true,
           rightOnRevealed: event.cell?.isRevealed ?? false,
         };
-        if (event.cell) {
+        // A Flag only makes sense on a non-Revealed Cell (the server no-ops
+        // it on Revealed Cells), so skip the round trip there: an arming
+        // right-down sends nothing and no in-flight response can re-render
+        // the Board mid-gesture and wipe an armed Chord's Preview.
+        if (event.cell && !event.cell.isRevealed) {
           const action: Action = {
             type: "flag",
             row: event.cell.pos.row,

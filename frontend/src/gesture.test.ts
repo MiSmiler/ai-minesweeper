@@ -47,10 +47,19 @@ const pointerMove = (cell: CellHit | null): GestureEvent => ({
 
 describe("createGestureMachine", () => {
   describe("flag and idle", () => {
-    it("sends a Flag on right-down on a Cell, reporting it as an action", () => {
-      const [out] = run([rightDown(previewable(1, 2, [pos(0, 1)]))]);
+    it("sends a Flag on right-down on a Hidden Cell, reporting it as an action", () => {
+      const [out] = run([rightDown(previewable(1, 2, [], false, false))]);
       expect(out.action).toEqual({ type: "flag", row: 1, col: 2 });
       expect(out.effects).toEqual(["flag"]);
+      expect(out.phaseChange).toBeUndefined();
+      expect(out.pressPreview).toBeNull();
+      expect(out.chordPreview).toBeNull();
+    });
+
+    it("does not send a Flag on right-down on a Revealed Cell", () => {
+      const [out] = run([rightDown(previewable(1, 2, [pos(0, 1)]))]);
+      expect(out.action).toBeUndefined();
+      expect(out.effects).toEqual([]);
       expect(out.phaseChange).toBeUndefined();
       expect(out.pressPreview).toBeNull();
       expect(out.chordPreview).toBeNull();
