@@ -83,12 +83,6 @@ async fn main() {
         GameMode::Classic => "classic",
         GameMode::Prank => "prank",
     };
-    info!(
-        host = %cli.host,
-        port = cli.port,
-        mode = mode_str,
-        seed,
-        "Minesweeper web UI ready"
-    );
+    info!(mode = mode_str, "Minesweeper web UI at http://{addr}");
     axum::serve(listener, app).await.expect("server error");
 }
