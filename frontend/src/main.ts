@@ -39,9 +39,17 @@ function renderPreview(preview: GestureOutput["preview"]): void {
   }
 }
 
-/** Feeds a gesture event to the machine and applies its output. */
+/** Feeds a gesture event to the machine and applies its output. State
+ * transitions are traced at `debug` so gesture problems are diagnosable from
+ * the console alone (the machine itself stays pure). */
 function dispatchGesture(event: GestureEvent): void {
   const out = gesture.handle(event);
+  if (out.transition) {
+    log.debug(`gesture ${out.transition}`, {
+      event: event.kind,
+      ...(out.action ? { action: out.action } : {}),
+    });
+  }
   renderPreview(out.preview);
   if (out.action) {
     void applyAndRender(out.action);
@@ -78,19 +86,23 @@ function chordTarget(state: GameState, pos: Pos): ChordTarget {
   };
 }
 
+function handleRightDown(ev: MouseEvent): void {
+  const cell = cellAt(ev);
+  if (cell) {
+    ev.preventDefault();
+    dispatchGesture({
+      kind: "right-down",
+      cell: state ? chordTarget(state, cellPos(cell)) : null,
+    });
+  } else {
+    // The press is still remembered for the chord gesture, even off a Cell.
+    dispatchGesture({ kind: "right-down", cell: null });
+  }
+}
+
 function onBoardMouseDown(ev: MouseEvent): void {
   if (ev.button === 2) {
-    const cell = cellAt(ev);
-    if (cell) {
-      ev.preventDefault();
-      dispatchGesture({
-        kind: "right-down",
-        cell: state ? chordTarget(state, cellPos(cell)) : null,
-      });
-    } else {
-      // The press is still remembered for the chord gesture, even off a Cell.
-      dispatchGesture({ kind: "right-down", cell: null });
-    }
+    handleRightDown(ev);
   } else if (ev.button === 0) {
     handleLeftDown(ev);
   }

@@ -259,4 +259,76 @@ describe("createGestureMachine", () => {
     expect(out[2].preview).toEqual({ pos: pos(2, 2), cells: [pos(1, 2)] });
     expect(out[3].action).toEqual({ type: "chord", row: 2, col: 2 });
   });
+
+  it("reports 'flag' and 'reveal' for plain single-button presses", () => {
+    const [flagOut] = run([rightDown(previewable(1, 2, [pos(0, 1)]))]);
+    expect(flagOut.transition).toBe("flag");
+    const [revealOut] = run([{ kind: "left-down", cell: previewable(3, 4, []) }]);
+    expect(revealOut.transition).toBe("reveal");
+  });
+
+  it("reports 'armed' on arming, in either press order, even when the press was off a Cell", () => {
+    const rightFirst = run([
+      rightDown(previewable(1, 1, [pos(0, 0)])),
+      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
+    ]);
+    expect(rightFirst[1].transition).toBe("armed");
+    const leftFirst = run([
+      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
+      rightDown(previewable(1, 1, [pos(0, 0)])),
+    ]);
+    expect(leftFirst[1].transition).toBe("armed");
+    const offCell = run([
+      { kind: "right-down", cell: null },
+      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
+    ]);
+    expect(offCell[1].transition).toBe("armed");
+  });
+
+  it("reports 'preview-set' when the Preview appears and 'preview-moved' when it follows the pointer", () => {
+    // Arming over a non-previewable Cell leaves no Preview; it appears on
+    // the first pointer-move over a previewable Cell, then moves with it.
+    const out = run([
+      rightDown(previewable(1, 1, [])),
+      { kind: "left-down", cell: previewable(1, 1, []) },
+      { kind: "pointer-move", cell: previewable(2, 2, [pos(1, 2)]) },
+      { kind: "pointer-move", cell: previewable(3, 3, [pos(2, 3)]) },
+    ]);
+    expect(out[1].transition).toBe("armed");
+    expect(out[2].transition).toBe("preview-set");
+    expect(out[3].transition).toBe("preview-moved");
+  });
+
+  it("reports 'preview-cleared' when the Preview disappears, and nothing when it was already absent", () => {
+    const out = run([
+      rightDown(previewable(1, 1, [pos(0, 0)])),
+      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
+      { kind: "pointer-move", cell: previewable(3, 3, []) },
+      { kind: "pointer-move", cell: previewable(4, 4, []) },
+    ]);
+    expect(out[2].transition).toBe("preview-cleared");
+    expect(out[3].transition).toBeUndefined();
+  });
+
+  it("reports 'chord' when the Chord solves and 'disarmed' on a plain release", () => {
+    const out = run([
+      rightDown(previewable(1, 1, [pos(0, 0)])),
+      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
+      { kind: "left-up" },
+    ]);
+    expect(out[2].transition).toBe("chord");
+    const [plainUp] = run([{ kind: "left-up" }]);
+    expect(plainUp.transition).toBe("disarmed");
+  });
+
+  it("reports 'preview-cleared' on pointer-leave with a Preview shown and 'disarmed' on blur", () => {
+    const out = run([
+      rightDown(previewable(1, 1, [pos(0, 0)])),
+      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
+      { kind: "pointer-leave" },
+      { kind: "blur" },
+    ]);
+    expect(out[2].transition).toBe("preview-cleared");
+    expect(out[3].transition).toBe("disarmed");
+  });
 });
