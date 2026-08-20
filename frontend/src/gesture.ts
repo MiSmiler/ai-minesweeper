@@ -2,8 +2,8 @@ import type { Action, Pos } from "./api";
 
 /** A hit-tested Cell plus the Cells its Chord Preview would highlight
  * (computed by the caller from the game state), and whether it is a Revealed
- * numeric Cell — the arming criterion for the Chord, independent of how many
- * neighbors the Preview would highlight. */
+ * numeric Cell — the criterion for showing the Chord Preview, independent of
+ * how many neighbors the Preview would highlight. */
 export interface ChordTarget {
   pos: Pos;
   previewCells: Pos[];
@@ -13,8 +13,8 @@ export interface ChordTarget {
 /** Abstract player-input events fed to the chord gesture machine. The DOM
  * layer translates mouse events into these: every event carries the
  * hit-tested Cell (with its preview Cells) so the machine stays pure — the
- * `right-down` payload lets it tell whether Right was pressed on a Revealed
- * numeric Cell, which is the arming requirement. */
+ * Cell's `isNumericCell` flag is the criterion for showing the Chord
+ * Preview. */
 export type GestureEvent =
   | { kind: "right-down"; cell: ChordTarget | null }
   | { kind: "left-down"; cell: ChordTarget | null }

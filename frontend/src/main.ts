@@ -77,7 +77,8 @@ function cellPos(cell: HTMLElement): Pos {
 }
 
 /** Builds the hit-test payload for the gesture machine: the Cell's Preview
- * scope plus whether it is a Revealed numeric Cell (the arming criterion). */
+ * scope plus whether it is a Revealed numeric Cell (the criterion for
+ * showing the Chord Preview). */
 function chordTarget(state: GameState, pos: Pos): ChordTarget {
   return {
     pos,

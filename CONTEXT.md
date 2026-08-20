@@ -63,8 +63,12 @@ The elapsed time since the First Click, shown in the top bar; it shows 00:00 whi
 _Avoid_: Clock, stopwatch
 
 **Chord**:
-An action on a Revealed numeric Cell: when the number of Flags around it equals the Cell's number, all remaining unflagged neighboring Cells are Revealed. Armed by holding Left and Right together and moving the pointer over a Revealed numeric Cell, in any button order and wherever Right went down; the gesture does nothing elsewhere. The Chord solves (Reveals) when Left is released; while Left is held down the Chord Preview follows the pointer.
+An action on a Revealed numeric Cell: when the number of Flags around it equals the Cell's number, all remaining unflagged neighboring Cells are Revealed. It is armed by holding the Left and Right buttons together (see **Arm**). While armed, moving the pointer over a Revealed numeric Cell shows the Chord Preview, which follows the pointer until Left is released; releasing Left solves the Chord (Reveals the Preview's scope), and the gesture does nothing while the pointer is off a Revealed numeric Cell.
 _Avoid_: Combo, sweep
+
+**Arm**:
+The act of putting the Chord gesture into its ready state by holding the Left and Right buttons together, in any button order and wherever Right went down. An armed Chord stays inert until the pointer is over a Revealed numeric Cell, where it shows the Chord Preview; when Left is released with a Preview shown, the Chord solves (Reveals), and a plain release just disarms. The gesture disarms when Left is released or the window loses focus; releasing Right alone does not disarm it, and moving the pointer off the Board keeps it armed.
+_Avoid_: Trigger, activate, engage
 
 **Chord Preview**:
 The transient highlight shown while the Chord gesture is armed: holding Left and Right together and moving the pointer over a Revealed numeric Cell renders all of its unflagged neighboring Cells as empty Revealed Cells, showing the scope of the pending Chord. While Left is held, moving the pointer over other Revealed numeric Cells moves the Preview (and the pending Chord's target) with it; the Preview clears whenever the pointer is not over a Revealed numeric Cell. Releasing Right does not clear it — once armed, the Preview is driven by Left alone. It also clears when Left is released, the window blurs, or the pointer leaves the Board. It is a pure visual — no action is sent — and independent of whether the Chord would actually solve.
