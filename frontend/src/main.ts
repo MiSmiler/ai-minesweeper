@@ -1,7 +1,18 @@
-import { fetchState, postAction, type Action, type GameState, type Pos } from "./api";
+import {
+  fetchState,
+  postAction,
+  type Action,
+  type GameState,
+  type Pos,
+} from "./api";
 import { chordPreviewCells, isRevealedNumericCell } from "./chordPreview";
 import { createActionController } from "./controller";
-import { createGestureMachine, type ChordTarget, type GestureEvent, type GestureOutput } from "./gesture";
+import {
+  createGestureMachine,
+  type ChordTarget,
+  type GestureEvent,
+  type GestureOutput,
+} from "./gesture";
 import { log } from "./log";
 import { formatTimer, renderBoard, renderTopBar } from "./render";
 import "./style.css";
@@ -112,7 +123,10 @@ function handleLeftDown(ev: MouseEvent): void {
   const cell = cellAt(ev);
   if (!cell || !state) return;
   ev.preventDefault();
-  dispatchGesture({ kind: "left-down", cell: chordTarget(state, cellPos(cell)) });
+  dispatchGesture({
+    kind: "left-down",
+    cell: chordTarget(state, cellPos(cell)),
+  });
 }
 
 function onWindowMouseUp(ev: MouseEvent): void {
@@ -189,7 +203,9 @@ async function main(): Promise<void> {
     boardEl.addEventListener("pointermove", onBoardPointerMove);
     boardEl.addEventListener("pointerleave", onBoardPointerLeave);
     boardEl.addEventListener("contextmenu", onContextMenu);
-    document.querySelector(".top-bar")!.addEventListener("click", onTopBarClick);
+    document
+      .querySelector(".top-bar")!
+      .addEventListener("click", onTopBarClick);
     window.addEventListener("mouseup", onWindowMouseUp);
     window.addEventListener("blur", onWindowBlur);
     window.setInterval(() => void pollTimer(), 1000);

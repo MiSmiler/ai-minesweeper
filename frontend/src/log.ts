@@ -28,6 +28,6 @@ const override =
 // Tests stay silenced even when an override is set (the suite asserts
 // behavior, not log output).
 const minLevel =
-  import.meta.env.MODE === "test" ? 6 : override ?? defaultMinLevel;
+  import.meta.env.MODE === "test" ? 6 : (override ?? defaultMinLevel);
 
 export const log = new Logger({ minLevel });

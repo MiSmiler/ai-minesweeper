@@ -5,7 +5,11 @@ import { chordPreviewCells } from "./chordPreview";
 type CellSpec = { state: CellState; content: CellContent };
 
 /** Builds a GameState from a sparse map of cell specs; default is Hidden. */
-function mkState(rows: number, cols: number, cells: Record<string, CellSpec>): GameState {
+function mkState(
+  rows: number,
+  cols: number,
+  cells: Record<string, CellSpec>,
+): GameState {
   const flat: CellSpec[] = [];
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
@@ -33,13 +37,24 @@ describe("chordPreviewCells", () => {
   it("highlights every Hidden neighbor of a Revealed numeric Cell", () => {
     const state = mkState(3, 3, { "1,1": { state: "revealed", content: 1 } });
     expect(cellKeys(chordPreviewCells(state, 1, 1))).toEqual([
-      "0,0", "0,1", "0,2", "1,0", "1,2", "2,0", "2,1", "2,2",
+      "0,0",
+      "0,1",
+      "0,2",
+      "1,0",
+      "1,2",
+      "2,0",
+      "2,1",
+      "2,2",
     ]);
   });
 
   it("is empty on a corner Cell with its three neighbors Hidden", () => {
     const state = mkState(3, 3, { "0,0": { state: "revealed", content: 1 } });
-    expect(cellKeys(chordPreviewCells(state, 0, 0))).toEqual(["0,1", "1,0", "1,1"]);
+    expect(cellKeys(chordPreviewCells(state, 0, 0))).toEqual([
+      "0,1",
+      "1,0",
+      "1,1",
+    ]);
   });
 
   it("is empty when the Cell is Hidden", () => {
@@ -53,7 +68,9 @@ describe("chordPreviewCells", () => {
   });
 
   it("is empty when the Cell is a Revealed Mine", () => {
-    const state = mkState(2, 2, { "0,0": { state: "revealed", content: "mine" } });
+    const state = mkState(2, 2, {
+      "0,0": { state: "revealed", content: "mine" },
+    });
     expect(cellKeys(chordPreviewCells(state, 0, 0))).toEqual([]);
   });
 
@@ -69,7 +86,12 @@ describe("chordPreviewCells", () => {
       "1,0": { state: "revealed", content: 2 },
     });
     expect(cellKeys(chordPreviewCells(state, 1, 1))).toEqual([
-      "0,1", "0,2", "1,2", "2,0", "2,1", "2,2",
+      "0,1",
+      "0,2",
+      "1,2",
+      "2,0",
+      "2,1",
+      "2,2",
     ]);
   });
 
@@ -82,7 +104,12 @@ describe("chordPreviewCells", () => {
       "0,2": { state: "flagged", content: null },
     });
     expect(cellKeys(chordPreviewCells(state, 1, 1))).toEqual([
-      "0,1", "1,0", "1,2", "2,0", "2,1", "2,2",
+      "0,1",
+      "1,0",
+      "1,2",
+      "2,0",
+      "2,1",
+      "2,2",
     ]);
   });
 
