@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Pos } from "./api";
-import { createGestureMachine, type ChordTarget, type GestureEvent, type GestureOutput } from "./gesture";
+import {
+  createGestureMachine,
+  type ChordTarget,
+  type GestureEvent,
+  type GestureOutput,
+} from "./gesture";
 
 const pos = (row: number, col: number): Pos => ({ row, col });
 
@@ -162,7 +167,9 @@ describe("createGestureMachine", () => {
   });
 
   it("does nothing on pointer-move when no gesture is armed", () => {
-    const [out] = run([{ kind: "pointer-move", cell: previewable(1, 1, [pos(0, 0)]) }]);
+    const [out] = run([
+      { kind: "pointer-move", cell: previewable(1, 1, [pos(0, 0)]) },
+    ]);
     expect(out.action).toBeUndefined();
     expect(out.preview).toBeNull();
   });
@@ -263,7 +270,9 @@ describe("createGestureMachine", () => {
   it("reports 'flag' and 'reveal' for plain single-button presses", () => {
     const [flagOut] = run([rightDown(previewable(1, 2, [pos(0, 1)]))]);
     expect(flagOut.transition).toBe("flag");
-    const [revealOut] = run([{ kind: "left-down", cell: previewable(3, 4, []) }]);
+    const [revealOut] = run([
+      { kind: "left-down", cell: previewable(3, 4, []) },
+    ]);
     expect(revealOut.transition).toBe("reveal");
   });
 

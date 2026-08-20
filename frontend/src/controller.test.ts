@@ -18,15 +18,21 @@ describe("createActionController", () => {
   it("applies an action through post and resolves with the fresh state", async () => {
     const post = vi.fn().mockResolvedValue(gameState({ elapsed_secs: 5 }));
     const controller = createActionController(post);
-    await expect(controller.apply(reveal)).resolves.toEqual(gameState({ elapsed_secs: 5 }));
+    await expect(controller.apply(reveal)).resolves.toEqual(
+      gameState({ elapsed_secs: 5 }),
+    );
     expect(post).toHaveBeenCalledWith(reveal);
   });
 
   it("resolves the state of every non-superseded action in order", async () => {
     const post = vi.fn().mockResolvedValue(gameState({ elapsed_secs: 7 }));
     const controller = createActionController(post);
-    await expect(controller.apply(reveal)).resolves.toEqual(gameState({ elapsed_secs: 7 }));
-    await expect(controller.apply(flag)).resolves.toEqual(gameState({ elapsed_secs: 7 }));
+    await expect(controller.apply(reveal)).resolves.toEqual(
+      gameState({ elapsed_secs: 7 }),
+    );
+    await expect(controller.apply(flag)).resolves.toEqual(
+      gameState({ elapsed_secs: 7 }),
+    );
   });
 
   it("drops the stale response of a superseded action", async () => {
@@ -43,6 +49,8 @@ describe("createActionController", () => {
     first.resolve(gameState({ elapsed_secs: 1 }));
 
     await expect(pendingFirst).resolves.toBeNull();
-    await expect(pendingSecond).resolves.toEqual(gameState({ elapsed_secs: 2 }));
+    await expect(pendingSecond).resolves.toEqual(
+      gameState({ elapsed_secs: 2 }),
+    );
   });
 });

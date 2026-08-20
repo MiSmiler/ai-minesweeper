@@ -68,11 +68,16 @@ export function createGestureMachine() {
   let preview: ChordPreview | null = null;
 
   /** True when two Previews name the same Cell and the same highlight set. */
-  const samePreview = (a: ChordPreview | null, b: ChordPreview | null): boolean => {
+  const samePreview = (
+    a: ChordPreview | null,
+    b: ChordPreview | null,
+  ): boolean => {
     if (a === null || b === null) return a === b;
     if (a.pos.row !== b.pos.row || a.pos.col !== b.pos.col) return false;
     if (a.cells.length !== b.cells.length) return false;
-    return a.cells.every((p, i) => p.row === b.cells[i].row && p.col === b.cells[i].col);
+    return a.cells.every(
+      (p, i) => p.row === b.cells[i].row && p.col === b.cells[i].col,
+    );
   };
 
   /** Clears the Preview, reporting the transition only when one was shown. */
@@ -87,10 +92,16 @@ export function createGestureMachine() {
    * Reports a transition only when the Preview actually changed. */
   const setPreview = (cell: ChordTarget): GestureOutput => {
     const next: ChordPreview | null =
-      cell.previewCells.length > 0 ? { pos: cell.pos, cells: cell.previewCells } : null;
+      cell.previewCells.length > 0
+        ? { pos: cell.pos, cells: cell.previewCells }
+        : null;
     if (samePreview(preview, next)) return { preview };
     const transition: GestureTransition =
-      preview === null ? "preview-set" : next === null ? "preview-cleared" : "preview-moved";
+      preview === null
+        ? "preview-set"
+        : next === null
+          ? "preview-cleared"
+          : "preview-moved";
     preview = next;
     return { preview, transition };
   };
@@ -130,7 +141,11 @@ export function createGestureMachine() {
           leftHeld = true;
           if (!rightHeld) {
             return {
-              action: { type: "reveal", row: event.cell.pos.row, col: event.cell.pos.col },
+              action: {
+                type: "reveal",
+                row: event.cell.pos.row,
+                col: event.cell.pos.col,
+              },
               preview,
               transition: "reveal",
             };

@@ -12,9 +12,17 @@ const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
   [1, 1],
 ];
 
-export function isRevealedNumericCell(state: GameState, row: number, col: number): boolean {
+export function isRevealedNumericCell(
+  state: GameState,
+  row: number,
+  col: number,
+): boolean {
   const cell = state.cells[row * state.cols + col];
-  return cell?.state === "revealed" && typeof cell.content === "number" && cell.content > 0;
+  return (
+    cell?.state === "revealed" &&
+    typeof cell.content === "number" &&
+    cell.content > 0
+  );
 }
 
 /** The Cells a Chord Preview highlights: every Hidden neighbor of a Revealed
@@ -22,7 +30,11 @@ export function isRevealedNumericCell(state: GameState, row: number, col: number
  * around the Cell (a mismatched count means the Chord would be a no-op, but
  * the preview still shows its scope). Empty unless the Cell is a Revealed
  * numeric Cell. */
-export function chordPreviewCells(state: GameState, row: number, col: number): Pos[] {
+export function chordPreviewCells(
+  state: GameState,
+  row: number,
+  col: number,
+): Pos[] {
   if (!isRevealedNumericCell(state, row, col)) {
     return [];
   }

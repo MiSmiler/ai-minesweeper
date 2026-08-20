@@ -4,7 +4,10 @@ import type { CellView, GameState } from "./api";
 import { formatTimer, renderBoard, renderTopBar } from "./render";
 import { gameState } from "./testUtils";
 
-const cell = (state: CellView["state"], content: CellView["content"]): CellView => ({
+const cell = (
+  state: CellView["state"],
+  content: CellView["content"],
+): CellView => ({
   state,
   content,
 });
@@ -47,12 +50,20 @@ describe("renderBoard", () => {
       gameState({
         rows: 2,
         cols: 2,
-        cells: [cell("hidden", null), cell("hidden", null), cell("hidden", null), cell("hidden", null)],
+        cells: [
+          cell("hidden", null),
+          cell("hidden", null),
+          cell("hidden", null),
+          cell("hidden", null),
+        ],
       }),
     );
     expect(cells).toHaveLength(4);
     expect(cells.map((el) => `${el.dataset.row},${el.dataset.col}`)).toEqual([
-      "0,0", "0,1", "1,0", "1,1",
+      "0,0",
+      "0,1",
+      "1,0",
+      "1,1",
     ]);
   });
 
@@ -137,7 +148,9 @@ describe("renderTopBar", () => {
   it("highlights the active difficulty button", () => {
     renderTopBar(gameState({ difficulty: "intermediate" }));
     const buttons = document.querySelectorAll<HTMLElement>("[data-difficulty]");
-    const active = Array.from(buttons).filter((b) => b.classList.contains("active"));
+    const active = Array.from(buttons).filter((b) =>
+      b.classList.contains("active"),
+    );
     expect(active.map((b) => b.dataset.difficulty)).toEqual(["intermediate"]);
   });
 

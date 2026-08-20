@@ -142,11 +142,27 @@ button:hover {
   background: var(--trigger-bg);
 }
 
-.n1 { color: #0000cc; }
-.n2 { color: #008000; }
-.n3 { color: #cc0000; }
-.n4 { color: #000080; }
-.n5 { color: #800000; }
-.n6 { color: #008080; }
-.n7 { color: #101010; }
-.n8 { color: #606060; }
+.n1 {
+  color: #0000cc;
+}
+.n2 {
+  color: #008000;
+}
+.n3 {
+  color: #cc0000;
+}
+.n4 {
+  color: #000080;
+}
+.n5 {
+  color: #800000;
+}
+.n6 {
+  color: #008080;
+}
+.n7 {
+  color: #101010;
+}
+.n8 {
+  color: #606060;
+}

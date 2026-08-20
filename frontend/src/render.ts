@@ -22,7 +22,11 @@ export function renderBoard(state: GameState, container: HTMLElement): void {
       el.classList.add("cell-revealed");
       if (cell.content === "mine") {
         el.classList.add("cell-mine");
-        if (state.trigger && state.trigger.row === row && state.trigger.col === col) {
+        if (
+          state.trigger &&
+          state.trigger.row === row &&
+          state.trigger.col === col
+        ) {
           el.classList.add("cell-trigger");
         }
       } else if (typeof cell.content === "number" && cell.content > 0) {
@@ -72,7 +76,8 @@ function cellText(cell: CellView): string {
   if (cell.state === "flagged") return "🚩";
   if (cell.state === "revealed") {
     if (cell.content === "mine") return "💣";
-    if (typeof cell.content === "number" && cell.content > 0) return String(cell.content);
+    if (typeof cell.content === "number" && cell.content > 0)
+      return String(cell.content);
   }
   return "";
 }
