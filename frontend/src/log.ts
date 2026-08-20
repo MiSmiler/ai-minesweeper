@@ -1,7 +1,7 @@
 // Shared frontend logger (issue #27).
 //
 // Level policy: dev builds (`vite dev`) log `debug` and above (so the
-// gesture state-transition traces are visible); production builds
+// gesture state-change and action traces are visible); production builds
 // (`vite build`) log only `warn`/`error`; tests are silenced. A build-time
 // `VITE_LOG_LEVEL` override (a level name, e.g. `VITE_LOG_LEVEL=debug npm
 // run build`) re-gates any non-test build.

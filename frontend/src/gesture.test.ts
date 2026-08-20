@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Pos } from "./api";
 import {
   createGestureMachine,
-  type ChordTarget,
+  type CellHit,
   type GestureEvent,
   type GestureOutput,
 } from "./gesture";
@@ -16,328 +16,361 @@ function run(events: GestureEvent[]): GestureOutput[] {
   return events.map((event) => machine.handle(event));
 }
 
+/** A hit-tested Cell for the machine. Defaults: a previewable Cell is a
+ * Revealed numeric Cell; pass `isNumericCell`/`isRevealed` explicitly for
+ * the in-between cases (Revealed but not numeric, hidden, off-board). */
 const previewable = (
   row: number,
   col: number,
   previewCells: Pos[],
   isNumericCell = previewCells.length > 0,
-) => ({ pos: pos(row, col), previewCells, isNumericCell });
+  isRevealed = isNumericCell,
+): CellHit => ({
+  pos: pos(row, col),
+  previewCells,
+  isNumericCell,
+  isRevealed,
+});
 
-const rightDown = (cell: ChordTarget | null): GestureEvent => ({
+const rightDown = (cell: CellHit | null): GestureEvent => ({
   kind: "right-down",
+  cell,
+});
+const leftDown = (cell: CellHit | null): GestureEvent => ({
+  kind: "left-down",
+  cell,
+});
+const pointerMove = (cell: CellHit | null): GestureEvent => ({
+  kind: "pointer-move",
   cell,
 });
 
 describe("createGestureMachine", () => {
-  it("sends a Flag action on right-down on a Cell, carrying its Position", () => {
-    const [out] = run([rightDown(previewable(1, 2, [pos(0, 1)]))]);
-    expect(out.action).toEqual({ type: "flag", row: 1, col: 2 });
-    expect(out.preview).toBeNull();
+  describe("flag and idle", () => {
+    it("sends a Flag on right-down on a Cell, reporting it as an action", () => {
+      const [out] = run([rightDown(previewable(1, 2, [pos(0, 1)]))]);
+      expect(out.action).toEqual({ type: "flag", row: 1, col: 2 });
+      expect(out.effects).toEqual(["flag"]);
+      expect(out.phaseChange).toBeUndefined();
+      expect(out.pressPreview).toBeNull();
+      expect(out.chordPreview).toBeNull();
+    });
+
+    it("does nothing on right-down off a Cell", () => {
+      const [out] = run([rightDown(null)]);
+      expect(out.action).toBeUndefined();
+      expect(out.effects).toEqual([]);
+      expect(out.phaseChange).toBeUndefined();
+    });
+
+    it("does nothing on left-down off a Cell", () => {
+      const [out] = run([leftDown(null)]);
+      expect(out.action).toBeUndefined();
+      expect(out.effects).toEqual([]);
+      expect(out.phaseChange).toBeUndefined();
+    });
+
+    it("does nothing on pointer-move, left-up, right-up or blur while idle", () => {
+      const out = run([
+        pointerMove(previewable(1, 1, [pos(0, 0)])),
+        { kind: "left-up" },
+        { kind: "right-up" },
+        { kind: "blur" },
+      ]);
+      for (const o of out) {
+        expect(o.action).toBeUndefined();
+        expect(o.effects).toEqual([]);
+        expect(o.phaseChange).toBeUndefined();
+      }
+    });
   });
 
-  it("arms on left-down even when Right was pressed off a Cell, without sending an action", () => {
-    const out = run([
-      { kind: "right-down", cell: null },
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-    ]);
-    expect(out[0].action).toBeUndefined();
-    expect(out[1].action).toBeUndefined();
-    expect(out[1].preview).toEqual({ pos: pos(1, 1), cells: [pos(0, 0)] });
+  describe("press and reveal (#38)", () => {
+    it("presses: left-down shows the Press Preview and defers the Reveal", () => {
+      const [out] = run([leftDown(previewable(3, 4, []))]);
+      expect(out.action).toBeUndefined();
+      expect(out.phaseChange).toBe("pressed");
+      expect(out.effects).toEqual(["press-set"]);
+      expect(out.pressPreview).toEqual(pos(3, 4));
+    });
+
+    it("reveals on left-up the Cell under the pointer", () => {
+      const out = run([
+        leftDown(previewable(1, 1, [])),
+        pointerMove(previewable(2, 2, [])),
+        { kind: "left-up" },
+      ]);
+      expect(out[2].action).toEqual({ type: "reveal", row: 2, col: 2 });
+      expect(out[2].phaseChange).toBe("released");
+      expect(out[2].effects).toEqual(["reveal"]);
+    });
+
+    it("moves the Press Preview on pointer-move over another Cell", () => {
+      const out = run([
+        leftDown(previewable(1, 1, [])),
+        pointerMove(previewable(2, 2, [])),
+      ]);
+      expect(out[1].pressPreview).toEqual(pos(2, 2));
+      expect(out[1].effects).toEqual(["press-moved"]);
+    });
+
+    it("ignores pointer-move over the same Cell while pressing", () => {
+      const out = run([
+        leftDown(previewable(1, 1, [])),
+        pointerMove(previewable(1, 1, [])),
+      ]);
+      expect(out[1].effects).toEqual([]);
+      expect(out[1].pressPreview).toEqual(pos(1, 1));
+    });
+
+    it("clears the Press Preview on pointer-move off a Cell, releasing then does nothing", () => {
+      const out = run([
+        leftDown(previewable(1, 1, [])),
+        pointerMove(null),
+        { kind: "left-up" },
+      ]);
+      expect(out[1].effects).toEqual(["press-cleared"]);
+      expect(out[1].pressPreview).toBeNull();
+      expect(out[2].action).toBeUndefined();
+      expect(out[2].phaseChange).toBe("released");
+      expect(out[2].effects).toEqual([]);
+    });
+
+    it("cancels the press on pointer-leave, dropping its Arm eligibility", () => {
+      const out = run([
+        leftDown(previewable(1, 1, [pos(0, 0)])),
+        { kind: "pointer-leave" },
+        rightDown(previewable(2, 2, [pos(1, 2)])),
+        { kind: "left-up" },
+      ]);
+      expect(out[1].effects).toEqual(["press-cleared"]);
+      // The cancelled press cannot arm a later Chord…
+      expect(out[2].phaseChange).toBeUndefined();
+      expect(out[2].action).toBeUndefined();
+      // …and its release reveals nothing.
+      expect(out[3].action).toBeUndefined();
+    });
   });
 
-  it("sends a Reveal action on left-down without Right held, carrying the Position", () => {
-    const [out] = run([{ kind: "left-down", cell: previewable(3, 4, []) }]);
-    expect(out.action).toEqual({ type: "reveal", row: 3, col: 4 });
-    expect(out.preview).toBeNull();
+  describe("arming (right first)", () => {
+    it("arms on left-down while Right is held on a Revealed Cell, showing the Chord Preview immediately", () => {
+      const cells = [pos(0, 0), pos(0, 1)];
+      const out = run([
+        rightDown(previewable(1, 1, cells)),
+        leftDown(previewable(1, 1, cells)),
+      ]);
+      expect(out[1].action).toBeUndefined();
+      expect(out[1].phaseChange).toBe("armed");
+      expect(out[1].effects).toEqual(["preview-set"]);
+      expect(out[1].chordPreview).toEqual({ pos: pos(1, 1), cells });
+      expect(out[1].pressPreview).toBeNull();
+    });
+
+    it("arms over a Revealed non-numeric Cell with no Preview, rendering on the first move", () => {
+      const out = run([
+        rightDown(previewable(1, 1, [], false, true)),
+        leftDown(previewable(1, 1, [], false, true)),
+        pointerMove(previewable(2, 2, [pos(1, 2)])),
+        { kind: "left-up" },
+      ]);
+      expect(out[1].phaseChange).toBe("armed");
+      expect(out[1].effects).toEqual([]);
+      expect(out[1].chordPreview).toBeNull();
+      expect(out[2].effects).toEqual(["preview-set"]);
+      expect(out[3].action).toEqual({ type: "chord", row: 2, col: 2 });
+    });
+
+    it("does not arm when Right was pressed off a Cell", () => {
+      const out = run([
+        rightDown(null),
+        leftDown(previewable(1, 1, [pos(0, 0)])),
+      ]);
+      expect(out[1].phaseChange).toBe("pressed");
+      expect(out[1].effects).toEqual(["press-set"]);
+      expect(out[1].action).toBeUndefined();
+    });
+
+    it("does not arm when the Right press landed on a non-Revealed Cell", () => {
+      const out = run([
+        rightDown(previewable(1, 1, [], false, false)),
+        leftDown(previewable(2, 2, [pos(1, 2)], true, true)),
+      ]);
+      expect(out[1].phaseChange).toBe("pressed");
+      expect(out[1].action).toBeUndefined();
+    });
+
+    it("does not arm when the Left press lands on a non-Revealed Cell", () => {
+      const out = run([
+        rightDown(previewable(1, 1, [pos(0, 0)])),
+        leftDown(previewable(2, 2, [], false, false)),
+        { kind: "left-up" },
+      ]);
+      expect(out[1].phaseChange).toBe("pressed");
+      expect(out[1].pressPreview).toEqual(pos(2, 2));
+      expect(out[2].action).toEqual({ type: "reveal", row: 2, col: 2 });
+    });
   });
 
-  it("does nothing on left-down off a Cell", () => {
-    const [out] = run([{ kind: "left-down", cell: null }]);
-    expect(out.action).toBeUndefined();
-    expect(out.preview).toBeNull();
+  describe("arming (left first)", () => {
+    it("arms on right-down while Left is held on a Revealed Cell, showing the Chord Preview immediately and sending no Flag", () => {
+      const cells = [pos(0, 0)];
+      const out = run([
+        leftDown(previewable(1, 1, cells)),
+        rightDown(previewable(1, 1, cells)),
+      ]);
+      expect(out[0].action).toBeUndefined();
+      expect(out[0].phaseChange).toBe("pressed");
+      expect(out[1].phaseChange).toBe("armed");
+      expect(out[1].effects).toEqual(["preview-set"]);
+      expect(out[1].chordPreview).toEqual({ pos: pos(1, 1), cells });
+      expect(out[1].action).toBeUndefined();
+    });
+
+    it("does not arm when the Right press lands on a non-Revealed Cell", () => {
+      const out = run([
+        leftDown(previewable(1, 1, [pos(0, 0)])),
+        rightDown(previewable(2, 2, [], false, false)),
+        { kind: "left-up" },
+      ]);
+      expect(out[1].phaseChange).toBeUndefined();
+      expect(out[1].effects).toEqual([]);
+      expect(out[1].action).toBeUndefined();
+      expect(out[2].action).toEqual({ type: "reveal", row: 1, col: 1 });
+    });
   });
 
-  it("arms the Chord Preview on left-down while Right is held on a previewable Cell, sending no action", () => {
-    const cells = [pos(0, 0), pos(0, 1)];
-    const out = run([
-      rightDown(previewable(1, 1, cells)),
-      { kind: "left-down", cell: previewable(1, 1, cells) },
-    ]);
-    expect(out[1].action).toBeUndefined();
-    expect(out[1].preview).toEqual({ pos: pos(1, 1), cells });
-  });
-
-  it("does not render on left-down over a non-previewable Cell, but a later previewable press arms it", () => {
-    const out = run([
+  describe("armed behavior", () => {
+    const armed = (): GestureEvent[] => [
       rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, []) },
-      { kind: "left-down", cell: previewable(2, 2, [pos(1, 2)]) },
-    ]);
-    expect(out[1].preview).toBeNull();
-    expect(out[1].action).toBeUndefined();
-    expect(out[2].preview).toEqual({ pos: pos(2, 2), cells: [pos(1, 2)] });
+      leftDown(previewable(1, 1, [pos(0, 0)])),
+    ];
+
+    it("sends a Chord on left-up while armed and clears the Preview", () => {
+      const out = run([...armed(), { kind: "left-up" }]);
+      expect(out[2].action).toEqual({ type: "chord", row: 1, col: 1 });
+      expect(out[2].phaseChange).toBe("disarmed");
+      expect(out[2].effects).toEqual(["chord", "preview-cleared"]);
+      expect(out[2].chordPreview).toBeNull();
+    });
+
+    it("sends nothing on left-up while armed with no Preview shown", () => {
+      const out = run([
+        rightDown(previewable(1, 1, [], false, true)),
+        leftDown(previewable(1, 1, [], false, true)),
+        { kind: "left-up" },
+      ]);
+      expect(out[2].action).toBeUndefined();
+      expect(out[2].phaseChange).toBe("disarmed");
+      expect(out[2].effects).toEqual([]);
+    });
+
+    it("keeps the Preview armed on right-up, so a later left-up still sends a Chord", () => {
+      const out = run([...armed(), { kind: "right-up" }, { kind: "left-up" }]);
+      expect(out[2].effects).toEqual([]);
+      expect(out[3].action).toEqual({ type: "chord", row: 1, col: 1 });
+    });
+
+    it("drives the Preview by Left alone after right-up", () => {
+      const out = run([
+        ...armed(),
+        { kind: "right-up" },
+        pointerMove(previewable(2, 2, [pos(1, 2)])),
+      ]);
+      expect(out[3].effects).toEqual(["preview-moved"]);
+      expect(out[3].chordPreview).toEqual({
+        pos: pos(2, 2),
+        cells: [pos(1, 2)],
+      });
+    });
+
+    it("re-arms on a fresh Left press while Right is still held after a Chord", () => {
+      const out = run([
+        ...armed(),
+        { kind: "left-up" },
+        leftDown(previewable(2, 2, [pos(1, 2)])),
+      ]);
+      expect(out[3].phaseChange).toBe("armed");
+      expect(out[3].chordPreview).toEqual({
+        pos: pos(2, 2),
+        cells: [pos(1, 2)],
+      });
+    });
+
+    it("moves the Preview on pointer-move over a new previewable Cell while armed", () => {
+      const out = run([
+        ...armed(),
+        pointerMove(previewable(2, 2, [pos(1, 2)])),
+      ]);
+      expect(out[2].effects).toEqual(["preview-moved"]);
+      expect(out[2].chordPreview).toEqual({
+        pos: pos(2, 2),
+        cells: [pos(1, 2)],
+      });
+    });
+
+    it("clears the Preview on pointer-move over a non-numeric Cell while armed", () => {
+      const out = run([
+        ...armed(),
+        pointerMove(previewable(3, 3, [], false, true)),
+      ]);
+      expect(out[2].effects).toEqual(["preview-cleared"]);
+      expect(out[2].chordPreview).toBeNull();
+    });
+
+    it("clears the Preview on pointer-move off a Cell while armed", () => {
+      const out = run([...armed(), pointerMove(null)]);
+      expect(out[2].effects).toEqual(["preview-cleared"]);
+    });
+
+    it("re-renders the Preview on pointer-move back over a previewable Cell after leaving", () => {
+      const out = run([
+        ...armed(),
+        pointerMove(null),
+        pointerMove(previewable(2, 2, [pos(1, 2)])),
+      ]);
+      expect(out[2].effects).toEqual(["preview-cleared"]);
+      expect(out[3].effects).toEqual(["preview-set"]);
+    });
+
+    it("sends no Chord on left-up when the Preview was cleared by moving off", () => {
+      const out = run([...armed(), pointerMove(null), { kind: "left-up" }]);
+      expect(out[3].action).toBeUndefined();
+      expect(out[3].phaseChange).toBe("disarmed");
+      expect(out[3].effects).toEqual([]);
+    });
+
+    it("clears the Preview on pointer-leave but keeps the gesture armed", () => {
+      const out = run([
+        ...armed(),
+        { kind: "pointer-leave" },
+        pointerMove(previewable(1, 1, [pos(0, 0)])),
+        { kind: "left-up" },
+      ]);
+      expect(out[2].effects).toEqual(["preview-cleared"]);
+      expect(out[3].effects).toEqual(["preview-set"]);
+      expect(out[4].action).toEqual({ type: "chord", row: 1, col: 1 });
+    });
   });
 
-  it("moves the Preview on pointer-move over a new previewable Cell while armed", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      { kind: "pointer-move", cell: previewable(2, 2, [pos(1, 2)]) },
-    ]);
-    expect(out[1].preview).toEqual({ pos: pos(1, 1), cells: [pos(0, 0)] });
-    expect(out[2].preview).toEqual({ pos: pos(2, 2), cells: [pos(1, 2)] });
-    expect(out[2].action).toBeUndefined();
-  });
+  describe("blur", () => {
+    it("disarms on blur, clearing the Preview and forgetting the buttons", () => {
+      const out = run([
+        rightDown(previewable(1, 1, [pos(0, 0)])),
+        leftDown(previewable(1, 1, [pos(0, 0)])),
+        { kind: "blur" },
+        pointerMove(previewable(2, 2, [pos(1, 2)])),
+        { kind: "left-up" },
+      ]);
+      expect(out[2].phaseChange).toBe("disarmed");
+      expect(out[2].effects).toEqual(["preview-cleared"]);
+      expect(out[3].effects).toEqual([]);
+      expect(out[4].action).toBeUndefined();
+    });
 
-  it("sends a Chord action on left-up while armed and clears the Preview", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      { kind: "left-up" },
-    ]);
-    expect(out[2].action).toEqual({ type: "chord", row: 1, col: 1 });
-    expect(out[2].preview).toBeNull();
-  });
-
-  it("sends nothing on left-up when no Chord Preview is armed", () => {
-    const [out] = run([{ kind: "left-up" }]);
-    expect(out.action).toBeUndefined();
-    expect(out.preview).toBeNull();
-  });
-
-  it("keeps the Preview armed on right-up, so a later left-up still sends a Chord", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      { kind: "right-up" },
-      { kind: "left-up" },
-    ]);
-    expect(out[2].preview).toEqual({ pos: pos(1, 1), cells: [pos(0, 0)] });
-    expect(out[3].action).toEqual({ type: "chord", row: 1, col: 1 });
-  });
-
-  it("disarms on blur, clearing the Preview and forgetting the buttons", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      { kind: "blur" },
-      { kind: "pointer-move", cell: previewable(2, 2, [pos(1, 2)]) },
-      { kind: "left-up" },
-    ]);
-    expect(out[2].preview).toBeNull();
-    expect(out[3].preview).toBeNull();
-    expect(out[4].action).toBeUndefined();
-  });
-
-  it("clears the Preview on pointer-leave but keeps the gesture armed", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      { kind: "pointer-leave" },
-      // Re-entering restores the Preview by moving; releasing solves.
-      { kind: "pointer-move", cell: previewable(1, 1, [pos(0, 0)]) },
-      { kind: "left-up" },
-    ]);
-    expect(out[2].preview).toBeNull();
-    expect(out[3].preview).toEqual({ pos: pos(1, 1), cells: [pos(0, 0)] });
-    expect(out[4].action).toEqual({ type: "chord", row: 1, col: 1 });
-  });
-
-  it("sends a Flag on every right-down on a Cell, even while a gesture is armed", () => {
-    const out = run([
-      rightDown(previewable(0, 0, [])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      rightDown(previewable(0, 1, [])),
-    ]);
-    expect(out[0].action).toEqual({ type: "flag", row: 0, col: 0 });
-    expect(out[2].action).toEqual({ type: "flag", row: 0, col: 1 });
-  });
-
-  it("arms when Right was pressed on a non-previewable Cell, rendering on pointer-move over a previewable Cell", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [])),
-      { kind: "left-down", cell: previewable(1, 1, []) },
-      { kind: "pointer-move", cell: previewable(2, 2, [pos(1, 2)]) },
-      { kind: "left-up" },
-    ]);
-    expect(out[1].action).toBeUndefined();
-    expect(out[1].preview).toBeNull();
-    expect(out[2].preview).toEqual({ pos: pos(2, 2), cells: [pos(1, 2)] });
-    expect(out[3].action).toEqual({ type: "chord", row: 2, col: 2 });
-  });
-
-  it("does nothing on pointer-move when no gesture is armed", () => {
-    const [out] = run([
-      { kind: "pointer-move", cell: previewable(1, 1, [pos(0, 0)]) },
-    ]);
-    expect(out.action).toBeUndefined();
-    expect(out.preview).toBeNull();
-  });
-
-  it("does nothing on pointer-move when Right is held but Left was never pressed", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "pointer-move", cell: previewable(2, 2, [pos(1, 2)]) },
-    ]);
-    expect(out[1].preview).toBeNull();
-    expect(out[1].action).toBeUndefined();
-  });
-
-  it("clears the Preview on pointer-move over a non-previewable Cell while armed", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      { kind: "pointer-move", cell: previewable(3, 3, []) },
-    ]);
-    expect(out[2].preview).toBeNull();
-  });
-
-  it("clears the Preview on pointer-move off a Cell while armed", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      { kind: "pointer-move", cell: null },
-    ]);
-    expect(out[2].preview).toBeNull();
-  });
-
-  it("re-renders the Preview on pointer-move back over a previewable Cell after leaving", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      { kind: "pointer-move", cell: previewable(3, 3, []) },
-      { kind: "pointer-move", cell: previewable(2, 2, [pos(1, 2)]) },
-    ]);
-    expect(out[2].preview).toBeNull();
-    expect(out[3].preview).toEqual({ pos: pos(2, 2), cells: [pos(1, 2)] });
-  });
-
-  it("keeps updating the Preview after right-up, driven by Left alone", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      { kind: "right-up" },
-      { kind: "pointer-move", cell: previewable(2, 2, [pos(1, 2)]) },
-    ]);
-    expect(out[2].preview).toEqual({ pos: pos(1, 1), cells: [pos(0, 0)] });
-    expect(out[3].preview).toEqual({ pos: pos(2, 2), cells: [pos(1, 2)] });
-  });
-
-  it("sends no Chord on left-up when the Preview was cleared by moving off", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      { kind: "pointer-move", cell: previewable(3, 3, []) },
-      { kind: "left-up" },
-    ]);
-    expect(out[3].action).toBeUndefined();
-  });
-
-  it("arms on a Left-then-Right order, rendering on pointer-move over a previewable Cell", () => {
-    const out = run([
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "pointer-move", cell: previewable(2, 2, [pos(1, 2)]) },
-    ]);
-    expect(out[0].action).toEqual({ type: "reveal", row: 1, col: 1 });
-    expect(out[2].preview).toEqual({ pos: pos(2, 2), cells: [pos(1, 2)] });
-  });
-
-  it("enters the gesture on left-down over a non-previewable Cell, rendering only once the pointer moves over a previewable Cell", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(3, 3, []) },
-      { kind: "pointer-move", cell: previewable(2, 2, [pos(1, 2)]) },
-    ]);
-    expect(out[1].preview).toBeNull();
-    expect(out[2].preview).toEqual({ pos: pos(2, 2), cells: [pos(1, 2)] });
-  });
-
-  it("arms on a Revealed numeric Cell with no hidden neighbors, rendering once the pointer moves onto a previewable Cell", () => {
-    // A Revealed numeric Cell whose neighbors are all Revealed or Flagged has
-    // no Preview scope, but is still a valid Chord target (isNumericCell).
-    const out = run([
-      rightDown(previewable(1, 1, [], true)),
-      { kind: "left-down", cell: previewable(1, 1, [], true) },
-      { kind: "pointer-move", cell: previewable(2, 2, [pos(1, 2)]) },
-      { kind: "left-up" },
-    ]);
-    expect(out[1].preview).toBeNull();
-    expect(out[2].preview).toEqual({ pos: pos(2, 2), cells: [pos(1, 2)] });
-    expect(out[3].action).toEqual({ type: "chord", row: 2, col: 2 });
-  });
-
-  it("reports 'flag' and 'reveal' for plain single-button presses", () => {
-    const [flagOut] = run([rightDown(previewable(1, 2, [pos(0, 1)]))]);
-    expect(flagOut.transition).toBe("flag");
-    const [revealOut] = run([
-      { kind: "left-down", cell: previewable(3, 4, []) },
-    ]);
-    expect(revealOut.transition).toBe("reveal");
-  });
-
-  it("reports 'armed' on arming, in either press order, even when the press was off a Cell", () => {
-    const rightFirst = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-    ]);
-    expect(rightFirst[1].transition).toBe("armed");
-    const leftFirst = run([
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-    ]);
-    expect(leftFirst[1].transition).toBe("armed");
-    const offCell = run([
-      { kind: "right-down", cell: null },
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-    ]);
-    expect(offCell[1].transition).toBe("armed");
-  });
-
-  it("reports 'preview-set' when the Preview appears and 'preview-moved' when it follows the pointer", () => {
-    // Arming over a non-previewable Cell leaves no Preview; it appears on
-    // the first pointer-move over a previewable Cell, then moves with it.
-    const out = run([
-      rightDown(previewable(1, 1, [])),
-      { kind: "left-down", cell: previewable(1, 1, []) },
-      { kind: "pointer-move", cell: previewable(2, 2, [pos(1, 2)]) },
-      { kind: "pointer-move", cell: previewable(3, 3, [pos(2, 3)]) },
-    ]);
-    expect(out[1].transition).toBe("armed");
-    expect(out[2].transition).toBe("preview-set");
-    expect(out[3].transition).toBe("preview-moved");
-  });
-
-  it("reports 'preview-cleared' when the Preview disappears, and nothing when it was already absent", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      { kind: "pointer-move", cell: previewable(3, 3, []) },
-      { kind: "pointer-move", cell: previewable(4, 4, []) },
-    ]);
-    expect(out[2].transition).toBe("preview-cleared");
-    expect(out[3].transition).toBeUndefined();
-  });
-
-  it("reports 'chord' when the Chord solves and 'disarmed' on a plain release", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      { kind: "left-up" },
-    ]);
-    expect(out[2].transition).toBe("chord");
-    const [plainUp] = run([{ kind: "left-up" }]);
-    expect(plainUp.transition).toBe("disarmed");
-  });
-
-  it("reports 'preview-cleared' on pointer-leave with a Preview shown and 'disarmed' on blur", () => {
-    const out = run([
-      rightDown(previewable(1, 1, [pos(0, 0)])),
-      { kind: "left-down", cell: previewable(1, 1, [pos(0, 0)]) },
-      { kind: "pointer-leave" },
-      { kind: "blur" },
-    ]);
-    expect(out[2].transition).toBe("preview-cleared");
-    expect(out[3].transition).toBe("disarmed");
+    it("clears the Press Preview on blur during a press", () => {
+      const out = run([leftDown(previewable(1, 1, [])), { kind: "blur" }]);
+      expect(out[1].phaseChange).toBe("released");
+      expect(out[1].effects).toEqual(["press-cleared"]);
+    });
   });
 });

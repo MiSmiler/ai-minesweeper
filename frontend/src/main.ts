@@ -9,7 +9,7 @@ import { chordPreviewCells, isRevealedNumericCell } from "./chordPreview";
 import { createActionController } from "./controller";
 import {
   createGestureMachine,
-  type ChordTarget,
+  type CellHit,
   type GestureEvent,
   type GestureOutput,
 } from "./gesture";
@@ -36,32 +36,49 @@ async function applyAndRender(action: Action): Promise<void> {
   }
 }
 
-/** Renders the Chord Preview: highlights exactly the Cells in `preview`. */
-function renderPreview(preview: GestureOutput["preview"]): void {
+/** Renders the Previews: highlights the Press Preview Cell and the Chord
+ * Preview scope with the same styling. */
+function renderPreview(
+  chordPreview: GestureOutput["chordPreview"],
+  pressPreview: GestureOutput["pressPreview"],
+): void {
   boardEl
-    .querySelectorAll(".cell-chord-preview")
-    .forEach((el) => el.classList.remove("cell-chord-preview"));
-  if (preview) {
-    for (const pos of preview.cells) {
+    .querySelectorAll(".cell-preview")
+    .forEach((el) => el.classList.remove("cell-preview"));
+  if (pressPreview) {
+    boardEl
+      .querySelector(
+        `[data-row="${pressPreview.row}"][data-col="${pressPreview.col}"]`,
+      )
+      ?.classList.add("cell-preview");
+  }
+  if (chordPreview) {
+    for (const pos of chordPreview.cells) {
       boardEl
         .querySelector(`[data-row="${pos.row}"][data-col="${pos.col}"]`)
-        ?.classList.add("cell-chord-preview");
+        ?.classList.add("cell-preview");
     }
   }
 }
 
-/** Feeds a gesture event to the machine and applies its output. State
- * transitions are traced at `debug` so gesture problems are diagnosable from
- * the console alone (the machine itself stays pure). */
+/** Feeds a gesture event to the machine and applies its output. Phase
+ * changes and in-phase effects are traced at `debug` so gesture problems
+ * are diagnosable from the console alone (the machine itself stays pure). */
 function dispatchGesture(event: GestureEvent): void {
   const out = gesture.handle(event);
-  if (out.transition) {
-    log.debug(`gesture ${out.transition}`, {
+  if (out.phaseChange) {
+    log.debug(`gesture ${out.phaseChange}`, {
       event: event.kind,
       ...(out.action ? { action: out.action } : {}),
     });
   }
-  renderPreview(out.preview);
+  for (const effect of out.effects) {
+    log.debug(`gesture ${effect}`, {
+      event: event.kind,
+      ...(out.action ? { action: out.action } : {}),
+    });
+  }
+  renderPreview(out.chordPreview, out.pressPreview);
   if (out.action) {
     void applyAndRender(out.action);
   }
@@ -90,11 +107,13 @@ function cellPos(cell: HTMLElement): Pos {
 /** Builds the hit-test payload for the gesture machine: the Cell's Preview
  * scope plus whether it is a Revealed numeric Cell (the criterion for
  * showing the Chord Preview). */
-function chordTarget(state: GameState, pos: Pos): ChordTarget {
+function cellHit(state: GameState, pos: Pos): CellHit {
   return {
     pos,
     previewCells: chordPreviewCells(state, pos.row, pos.col),
     isNumericCell: isRevealedNumericCell(state, pos.row, pos.col),
+    isRevealed:
+      state.cells[pos.row * state.cols + pos.col]?.state === "revealed",
   };
 }
 
@@ -104,7 +123,7 @@ function handleRightDown(ev: MouseEvent): void {
     ev.preventDefault();
     dispatchGesture({
       kind: "right-down",
-      cell: state ? chordTarget(state, cellPos(cell)) : null,
+      cell: state ? cellHit(state, cellPos(cell)) : null,
     });
   } else {
     // The press is still remembered for the chord gesture, even off a Cell.
@@ -126,7 +145,7 @@ function handleLeftDown(ev: MouseEvent): void {
   ev.preventDefault();
   dispatchGesture({
     kind: "left-down",
-    cell: chordTarget(state, cellPos(cell)),
+    cell: cellHit(state, cellPos(cell)),
   });
 }
 
@@ -170,7 +189,7 @@ function onBoardPointerMove(ev: PointerEvent): void {
   if (!state) return;
   dispatchGesture({
     kind: "pointer-move",
-    cell: pos ? chordTarget(state, pos) : null,
+    cell: pos ? cellHit(state, pos) : null,
   });
 }
 
