@@ -6,12 +6,20 @@ When investigating a problem (debugging, diagnosing an error, exploring the code
 
 ### After a coding round
 
-A round of code changes (feature, fix, or a batch of edits) is not done until formatting and tests pass:
+A round of code changes (feature, fix, or a batch of edits) is not done until the formatting and tests for the sides of the stack it touched pass:
 
+**Rust** (`src/`):
 1. Run `cargo fmt` to format the code.
 2. Run `cargo test` and ensure everything passes.
-3. If a failure is clearly caused by your changes, fix it before reporting done. If the cause is unclear or unrelated, report it and wait for confirmation first.
-4. Skip steps 1-2 when the round touched only non-code files (docs, markdown, etc.).
+
+**Frontend** (`frontend/`):
+1. Run `npm run format` to format the code.
+2. Run `npm test` and ensure everything passes.
+3. Run `npm run build` (tsc type check + Vite build) and ensure it passes.
+
+If a failure is clearly caused by your changes, fix it before reporting done. If the cause is unclear or unrelated, report it and wait for confirmation first.
+
+Skip a side's steps when the round touched no files of that side; skip everything when the round touched only non-code files (docs, markdown, etc.).
 
 ### Before committing
 
