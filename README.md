@@ -29,4 +29,4 @@ Frontend development uses Vite's own dev server: `cd frontend && npm run dev` an
 ## Log levels
 
 - **Backend** (Rust, `tracing`): defaults to `info` — startup (URL, mode), New Game (Seed, difficulty), and Won/Lost are visible. `debug`/`trace` messages (e.g. "action applied") need `RUST_LOG=debug` (or `RUST_LOG=ai_minesweeper=debug`) to appear.
-- **Frontend** (TypeScript, `tslog`): dev builds (`vite dev`) log `debug` and above — including the chord gesture state-transition trace (armed / preview-set / preview-moved / preview-cleared / chord / disarmed); production builds (`vite build`) log only `warn`/`error`; tests are silenced.
+- **Frontend** (TypeScript, `tslog`): dev builds (`vite dev`) log `debug` and above — including the chord gesture state-transition trace (armed / preview-set / preview-moved / preview-cleared / chord / disarmed); production builds (`vite build`) log only `warn`/`error`; tests are silenced. Any non-test build can be re-gated at build time with `VITE_LOG_LEVEL=<name> npm run build`, where `<name>` is one of `silly`, `trace`, `debug`, `info`, `warn`, `error`, `fatal`.
