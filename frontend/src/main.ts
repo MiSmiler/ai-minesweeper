@@ -11,9 +11,9 @@ import {
   createGestureMachine,
   type CellHit,
   type GestureEvent,
-  type GestureOutput,
 } from "./gesture";
 import { log } from "./log";
+import { createPreviewLayer } from "./previewHighlight";
 import { formatTimer, renderBoard, renderTopBar } from "./render";
 import "./style.css";
 
@@ -23,6 +23,7 @@ let state: GameState | null = null;
 
 const gesture = createGestureMachine();
 const controller = createActionController(postAction);
+const previewLayer = createPreviewLayer(boardEl);
 
 /** Sends an Action through the controller and renders the fresh state. Only
  * the latest action's result is ever rendered — stale responses are dropped
@@ -33,31 +34,6 @@ async function applyAndRender(action: Action): Promise<void> {
     state = next;
     renderBoard(state, boardEl);
     renderTopBar(state);
-  }
-}
-
-/** Renders the Previews: highlights the Press Preview Cell and the Chord
- * Preview scope with the same styling. */
-function renderPreview(
-  chordPreview: GestureOutput["chordPreview"],
-  pressPreview: GestureOutput["pressPreview"],
-): void {
-  boardEl
-    .querySelectorAll(".cell-preview")
-    .forEach((el) => el.classList.remove("cell-preview"));
-  if (pressPreview) {
-    boardEl
-      .querySelector(
-        `[data-row="${pressPreview.row}"][data-col="${pressPreview.col}"]`,
-      )
-      ?.classList.add("cell-preview");
-  }
-  if (chordPreview) {
-    for (const pos of chordPreview.cells) {
-      boardEl
-        .querySelector(`[data-row="${pos.row}"][data-col="${pos.col}"]`)
-        ?.classList.add("cell-preview");
-    }
   }
 }
 
@@ -78,9 +54,23 @@ function dispatchGesture(event: GestureEvent): void {
       ...(out.action ? { action: out.action } : {}),
     });
   }
-  renderPreview(out.chordPreview, out.pressPreview);
+  // A Reveal/Chord keeps its highlight until the response re-renders the
+  // Board, so the Cells do not flash back to Hidden mid round trip (#32).
+  if (
+    out.action &&
+    (out.action.type === "reveal" || out.action.type === "chord")
+  ) {
+    previewLayer.retain();
+  }
+  previewLayer.render(out.chordPreview, out.pressPreview);
   if (out.action) {
-    void applyAndRender(out.action);
+    const action = out.action;
+    void applyAndRender(action)
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : err;
+        log.error(`Action ${action.type} failed: ${message}`);
+      })
+      .finally(() => previewLayer.release());
   }
 }
 
