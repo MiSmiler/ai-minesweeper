@@ -10,6 +10,11 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::index;
 
+/// The value fixed when a Game is created that determines the Mine layout;
+/// a backend detail the player never sees, and reproducibility is
+/// guaranteed only within the same build.
+pub type Seed = u32;
+
 /// The Board's dimensions in Cells, in (rows, cols) order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BoardSize {
@@ -133,7 +138,7 @@ pub struct Game {
     trigger: Option<Position>,
     /// The Seed the Mine layout derives from; fixed at creation and never
     /// changes during the game.
-    seed: u32,
+    seed: Seed,
     started_at: Option<Instant>,
     elapsed_at_end: Option<Duration>,
 }
@@ -154,7 +159,7 @@ impl Game {
     /// the same layout — unconditionally in Classic Mode, and in Prank Mode
     /// only with the same First Click. Guaranteed only within the same
     /// build (rand version, sampling algorithm).
-    pub fn with_seed(difficulty: Difficulty, mode: GameMode, seed: u32) -> Self {
+    pub fn with_seed(difficulty: Difficulty, mode: GameMode, seed: Seed) -> Self {
         let size = difficulty.size();
         let mut game = Self {
             difficulty,
@@ -205,7 +210,7 @@ impl Game {
     }
 
     /// The Seed the Mine layout derives from.
-    pub fn seed(&self) -> u32 {
+    pub fn seed(&self) -> Seed {
         self.seed
     }
 
@@ -311,7 +316,7 @@ impl Game {
     fn sample_mines(
         size: BoardSize,
         count: usize,
-        seed: u32,
+        seed: Seed,
         forced: Option<Position>,
     ) -> Vec<Position> {
         let total = size.rows * size.cols;

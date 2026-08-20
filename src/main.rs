@@ -11,7 +11,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use crate::core::{Difficulty, Game, GameMode};
+use crate::core::{Difficulty, Game, GameMode, Seed};
 use crate::server::AppState;
 
 /// Command-line options for the game server.
@@ -27,7 +27,7 @@ struct Cli {
     /// reproduces the same Mine layout. Absent, every New Game draws a
     /// fresh random Seed, printed to the terminal.
     #[arg(long)]
-    seed: Option<u32>,
+    seed: Option<Seed>,
 
     /// Port to listen on.
     #[arg(long, default_value_t = 8080)]

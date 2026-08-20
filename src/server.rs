@@ -12,7 +12,7 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::core::{CellContent, CellState, Difficulty, Game, GameMode, GameState, Position};
+use crate::core::{CellContent, CellState, Difficulty, Game, GameMode, GameState, Position, Seed};
 
 /// The shared server state: the single live Game, the fixed GameMode, and
 /// the Seed policy. Mirrors the terminal `App`: one game at a time, mode
@@ -22,7 +22,7 @@ pub struct AppState {
     pub mode: GameMode,
     /// The Seed pinned for every game of this session (`--seed`); `None`
     /// draws a fresh random Seed per game.
-    pub seed: Option<u32>,
+    pub seed: Option<Seed>,
 }
 
 // --- Wire DTOs ---
@@ -168,9 +168,9 @@ pub fn snapshot(game: &Game) -> StateDto {
 pub fn apply_action(
     game: &mut Game,
     mode: GameMode,
-    fixed_seed: Option<u32>,
+    fixed_seed: Option<Seed>,
     action: &ActionDto,
-) -> Result<Option<u32>, String> {
+) -> Result<Option<Seed>, String> {
     match action.kind {
         ActionKind::NewGame => {
             let difficulty = match &action.difficulty {

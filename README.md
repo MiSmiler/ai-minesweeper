@@ -19,7 +19,7 @@ cargo run
 
 | Flag | Meaning | Default |
 | --- | --- | --- |
-| `--seed <u32>` | Pin one Seed for every game of this session: each Difficulty reproduces the same Mine layout. Absent, every New Game draws a fresh random Seed, printed to the terminal. | random |
+| `--seed <seed>` | Pin one Seed — a plain `u32` — for every game of this session: each Difficulty reproduces the same Mine layout. Absent, every New Game draws a fresh random Seed, printed to the terminal. | random |
 | `--prank` | Prank Mode: the First Click of every game is always a Mine. The UI never indicates the mode is active. | off |
 | `--port <u16>` | Port to listen on. | 8080 |
 | `--host <string>` | Interface to bind. | 127.0.0.1 |
