@@ -144,6 +144,7 @@ impl Game {
     /// with no protection for the First Click (ADR-0004); in Prank Mode
     /// they are placed at the First Click, always including the clicked
     /// Cell (ADR-0002).
+    #[cfg(test)]
     pub fn new(difficulty: Difficulty, mode: GameMode) -> Self {
         Self::with_seed(difficulty, mode, rand::random())
     }
