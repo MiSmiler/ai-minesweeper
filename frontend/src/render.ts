@@ -1,5 +1,14 @@
 import type { CellView, GameState } from "./api";
 
+/** The Smiley Button's emoji faces, keyed by use. The state-driven face comes
+ * from renderTopBar; the surprised face is set directly while pressing. */
+export const SmileyFace = {
+  neutral: "🙂",
+  surprised: "😮",
+  won: "😎",
+  lost: "💀",
+} as const;
+
 /** Renders the board grid from the server state. Pure function of state. */
 export function renderBoard(state: GameState, container: HTMLElement): void {
   const board = document.createElement("div");
@@ -39,37 +48,40 @@ export function renderBoard(state: GameState, container: HTMLElement): void {
   container.replaceChildren(board);
 }
 
-/** Renders the top bar (flag counter, result banner, timer) from state. */
+/** Renders the top bar (flag counter, smiley button, timer) from state. */
 export function renderTopBar(state: GameState): void {
   const counter = document.getElementById("counter")!;
-  const banner = document.getElementById("banner")!;
+  const smiley = document.getElementById("smiley")!;
   const timer = document.getElementById("timer")!;
 
-  counter.textContent = `🚩 ${state.flags_remaining}`;
+  counter.textContent = formatCounter(state.flags_remaining);
+
+  if (state.game_state === "won") {
+    smiley.textContent = SmileyFace.won;
+  } else if (state.game_state === "lost") {
+    smiley.textContent = SmileyFace.lost;
+  } else {
+    smiley.textContent = SmileyFace.neutral;
+  }
 
   // Highlight the active difficulty button.
   document.querySelectorAll<HTMLElement>("[data-difficulty]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.difficulty === state.difficulty);
   });
 
-  if (state.game_state === "won") {
-    banner.textContent = "WON";
-    banner.className = "banner won";
-  } else if (state.game_state === "lost") {
-    banner.textContent = "LOST";
-    banner.className = "banner lost";
-  } else {
-    banner.textContent = "";
-    banner.className = "banner";
-  }
-
   timer.textContent = formatTimer(state.elapsed_secs);
 }
 
+/** Formats elapsed seconds as a three-digit display, capped at 999 like the
+ * classic Timer. */
 export function formatTimer(secs: number): string {
-  const minutes = Math.floor(secs / 60);
-  const seconds = secs % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  return String(Math.min(secs, 999)).padStart(3, "0");
+}
+
+/** Formats Flags Remaining for the three-digit counter: non-negative values
+ * padded to three digits, negatives as minus sign plus digits. */
+export function formatCounter(flags: number): string {
+  return flags >= 0 ? String(flags).padStart(3, "0") : `-${Math.abs(flags)}`;
 }
 
 function cellText(cell: CellView): string {

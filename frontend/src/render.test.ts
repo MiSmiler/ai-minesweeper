@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CellView, GameState } from "./api";
-import { formatTimer, renderBoard, renderTopBar } from "./render";
+import {
+  formatCounter,
+  formatTimer,
+  renderBoard,
+  renderTopBar,
+} from "./render";
 import { gameState } from "./testUtils";
 
 const cell = (
@@ -22,25 +27,40 @@ function renderCells(state: GameState): HTMLElement[] {
 
 beforeEach(() => {
   document.body.innerHTML = `
-    <div class="top-bar">
-      <span id="counter"></span>
-      <span id="banner"></span>
-      <span id="timer"></span>
+    <div class="difficulty-row">
       <button data-difficulty="beginner">Beginner</button>
       <button data-difficulty="intermediate">Intermediate</button>
       <button data-difficulty="expert">Expert</button>
-      <button id="new-game">New Game</button>
+    </div>
+    <div class="top-bar">
+      <div id="counter" class="led"></div>
+      <button id="smiley" class="smiley"></button>
+      <div id="timer" class="led"></div>
     </div>
   `;
 });
 
 describe("formatTimer", () => {
-  it("formats seconds as MM:SS", () => {
-    expect(formatTimer(0)).toBe("00:00");
-    expect(formatTimer(59)).toBe("00:59");
-    expect(formatTimer(60)).toBe("01:00");
-    expect(formatTimer(3599)).toBe("59:59");
-    expect(formatTimer(3600)).toBe("60:00");
+  it("formats elapsed seconds as a three-digit display capped at 999", () => {
+    expect(formatTimer(0)).toBe("000");
+    expect(formatTimer(59)).toBe("059");
+    expect(formatTimer(60)).toBe("060");
+    expect(formatTimer(999)).toBe("999");
+    expect(formatTimer(1000)).toBe("999");
+    expect(formatTimer(3600)).toBe("999");
+  });
+});
+
+describe("formatCounter", () => {
+  it("pads non-negative Flags Remaining to three digits", () => {
+    expect(formatCounter(0)).toBe("000");
+    expect(formatCounter(5)).toBe("005");
+    expect(formatCounter(99)).toBe("099");
+  });
+
+  it("renders negative Flags Remaining as minus sign plus digits", () => {
+    expect(formatCounter(-1)).toBe("-1");
+    expect(formatCounter(-12)).toBe("-12");
   });
 });
 
@@ -118,31 +138,36 @@ describe("renderBoard", () => {
 });
 
 describe("renderTopBar", () => {
-  it("renders the flag counter from flags_remaining, negative when over-flagged", () => {
+  it("renders Flags Remaining as a three-digit counter", () => {
+    renderTopBar(gameState({ flags_remaining: 5 }));
+    expect(document.getElementById("counter")!.textContent).toBe("005");
+  });
+
+  it("renders negative Flags Remaining with a minus sign", () => {
     renderTopBar(gameState({ flags_remaining: -2 }));
-    expect(document.getElementById("counter")!.textContent).toBe("🚩 -2");
+    expect(document.getElementById("counter")!.textContent).toBe("-2");
   });
 
-  it("renders the WON banner for a Won game", () => {
-    renderTopBar(gameState({ game_state: "won" }));
-    const banner = document.getElementById("banner")!;
-    expect(banner.textContent).toBe("WON");
-    expect(banner.classList.contains("won")).toBe(true);
+  it("renders the Timer as three-digit seconds", () => {
+    renderTopBar(gameState({ elapsed_secs: 65 }));
+    expect(document.getElementById("timer")!.textContent).toBe("065");
   });
 
-  it("renders the LOST banner for a Lost game", () => {
-    renderTopBar(gameState({ game_state: "lost" }));
-    const banner = document.getElementById("banner")!;
-    expect(banner.textContent).toBe("LOST");
-    expect(banner.classList.contains("lost")).toBe(true);
-  });
-
-  it("clears the banner while the game is in progress", () => {
+  it("shows the neutral smiley while Ready or Playing", () => {
     renderTopBar(gameState({ game_state: "playing" }));
-    const banner = document.getElementById("banner")!;
-    expect(banner.textContent).toBe("");
-    expect(banner.classList.contains("won")).toBe(false);
-    expect(banner.classList.contains("lost")).toBe(false);
+    expect(document.getElementById("smiley")!.textContent).toBe("🙂");
+    renderTopBar(gameState({ game_state: "ready" }));
+    expect(document.getElementById("smiley")!.textContent).toBe("🙂");
+  });
+
+  it("shows the sunglasses smiley on a Won game", () => {
+    renderTopBar(gameState({ game_state: "won" }));
+    expect(document.getElementById("smiley")!.textContent).toBe("😎");
+  });
+
+  it("shows the dead smiley on a Lost game", () => {
+    renderTopBar(gameState({ game_state: "lost" }));
+    expect(document.getElementById("smiley")!.textContent).toBe("💀");
   });
 
   it("highlights the active difficulty button", () => {
@@ -152,10 +177,5 @@ describe("renderTopBar", () => {
       b.classList.contains("active"),
     );
     expect(active.map((b) => b.dataset.difficulty)).toEqual(["intermediate"]);
-  });
-
-  it("renders the timer from elapsed seconds", () => {
-    renderTopBar(gameState({ elapsed_secs: 65 }));
-    expect(document.getElementById("timer")!.textContent).toBe("01:05");
   });
 });

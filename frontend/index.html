@@ -7,22 +7,17 @@
   </head>
   <body>
     <div id="app">
+      <div class="difficulty-row">
+        <button class="difficulty" data-difficulty="beginner">Beginner</button>
+        <button class="difficulty" data-difficulty="intermediate">
+          Intermediate
+        </button>
+        <button class="difficulty" data-difficulty="expert">Expert</button>
+      </div>
       <div class="top-bar">
-        <div class="top-left">
-          <button class="difficulty" data-difficulty="beginner">
-            Beginner
-          </button>
-          <button class="difficulty" data-difficulty="intermediate">
-            Intermediate
-          </button>
-          <button class="difficulty" data-difficulty="expert">Expert</button>
-          <span id="counter" class="counter"></span>
-        </div>
-        <span id="banner" class="banner"></span>
-        <div class="top-right">
-          <span id="timer" class="timer"></span>
-          <button id="new-game" class="new-game">New Game</button>
-        </div>
+        <div id="counter" class="led"></div>
+        <button id="smiley" class="smiley" aria-label="New game">🙂</button>
+        <div id="timer" class="led"></div>
       </div>
       <div id="board"></div>
     </div>

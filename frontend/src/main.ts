@@ -14,7 +14,7 @@ import {
 } from "./gesture";
 import { log } from "./log";
 import { createPreviewLayer } from "./previewHighlight";
-import { formatTimer, renderBoard, renderTopBar } from "./render";
+import { formatTimer, renderBoard, renderTopBar, SmileyFace } from "./render";
 import "./style.css";
 
 const boardEl = document.getElementById("board")!;
@@ -75,7 +75,7 @@ function dispatchGesture(event: GestureEvent): void {
 }
 
 /** Polls the state once per second to drive the Timer; the counter and
- * banner come from action responses, which are always fresher. */
+ * smiley come from action responses, which are always fresher. */
 async function pollTimer(): Promise<void> {
   try {
     const next = await fetchState();
@@ -107,6 +107,15 @@ function cellHit(state: GameState, pos: Pos): CellHit {
   };
 }
 
+/** Sets the Smiley Button's face directly (used for the press surprise); the
+ * state-driven face comes from renderTopBar. */
+function setSmileyFace(
+  face: (typeof SmileyFace)[keyof typeof SmileyFace],
+): void {
+  const smiley = document.getElementById("smiley");
+  if (smiley) smiley.textContent = face;
+}
+
 function handleRightDown(ev: MouseEvent): void {
   const cell = cellAt(ev);
   if (cell) {
@@ -122,6 +131,11 @@ function handleRightDown(ev: MouseEvent): void {
 }
 
 function onBoardMouseDown(ev: MouseEvent): void {
+  // Any press over the Board surprises the Smiley Button (classic behaviour);
+  // release or blur restores the state-driven face (onWindowMouseUp/blur).
+  if (ev.button === 0 || ev.button === 2) {
+    setSmileyFace(SmileyFace.surprised);
+  }
   if (ev.button === 2) {
     handleRightDown(ev);
   } else if (ev.button === 0) {
@@ -145,10 +159,14 @@ function onWindowMouseUp(ev: MouseEvent): void {
   } else if (ev.button === 0) {
     dispatchGesture({ kind: "left-up" });
   }
+  // Restore the state-driven Smiley face after a press (the surprise set on
+  // mousedown is transient; an action response re-renders it anyway).
+  if (state) renderTopBar(state);
 }
 
 function onWindowBlur(): void {
   dispatchGesture({ kind: "blur" });
+  if (state) renderTopBar(state);
 }
 
 /** Tracks the last hit-tested Cell so pointer-move events are only
@@ -187,7 +205,7 @@ function onContextMenu(ev: Event): void {
   ev.preventDefault();
 }
 
-function onTopBarClick(ev: Event): void {
+function onAppClick(ev: Event): void {
   const target = ev.target as HTMLElement;
   const difficultyBtn = target.closest<HTMLElement>("[data-difficulty]");
   if (difficultyBtn) {
@@ -198,8 +216,8 @@ function onTopBarClick(ev: Event): void {
     });
     return;
   }
-  if (target.closest("#new-game")) {
-    // New Game restarts with the current difficulty.
+  if (target.closest("#smiley")) {
+    // The Smiley Button restarts with the current difficulty.
     void applyAndRender({ type: "new-game" });
   }
 }
@@ -213,9 +231,7 @@ async function main(): Promise<void> {
     boardEl.addEventListener("pointermove", onBoardPointerMove);
     boardEl.addEventListener("pointerleave", onBoardPointerLeave);
     boardEl.addEventListener("contextmenu", onContextMenu);
-    document
-      .querySelector(".top-bar")!
-      .addEventListener("click", onTopBarClick);
+    document.getElementById("app")!.addEventListener("click", onAppClick);
     window.addEventListener("mouseup", onWindowMouseUp);
     window.addEventListener("blur", onWindowBlur);
     window.setInterval(() => void pollTimer(), 1000);
