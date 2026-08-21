@@ -49,7 +49,7 @@ async function applyAndRender(action: Action): Promise<void> {
     renderTopBar(state);
     // Re-assert the gesture-driven face: a response re-rendering the top bar
     // must not wipe the surprise while a press is still held (issue #50).
-    renderSmiley();
+    renderSmiley(state);
     // The game ended with this response: cancel any in-progress gesture so
     // no press-set or Chord Preview survives onto the Won/Lost board (#50).
     if (prev && isGameEnded(next.game_state) && !isGameEnded(prev.game_state)) {
@@ -87,7 +87,7 @@ function dispatchGesture(event: GestureEvent): void {
   }
   previewLayer.render(out.chordPreview, out.pressPreview);
   boardPressed = out.boardPressed;
-  renderSmiley();
+  renderSmiley(state!);
   if (out.action) {
     const action = out.action;
     void applyAndRender(action)
@@ -134,9 +134,9 @@ function cellHit(state: GameState, pos: Pos): CellHit {
 
 /** Renders the Smiley Button's face: surprised while a press is held over
  * the Board, otherwise the state-driven face (issue #50). */
-function renderSmiley(): void {
+function renderSmiley(state: GameState): void {
   const smiley = document.getElementById("smiley")!;
-  smiley.textContent = boardPressed ? SmileyFace.surprised : smileyFace(state!);
+  smiley.textContent = boardPressed ? SmileyFace.surprised : smileyFace(state);
 }
 
 function handleRightDown(ev: MouseEvent): void {

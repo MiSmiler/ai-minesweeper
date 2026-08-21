@@ -320,11 +320,7 @@ export function createGestureMachine() {
         };
       }
       case "blur": {
-        return {
-          next: initial(),
-          phaseChange: "released",
-          effects: state.pressPreview ? ["press-cleared"] : [],
-        };
+        return resetToIdle();
       }
       default:
         return {};
@@ -375,21 +371,18 @@ export function createGestureMachine() {
         };
       }
       case "blur": {
-        return {
-          next: initial(),
-          phaseChange: "disarmed",
-          effects: state.chordPreview ? ["preview-cleared"] : [],
-        };
+        return resetToIdle();
       }
       default:
         return {};
     }
   };
 
-  /** Resets the machine when the game ends mid-gesture: the ended game no
-   * longer responds to Board input, so an in-progress press or Chord is
-   * cancelled and the held buttons are forgotten (issue #50). */
-  const decideGameEnded = (): GestureDecision => {
+  /** Resets the machine to idle, reporting what the gesture was doing: the
+   * phase change it was in and the Previews it clears. Shared by blur (the
+   * window losing focus cancels the gesture) and game-ended (the game ending
+   * mid-gesture cancels it, issue #50). */
+  const resetToIdle = (): GestureDecision => {
     const effects: GestureEffect[] = [];
     if (state.pressPreview) effects.push("press-cleared");
     if (state.chordPreview) effects.push("preview-cleared");
@@ -412,7 +405,7 @@ export function createGestureMachine() {
     event: GestureEvent,
     gameState: GameStateName,
   ): GestureDecision => {
-    if (event.kind === "game-ended") return decideGameEnded();
+    if (event.kind === "game-ended") return resetToIdle();
     if (isGameEnded(gameState)) return {};
     switch (state.phase) {
       case "idle":

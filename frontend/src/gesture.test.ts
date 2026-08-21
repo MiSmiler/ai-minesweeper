@@ -469,8 +469,9 @@ describe("createGestureMachine", () => {
           { kind: "game-ended" },
           leftDown(previewable(1, 1, [])),
         ],
-        "won",
+        ["playing", "won", "won"],
       );
+      expect(out[1].phaseChange).toBe("released");
       expect(out[2].phaseChange).toBeUndefined();
       expect(out[2].effects).toEqual([]);
     });
