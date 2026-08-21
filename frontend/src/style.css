@@ -49,6 +49,10 @@ body {
   border-left: 2px solid var(--hidden-light);
   border-bottom: 2px solid var(--hidden-dark);
   border-right: 2px solid var(--hidden-dark);
+  /* A soft gradient-like shadow ring lifting the frame off the page. */
+  box-shadow:
+    0 0 10px rgba(0, 0, 0, 0.12),
+    0 0 24px rgba(0, 0, 0, 0.06);
 }
 
 .top-bar {
