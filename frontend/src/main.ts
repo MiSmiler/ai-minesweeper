@@ -1,5 +1,6 @@
 import {
   fetchState,
+  isGameEnded,
   postAction,
   type Action,
   type GameState,
@@ -31,9 +32,15 @@ const previewLayer = createPreviewLayer(boardEl);
 async function applyAndRender(action: Action): Promise<void> {
   const next = await controller.apply(action);
   if (next) {
+    const prev = state;
     state = next;
     renderBoard(state, boardEl);
     renderTopBar(state);
+    // The game ended with this response: cancel any in-progress gesture so
+    // no press-set or Chord Preview survives onto the Won/Lost board (#50).
+    if (prev && isGameEnded(next.game_state) && !isGameEnded(prev.game_state)) {
+      dispatchGesture({ kind: "game-ended" });
+    }
   }
 }
 
@@ -41,7 +48,9 @@ async function applyAndRender(action: Action): Promise<void> {
  * changes and in-phase effects are traced at `debug` so gesture problems
  * are diagnosable from the console alone (the machine itself stays pure). */
 function dispatchGesture(event: GestureEvent): void {
-  const out = gesture.handle(event);
+  // The event listeners are registered only after the initial state load, so
+  // `state` is always present when a gesture is dispatched.
+  const out = gesture.handle(event, state!.game_state);
   if (out.phaseChange) {
     log.debug(`gesture ${out.phaseChange}`, {
       event: event.kind,

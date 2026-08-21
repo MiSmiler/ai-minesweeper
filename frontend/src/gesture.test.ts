@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Pos } from "./api";
+import type { GameStateName, Pos } from "./api";
 import {
   createGestureMachine,
   type CellHit,
@@ -10,10 +10,18 @@ import {
 const pos = (row: number, col: number): Pos => ({ row, col });
 
 /** Runs a sequence of gesture events through a fresh machine, returning the
- * output of every event in order. */
-function run(events: GestureEvent[]): GestureOutput[] {
+ * output of every event in order. `gameState` is the game state each event
+ * is handled under (default: a live game); pass an array to vary the state
+ * per event (e.g. a press before the game ends, then `game-ended` after). */
+function run(
+  events: GestureEvent[],
+  gameState: GameStateName | GameStateName[] = "playing",
+): GestureOutput[] {
   const machine = createGestureMachine();
-  return events.map((event) => machine.handle(event));
+  const states = Array.isArray(gameState)
+    ? gameState
+    : events.map(() => gameState);
+  return events.map((event, i) => machine.handle(event, states[i]));
 }
 
 /** A hit-tested Cell for the machine. Defaults: a previewable Cell is a
@@ -358,6 +366,127 @@ describe("createGestureMachine", () => {
       expect(out[2].effects).toEqual(["preview-cleared"]);
       expect(out[3].effects).toEqual(["preview-set"]);
       expect(out[4].action).toEqual({ type: "chord", row: 1, col: 1 });
+    });
+  });
+
+  describe("game over (#50)", () => {
+    it("ignores left-down after the game is Won or Lost — no press-set, no Reveal", () => {
+      const [out] = run([leftDown(previewable(3, 4, []))], "won");
+      expect(out.action).toBeUndefined();
+      expect(out.phaseChange).toBeUndefined();
+      expect(out.effects).toEqual([]);
+      expect(out.pressPreview).toBeNull();
+    });
+
+    it("ignores right-down after the game is Won or Lost — no Flag", () => {
+      const [out] = run(
+        [rightDown(previewable(1, 2, [], false, false))],
+        "lost",
+      );
+      expect(out.action).toBeUndefined();
+      expect(out.phaseChange).toBeUndefined();
+      expect(out.effects).toEqual([]);
+    });
+
+    it("cannot arm a Chord after the game is Won or Lost", () => {
+      const out = run(
+        [
+          rightDown(previewable(1, 1, [pos(0, 0)])),
+          leftDown(previewable(1, 1, [pos(0, 0)])),
+        ],
+        "won",
+      );
+      expect(out[0].phaseChange).toBeUndefined();
+      expect(out[0].action).toBeUndefined();
+      expect(out[1].phaseChange).toBeUndefined();
+      expect(out[1].chordPreview).toBeNull();
+      expect(out[1].effects).toEqual([]);
+    });
+
+    it("ignores move, release, leave and blur after the game is Won or Lost", () => {
+      const out = run(
+        [
+          pointerMove(previewable(1, 1, [pos(0, 0)])),
+          { kind: "left-up" },
+          { kind: "right-up" },
+          { kind: "pointer-leave" },
+          { kind: "blur" },
+        ],
+        "lost",
+      );
+      for (const o of out) {
+        expect(o.action).toBeUndefined();
+        expect(o.phaseChange).toBeUndefined();
+        expect(o.effects).toEqual([]);
+      }
+    });
+
+    it("cancels a press in progress when the game ends, so its release reveals nothing", () => {
+      const out = run(
+        [
+          leftDown(previewable(1, 1, [])),
+          { kind: "game-ended" },
+          { kind: "left-up" },
+        ],
+        ["playing", "won", "won"],
+      );
+      expect(out[1].phaseChange).toBe("released");
+      expect(out[1].effects).toEqual(["press-cleared"]);
+      expect(out[1].pressPreview).toBeNull();
+      expect(out[2].action).toBeUndefined();
+    });
+
+    it("disarms a Chord in progress when the game ends, clearing its Preview", () => {
+      const out = run(
+        [
+          rightDown(previewable(1, 1, [pos(0, 0)])),
+          leftDown(previewable(1, 1, [pos(0, 0)])),
+          { kind: "game-ended" },
+        ],
+        ["playing", "playing", "won"],
+      );
+      expect(out[2].phaseChange).toBe("disarmed");
+      expect(out[2].effects).toEqual(["preview-cleared"]);
+      expect(out[2].chordPreview).toBeNull();
+    });
+
+    it("game-ended on an idle machine with a held Right press is a clean reset", () => {
+      const out = run(
+        [
+          rightDown(previewable(1, 2, [], false, false)),
+          { kind: "game-ended" },
+        ],
+        ["playing", "won"],
+      );
+      expect(out[1].phaseChange).toBeUndefined();
+      expect(out[1].effects).toEqual([]);
+    });
+
+    it("keeps ignoring input after game-ended while the state stays Won/Lost", () => {
+      const out = run(
+        [
+          leftDown(previewable(1, 1, [])),
+          { kind: "game-ended" },
+          leftDown(previewable(1, 1, [])),
+        ],
+        "won",
+      );
+      expect(out[2].phaseChange).toBeUndefined();
+      expect(out[2].effects).toEqual([]);
+    });
+
+    it("resumes normal gestures after a new game (Ready) following game-ended", () => {
+      const out = run(
+        [
+          { kind: "game-ended" },
+          leftDown(previewable(1, 1, [])),
+          { kind: "left-up" },
+        ],
+        ["won", "ready", "ready"],
+      );
+      expect(out[1].phaseChange).toBe("pressed");
+      expect(out[1].effects).toEqual(["press-set"]);
+      expect(out[2].action).toEqual({ type: "reveal", row: 1, col: 1 });
     });
   });
 

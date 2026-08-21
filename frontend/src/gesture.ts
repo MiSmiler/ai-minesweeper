@@ -1,4 +1,4 @@
-import type { Action, Pos } from "./api";
+import { isGameEnded, type Action, type GameStateName, type Pos } from "./api";
 
 /** A hit-tested Cell plus the Cells its Chord Preview would highlight
  * (computed by the caller from the game state). `isNumericCell` is the
@@ -25,7 +25,11 @@ export type GestureEvent =
   | { kind: "left-up" }
   | { kind: "right-up" }
   | { kind: "blur" }
-  | { kind: "pointer-leave" };
+  | { kind: "pointer-leave" }
+  // The game ended (a response flipped the state to Won/Lost) while a
+  // gesture was in progress: cancels the gesture and forgets the held
+  // buttons (issue #50).
+  | { kind: "game-ended" };
 
 /** The transient highlight shown while the Chord gesture is armed: the Cell
  * the Chord would be applied to and the Cells it would Reveal. */
@@ -379,8 +383,34 @@ export function createGestureMachine() {
     }
   };
 
-  /** Decides the event's effect in the current phase. */
-  const decide = (event: GestureEvent): GestureDecision => {
+  /** Resets the machine when the game ends mid-gesture: the ended game no
+   * longer responds to Board input, so an in-progress press or Chord is
+   * cancelled and the held buttons are forgotten (issue #50). */
+  const decideGameEnded = (): GestureDecision => {
+    const effects: GestureEffect[] = [];
+    if (state.pressPreview) effects.push("press-cleared");
+    if (state.chordPreview) effects.push("preview-cleared");
+    return {
+      next: initial(),
+      phaseChange:
+        state.phase === "pressing"
+          ? "released"
+          : state.phase === "armed"
+            ? "disarmed"
+            : undefined,
+      effects,
+    };
+  };
+
+  /** Decides the event's effect in the current phase. Once the game is Won
+   * or Lost the Board is inert: every event is ignored except `game-ended`,
+   * which resets the machine (issue #50). */
+  const decide = (
+    event: GestureEvent,
+    gameState: GameStateName,
+  ): GestureDecision => {
+    if (event.kind === "game-ended") return decideGameEnded();
+    if (isGameEnded(gameState)) return {};
     switch (state.phase) {
       case "idle":
         return decideIdle(event);
@@ -392,8 +422,8 @@ export function createGestureMachine() {
   };
 
   return {
-    handle(event: GestureEvent): GestureOutput {
-      const d = decide(event);
+    handle(event: GestureEvent, gameState: GameStateName): GestureOutput {
+      const d = decide(event, gameState);
       if (d.next) state = d.next;
       return {
         action: d.action,

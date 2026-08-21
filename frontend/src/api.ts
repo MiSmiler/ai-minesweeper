@@ -3,6 +3,11 @@
 import { log } from "./log";
 
 export type GameStateName = "ready" | "playing" | "won" | "lost";
+
+/** Whether the game has ended (Won or Lost). An ended game ignores further
+ * Board input (issue #50). */
+export const isGameEnded = (state: GameStateName): boolean =>
+  state === "won" || state === "lost";
 export type Difficulty = "beginner" | "intermediate" | "expert";
 export type CellState = "hidden" | "flagged" | "revealed";
 /** `"mine"` or a neighbor count; null unless the Cell is Revealed. */
