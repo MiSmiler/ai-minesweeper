@@ -1,6 +1,10 @@
-# Classic top-bar layout, current theme retained
+# Classic top-bar layout, light gray theme
 
-Issue #15 asked for the layout to move toward the classic Minesweeper look. The interpretation that landed is narrower than a full re-skin: the top bar is restructured into the classic three slots — Flags Remaining counter (left), Smiley Button (center), Timer (right) — with the difficulty selector moved to its own row above, while the existing dark theme, board frame, and beveled Cells stay unchanged. A pixel-faithful Windows XP re-skin was considered and rejected: the current theme was judged fine, and recognizability, not fidelity, is the goal.
+Issue #15 asked for the layout to move toward the classic Minesweeper look. The interpretation that landed is narrower than a full re-skin: the top bar is restructured into the classic three slots — Flags Remaining counter (left), Smiley Button (center), Timer (right) — with the difficulty selector moved to its own row above, while the board frame and beveled Cells keep their existing shape.
+
+The theme is light gray in the classic style. It was dark originally; once the page background was lightened, the dark game area looked jarring against it, so the game area was switched to a light gray palette too. The black-red LED panels, the digit colors, and the emoji faces are unchanged.
+
+A pixel-faithful Windows XP re-skin was considered and rejected: recognizability, not fidelity, is the goal.
 
 ## Considered options
 

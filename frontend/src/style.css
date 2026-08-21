@@ -1,13 +1,13 @@
 :root {
   --cell-size: 24px;
-  --bg: #38383e;
-  --hidden: #7b7b83;
-  --hidden-light: #9c9ca5;
-  --hidden-dark: #5c5c63;
-  --revealed: #d8d8dd;
-  --mine-bg: #8b0000;
-  --trigger-bg: #e04040;
-  --text: #f0f0f2;
+  --bg: #e8e8ee;
+  --hidden: #b4b4bc;
+  --hidden-light: #f2f2f6;
+  --hidden-dark: #808088;
+  --revealed: #e2e2e8;
+  --mine-bg: #cc4444;
+  --trigger-bg: #ff6b6b;
+  --text: #1a1a1f;
 }
 
 * {
@@ -31,9 +31,9 @@ body {
   display: flex;
   gap: 8px;
   padding: 6px 8px;
-  /* A darker band sets the difficulty row apart as its own region, below it
-     the centered game frame. */
-  background: #2e2e34;
+  /* A slightly darker band sets the difficulty row apart as its own region,
+     below it the centered game frame. */
+  background: #d4d4dc;
   margin-bottom: 8px;
 }
 
@@ -95,7 +95,7 @@ button {
   font: inherit;
   color: var(--text);
   background: var(--hidden);
-  border: 1px solid #2a2a2f;
+  border: 1px solid #6a6a72;
   border-radius: 3px;
   padding: 2px 8px;
   cursor: pointer;
@@ -107,7 +107,7 @@ button:hover {
 
 .difficulty.active {
   background: var(--hidden-light);
-  box-shadow: inset 0 0 0 1px #e8e8ee;
+  box-shadow: inset 0 0 0 1px #5a5a62;
 }
 
 .board {
@@ -140,7 +140,7 @@ button:hover {
 .cell-preview,
 .cell-revealed {
   background: var(--revealed);
-  border: 1px solid #b6b6bc;
+  border: 1px solid #9a9aa2;
 }
 
 .cell-revealed {
@@ -149,7 +149,7 @@ button:hover {
 
 .cell-mine {
   background: var(--mine-bg);
-  color: var(--text);
+  color: #fff;
 }
 
 .cell-trigger {
