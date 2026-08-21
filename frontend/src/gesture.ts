@@ -1,4 +1,4 @@
-import type { Action, Pos } from "./api";
+import { isGameEnded, type Action, type GameStateName, type Pos } from "./api";
 
 /** A hit-tested Cell plus the Cells its Chord Preview would highlight
  * (computed by the caller from the game state). `isNumericCell` is the
@@ -25,7 +25,11 @@ export type GestureEvent =
   | { kind: "left-up" }
   | { kind: "right-up" }
   | { kind: "blur" }
-  | { kind: "pointer-leave" };
+  | { kind: "pointer-leave" }
+  // The game ended (a response flipped the state to Won/Lost) while a
+  // gesture was in progress: cancels the gesture and forgets the held
+  // buttons (issue #50).
+  | { kind: "game-ended" };
 
 /** The transient highlight shown while the Chord gesture is armed: the Cell
  * the Chord would be applied to and the Cells it would Reveal. */
@@ -74,6 +78,9 @@ export interface GestureOutput {
   chordPreview: ChordPreview | null;
   phaseChange?: GesturePhaseChange;
   effects: GestureEffect[];
+  /** Whether a press is held over the Board — the caller renders the Smiley
+   * Button's surprise face from it (issue #50). */
+  boardPressed: boolean;
 }
 
 /** The machine's full state: the gesture `phase` — the control state the
@@ -313,11 +320,7 @@ export function createGestureMachine() {
         };
       }
       case "blur": {
-        return {
-          next: initial(),
-          phaseChange: "released",
-          effects: state.pressPreview ? ["press-cleared"] : [],
-        };
+        return resetToIdle();
       }
       default:
         return {};
@@ -368,19 +371,42 @@ export function createGestureMachine() {
         };
       }
       case "blur": {
-        return {
-          next: initial(),
-          phaseChange: "disarmed",
-          effects: state.chordPreview ? ["preview-cleared"] : [],
-        };
+        return resetToIdle();
       }
       default:
         return {};
     }
   };
 
-  /** Decides the event's effect in the current phase. */
-  const decide = (event: GestureEvent): GestureDecision => {
+  /** Resets the machine to idle, reporting what the gesture was doing: the
+   * phase change it was in and the Previews it clears. Shared by blur (the
+   * window losing focus cancels the gesture) and game-ended (the game ending
+   * mid-gesture cancels it, issue #50). */
+  const resetToIdle = (): GestureDecision => {
+    const effects: GestureEffect[] = [];
+    if (state.pressPreview) effects.push("press-cleared");
+    if (state.chordPreview) effects.push("preview-cleared");
+    return {
+      next: initial(),
+      phaseChange:
+        state.phase === "pressing"
+          ? "released"
+          : state.phase === "armed"
+            ? "disarmed"
+            : undefined,
+      effects,
+    };
+  };
+
+  /** Decides the event's effect in the current phase. Once the game is Won
+   * or Lost the Board is inert: every event is ignored except `game-ended`,
+   * which resets the machine (issue #50). */
+  const decide = (
+    event: GestureEvent,
+    gameState: GameStateName,
+  ): GestureDecision => {
+    if (event.kind === "game-ended") return resetToIdle();
+    if (isGameEnded(gameState)) return {};
     switch (state.phase) {
       case "idle":
         return decideIdle(event);
@@ -392,8 +418,8 @@ export function createGestureMachine() {
   };
 
   return {
-    handle(event: GestureEvent): GestureOutput {
-      const d = decide(event);
+    handle(event: GestureEvent, gameState: GameStateName): GestureOutput {
+      const d = decide(event, gameState);
       if (d.next) state = d.next;
       return {
         action: d.action,
@@ -401,6 +427,7 @@ export function createGestureMachine() {
         chordPreview: state.chordPreview,
         phaseChange: d.phaseChange,
         effects: d.effects ?? [],
+        boardPressed: state.phase !== "idle" || state.rightHeld,
       };
     },
   };

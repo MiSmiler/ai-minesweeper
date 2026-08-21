@@ -48,6 +48,18 @@ export function renderBoard(state: GameState, container: HTMLElement): void {
   container.replaceChildren(board);
 }
 
+/** The Smiley Button's state-driven face for a game state — the surprised
+ * face while pressing is rendered by the caller from the gesture machine's
+ * output (issue #50). */
+export function smileyFace(state: GameState): SmileyFaceValue {
+  if (state.game_state === "won") return SmileyFace.won;
+  if (state.game_state === "lost") return SmileyFace.lost;
+  return SmileyFace.neutral;
+}
+
+/** The face values of the Smiley Button. */
+export type SmileyFaceValue = (typeof SmileyFace)[keyof typeof SmileyFace];
+
 /** Renders the top bar (flag counter, smiley button, timer) from state. */
 export function renderTopBar(state: GameState): void {
   const counter = document.getElementById("counter")!;
@@ -55,14 +67,7 @@ export function renderTopBar(state: GameState): void {
   const timer = document.getElementById("timer")!;
 
   counter.textContent = formatCounter(state.flags_remaining);
-
-  if (state.game_state === "won") {
-    smiley.textContent = SmileyFace.won;
-  } else if (state.game_state === "lost") {
-    smiley.textContent = SmileyFace.lost;
-  } else {
-    smiley.textContent = SmileyFace.neutral;
-  }
+  smiley.textContent = smileyFace(state);
 
   // Highlight the active difficulty button.
   document.querySelectorAll<HTMLElement>("[data-difficulty]").forEach((btn) => {
