@@ -51,7 +51,7 @@ _Avoid_: Overdraft, overflagging
 The Mine that was Revealed to cause `Lost`; it is highlighted in the final board reveal.
 
 **Reveal**:
-The act of opening a Hidden Cell, showing its content. Revealing a Mine loses the game; revealing a Cell with zero neighbor mines flood-fills the surrounding Cells.
+The act of opening a Hidden Cell, showing its content. Revealing a Mine loses the game; revealing a Cell with zero neighbor mines cascades into the surrounding Cells.
 _Avoid_: Open, uncover, click *(as a synonym for Reveal — the player's input gesture is still called a click; see First Click)*
 
 **Flag**:
@@ -79,7 +79,7 @@ The thin line between Cells showing the Board's surface color; purely visual. Th
 _Avoid_: grid line, seam, gap
 
 **Chord**:
-An action on a Revealed numeric Cell: when the number of Flags around it equals the Cell's number, all remaining unflagged neighboring Cells are Revealed. It is armed by holding the Left and Right buttons together (see **Arm**). While armed, moving the pointer over a Revealed numeric Cell shows the Chord Preview, which follows the pointer until Left is released; releasing Left solves the Chord (Reveals the Preview's scope), and the gesture does nothing while the pointer is off a Revealed numeric Cell.
+An action on a Revealed numeric Cell: when the number of Flags around it equals the Cell's number, all remaining unflagged neighboring Cells are Revealed — each subject to the same cascade rule as a click, so a zero Cell revealed by a Chord cascades into the surrounding Cells. It is armed by holding the Left and Right buttons together (see **Arm**). While armed, moving the pointer over a Revealed numeric Cell shows the Chord Preview, which follows the pointer until Left is released; releasing Left solves the Chord (Reveals the Preview's scope), and the gesture does nothing while the pointer is off a Revealed numeric Cell.
 _Avoid_: Combo, sweep
 
 **Arm**:
