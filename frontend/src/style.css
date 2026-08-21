@@ -1,13 +1,16 @@
 :root {
   --cell-size: 24px;
-  --bg: #38383e;
-  --hidden: #7b7b83;
-  --hidden-light: #9c9ca5;
-  --hidden-dark: #5c5c63;
-  --revealed: #d8d8dd;
-  --mine-bg: #8b0000;
-  --trigger-bg: #e04040;
-  --text: #f0f0f2;
+  --bg: #e8e8ee;
+  --hidden: #b4b4bc;
+  --hidden-light: #f2f2f6;
+  --hidden-dark: #808088;
+  /* The frame/top-bar surface: between the bevel light and dark so the bevel
+     edges stay visible against it. */
+  --face: #b9b9bf;
+  --revealed: #e2e2e8;
+  --mine-bg: #cc4444;
+  --trigger-bg: #ff6b6b;
+  --text: #1a1a1f;
 }
 
 * {
@@ -27,29 +30,90 @@ body {
   flex-direction: column;
 }
 
-.top-bar {
+.difficulty-row {
   display: flex;
-  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  /* A slightly darker band sets the difficulty row apart as its own region,
+     below it the centered game frame. */
+  background: #d4d4dc;
+  margin-bottom: 8px;
+}
+
+/* The single beveled frame uniting the top bar and the Board into one
+   rectangle; it hugs the Board's width and centers in the window while the
+   difficulty row stays a separate full-width strip above it. */
+.game-frame {
+  width: max-content;
+  align-self: center;
+  padding: 4px;
+  background: var(--face);
+  border-top: 2px solid var(--hidden-light);
+  border-left: 2px solid var(--hidden-light);
+  border-bottom: 2px solid var(--hidden-dark);
+  border-right: 2px solid var(--hidden-dark);
+  /* A soft gradient-like shadow ring lifting the frame off the page. */
+  box-shadow:
+    0 0 10px rgba(0, 0, 0, 0.12),
+    0 0 24px rgba(0, 0, 0, 0.06);
+}
+
+.top-bar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
-  background: var(--hidden-dark);
+  background: var(--face);
   font-family: "Consolas", "Menlo", monospace;
   font-size: 14px;
 }
 
-.top-left,
-.top-right {
+/* Classic-style three-digit displays (counter, timer): red digits on a dark
+   panel, system font — no LED font pursuit (ADR-0006). */
+.led {
+  justify-self: start;
+  /* Height matches the Smiley Button's square so the three top-bar controls
+     sit level. */
+  height: 30px;
+  min-width: 3ch;
+  padding: 0 6px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: flex-end;
+  background: #141416;
+  color: #ff2b2b;
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border-top: 2px solid var(--hidden-light);
+  border-left: 2px solid var(--hidden-light);
+  border-bottom: 2px solid var(--hidden-dark);
+  border-right: 2px solid var(--hidden-dark);
+}
+
+#timer.led {
+  justify-self: end;
+}
+
+.smiley {
+  justify-self: center;
+  /* A square box; the LED panels share this 30px height (see .led). */
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
 }
 
 button {
   font: inherit;
   color: var(--text);
   background: var(--hidden);
-  border: 1px solid #2a2a2f;
+  border: 1px solid #6a6a72;
   border-radius: 3px;
   padding: 2px 8px;
   cursor: pointer;
@@ -61,45 +125,15 @@ button:hover {
 
 .difficulty.active {
   background: var(--hidden-light);
-  box-shadow: inset 0 0 0 1px #e8e8ee;
-}
-
-.new-game {
-  color: #1a1a1f;
-  background: #4dabf7;
-  font-weight: bold;
-}
-
-.new-game:hover {
-  background: #74c0fc;
-}
-
-.counter {
-  color: #ff6b6b;
-}
-
-.banner {
-  font-weight: bold;
-}
-
-.banner.won {
-  color: #51cf66;
-}
-
-.banner.lost {
-  color: #ff4444;
-}
-
-.timer {
-  color: #ffd43b;
+  box-shadow: inset 0 0 0 1px #5a5a62;
 }
 
 .board {
   display: grid;
-  gap: 0;
+  gap: 1.5px;
   width: max-content;
-  padding: 4px;
-  background: var(--hidden-dark);
+  /* The 1.5px grid gap shows through as the hairline between Cells. */
+  background: #9a9aa2;
 }
 
 .cell {
@@ -119,6 +153,13 @@ button:hover {
   border-right: 2px solid var(--hidden-dark);
 }
 
+/* Hidden Cells cover the Board's grid gap with their own surface color so
+   they keep the bevel-touching look (no seam); only revealed Cells show the
+   1.5px hairline through the gap. */
+.cell:not(.cell-revealed):not(.cell-preview) {
+  box-shadow: 0 0 0 1.5px var(--hidden);
+}
+
 .cell-flagged {
   font-size: 15px;
 }
@@ -126,7 +167,9 @@ button:hover {
 .cell-preview,
 .cell-revealed {
   background: var(--revealed);
-  border: 1px solid #b6b6bc;
+  /* The .cell bevel must not show on revealed Cells; the gridline comes from
+     the Board's 1px gap. */
+  border: none;
 }
 
 .cell-revealed {
@@ -135,11 +178,19 @@ button:hover {
 
 .cell-mine {
   background: var(--mine-bg);
-  color: var(--text);
+  color: #fff;
 }
 
 .cell-trigger {
   background: var(--trigger-bg);
+}
+
+/* Neighbor-count digits: bold Consolas stack, scoped to revealed non-mine
+   Cells so the mine/flag glyphs keep their rendering. */
+.cell-revealed:not(.cell-mine) {
+  font-family: "Consolas", "Menlo", "Courier New", monospace;
+  font-weight: 600;
+  font-size: 16px;
 }
 
 .n1 {

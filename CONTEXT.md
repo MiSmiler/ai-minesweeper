@@ -59,8 +59,12 @@ A marker a player places on a Hidden Cell to indicate a suspected Mine. On a Won
 _Avoid_: Mark, bookmark
 
 **Timer**:
-The elapsed time since the First Click, shown in the top bar; it shows 00:00 while Ready and freezes when the game ends.
+The elapsed time since the First Click, shown in the top bar as a three-digit seconds display (000–999, capping at 999 like the classic); it shows 000 while Ready and freezes when the game ends.
 _Avoid_: Clock, stopwatch
+
+**Smiley Button**:
+The button in the top bar that starts a new game (the same new-game Action a difficulty switch sends). Its face reflects the game and the player's pressing: normal while Ready/Playing, surprised while pressing on the Board, sunglasses on Won, crying on Lost.
+_Avoid_: Face button, reset button
 
 **Gesture**:
 A single player input interaction with the mouse over the Board: a press, a move, and a release, in any combination of the Left and Right buttons. Gestures drive the game: a Left press is a Press gesture — it shows the Press Preview and Reveals on release — and holding the Left and Right buttons together is the Chord gesture (see Arm). The frontend translates mouse input into Gestures and tracks each Gesture's Phase.
