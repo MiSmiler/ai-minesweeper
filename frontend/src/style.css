@@ -168,6 +168,7 @@ button:hover {
 .cell-revealed:not(.cell-mine) {
   font-family: "Consolas", "Menlo", "Courier New", monospace;
   font-weight: 600;
+  font-size: 16px;
 }
 
 .n1 {
