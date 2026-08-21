@@ -30,7 +30,25 @@ body {
 .difficulty-row {
   display: flex;
   gap: 8px;
-  margin-bottom: 4px;
+  padding: 6px 8px;
+  /* A darker band sets the difficulty row apart as its own region, below it
+     the centered game frame. */
+  background: #2e2e34;
+  margin-bottom: 8px;
+}
+
+/* The single beveled frame uniting the top bar and the Board into one
+   rectangle; it hugs the Board's width and centers in the window while the
+   difficulty row stays a separate full-width strip above it. */
+.game-frame {
+  width: max-content;
+  align-self: center;
+  padding: 4px;
+  background: var(--hidden-dark);
+  border-top: 2px solid var(--hidden-light);
+  border-left: 2px solid var(--hidden-light);
+  border-bottom: 2px solid var(--hidden-dark);
+  border-right: 2px solid var(--hidden-dark);
 }
 
 .top-bar {
@@ -96,8 +114,6 @@ button:hover {
   display: grid;
   gap: 0;
   width: max-content;
-  padding: 4px;
-  background: var(--hidden-dark);
 }
 
 .cell {
