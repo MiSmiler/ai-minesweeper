@@ -4,6 +4,9 @@
   --hidden: #b4b4bc;
   --hidden-light: #f2f2f6;
   --hidden-dark: #808088;
+  /* The frame/top-bar surface: between the bevel light and dark so the bevel
+     edges stay visible against it. */
+  --face: #b9b9bf;
   --revealed: #e2e2e8;
   --mine-bg: #cc4444;
   --trigger-bg: #ff6b6b;
@@ -44,7 +47,7 @@ body {
   width: max-content;
   align-self: center;
   padding: 4px;
-  background: var(--hidden-dark);
+  background: var(--face);
   border-top: 2px solid var(--hidden-light);
   border-left: 2px solid var(--hidden-light);
   border-bottom: 2px solid var(--hidden-dark);
@@ -61,7 +64,7 @@ body {
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
-  background: var(--hidden-dark);
+  background: var(--face);
   font-family: "Consolas", "Menlo", monospace;
   font-size: 14px;
 }
