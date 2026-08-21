@@ -28,7 +28,7 @@ The player-visible state of a Cell: `Hidden` (not yet touched), `Revealed` (show
 _Avoid_: Unopened, opened, marked
 
 **GameState**:
-The state of a game: `Ready` (Board exists, no Cell has been Revealed, the Timer has not started), `Playing` (First Click made, in progress), `Won` (all non-Mine Cells Revealed), `Lost` (a Mine was revealed).
+The state of a game: `Ready` (Board exists, no Cell has been Revealed, the Timer has not started), `Playing` (First Click made, in progress), `Won` (all non-Mine Cells Revealed), `Lost` (a Mine was revealed). A Won or Lost Game ignores further Gestures — the Board is inert — though the Smiley Button still starts a new Game.
 _Avoid_: Status, phase
 
 **Mine**:
