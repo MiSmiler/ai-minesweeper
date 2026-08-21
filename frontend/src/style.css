@@ -142,6 +142,13 @@ button:hover {
   background: var(--trigger-bg);
 }
 
+/* Neighbor-count digits: bold Consolas stack, scoped to revealed non-mine
+   Cells so the mine/flag glyphs keep their rendering. */
+.cell-revealed:not(.cell-mine) {
+  font-family: "Consolas", "Menlo", "Courier New", monospace;
+  font-weight: 600;
+}
+
 .n1 {
   color: #0000cc;
 }
