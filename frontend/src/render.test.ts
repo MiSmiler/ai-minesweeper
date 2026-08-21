@@ -6,6 +6,7 @@ import {
   formatTimer,
   renderBoard,
   renderTopBar,
+  type TopBarEls,
 } from "./render";
 import { gameState } from "./testUtils";
 
@@ -138,41 +139,57 @@ describe("renderBoard", () => {
 });
 
 describe("renderTopBar", () => {
+  /** The top-bar elements from the beforeEach document body. */
+  const els = (): TopBarEls => ({
+    counter: document.getElementById("counter")!,
+    smiley: document.getElementById("smiley")!,
+    timer: document.getElementById("timer")!,
+    difficultyRow: document.querySelector(".difficulty-row")!,
+  });
+
   it("renders Flags Remaining as a three-digit counter", () => {
-    renderTopBar(gameState({ flags_remaining: 5 }));
-    expect(document.getElementById("counter")!.textContent).toBe("005");
+    const bar = els();
+    renderTopBar(gameState({ flags_remaining: 5 }), bar);
+    expect(bar.counter.textContent).toBe("005");
   });
 
   it("renders negative Flags Remaining with a minus sign", () => {
-    renderTopBar(gameState({ flags_remaining: -2 }));
-    expect(document.getElementById("counter")!.textContent).toBe("-2");
+    const bar = els();
+    renderTopBar(gameState({ flags_remaining: -2 }), bar);
+    expect(bar.counter.textContent).toBe("-2");
   });
 
   it("renders the Timer as three-digit seconds", () => {
-    renderTopBar(gameState({ elapsed_secs: 65 }));
-    expect(document.getElementById("timer")!.textContent).toBe("065");
+    const bar = els();
+    renderTopBar(gameState({ elapsed_secs: 65 }), bar);
+    expect(bar.timer.textContent).toBe("065");
   });
 
   it("shows the neutral smiley while Ready or Playing", () => {
-    renderTopBar(gameState({ game_state: "playing" }));
-    expect(document.getElementById("smiley")!.textContent).toBe("🙂");
-    renderTopBar(gameState({ game_state: "ready" }));
-    expect(document.getElementById("smiley")!.textContent).toBe("🙂");
+    const bar = els();
+    renderTopBar(gameState({ game_state: "playing" }), bar);
+    expect(bar.smiley.textContent).toBe("🙂");
+    renderTopBar(gameState({ game_state: "ready" }), bar);
+    expect(bar.smiley.textContent).toBe("🙂");
   });
 
   it("shows the sunglasses smiley on a Won game", () => {
-    renderTopBar(gameState({ game_state: "won" }));
-    expect(document.getElementById("smiley")!.textContent).toBe("😎");
+    const bar = els();
+    renderTopBar(gameState({ game_state: "won" }), bar);
+    expect(bar.smiley.textContent).toBe("😎");
   });
 
   it("shows the crying smiley on a Lost game", () => {
-    renderTopBar(gameState({ game_state: "lost" }));
-    expect(document.getElementById("smiley")!.textContent).toBe("😭");
+    const bar = els();
+    renderTopBar(gameState({ game_state: "lost" }), bar);
+    expect(bar.smiley.textContent).toBe("😭");
   });
 
   it("highlights the active difficulty button", () => {
-    renderTopBar(gameState({ difficulty: "intermediate" }));
-    const buttons = document.querySelectorAll<HTMLElement>("[data-difficulty]");
+    const bar = els();
+    renderTopBar(gameState({ difficulty: "intermediate" }), bar);
+    const buttons =
+      bar.difficultyRow.querySelectorAll<HTMLElement>("[data-difficulty]");
     const active = Array.from(buttons).filter((b) =>
       b.classList.contains("active"),
     );

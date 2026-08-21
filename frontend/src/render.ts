@@ -60,21 +60,32 @@ export function smileyFace(state: GameState): SmileyFaceValue {
 /** The face values of the Smiley Button. */
 export type SmileyFaceValue = (typeof SmileyFace)[keyof typeof SmileyFace];
 
-/** Renders the top bar (flag counter, smiley button, timer) from state. */
-export function renderTopBar(state: GameState): void {
-  const counter = document.getElementById("counter")!;
-  const smiley = document.getElementById("smiley")!;
-  const timer = document.getElementById("timer")!;
+/** The elements the top-bar renderer writes into. */
+export interface TopBarEls {
+  counter: HTMLElement;
+  smiley: HTMLElement;
+  timer: HTMLElement;
+  /** The row holding the difficulty buttons; the active one is highlighted. */
+  difficultyRow: HTMLElement;
+}
 
-  counter.textContent = formatCounter(state.flags_remaining);
-  smiley.textContent = smileyFace(state);
+/** Renders the top bar (flag counter, smiley button, timer) from state into
+ * the given elements, highlighting the active difficulty button in the row. */
+export function renderTopBar(state: GameState, els: TopBarEls): void {
+  els.counter.textContent = formatCounter(state.flags_remaining);
+  els.smiley.textContent = smileyFace(state);
 
   // Highlight the active difficulty button.
-  document.querySelectorAll<HTMLElement>("[data-difficulty]").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.difficulty === state.difficulty);
-  });
+  els.difficultyRow
+    .querySelectorAll<HTMLElement>("[data-difficulty]")
+    .forEach((btn) => {
+      btn.classList.toggle(
+        "active",
+        btn.dataset.difficulty === state.difficulty,
+      );
+    });
 
-  timer.textContent = formatTimer(state.elapsed_secs);
+  els.timer.textContent = formatTimer(state.elapsed_secs);
 }
 
 /** Formats elapsed seconds as a three-digit display, capped at 999 like the
