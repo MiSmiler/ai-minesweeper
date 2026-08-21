@@ -9,7 +9,7 @@ A single playthrough created from a Difficulty; the player Reveals Cells until t
 _Avoid_: Round, match, session
 
 **Board**:
-A rectangular grid of Cells, sized by the active Difficulty.
+A rectangular grid of Cells, sized by the active Difficulty. The Cells are interactively contiguous — the hairline between them is decorative and does not affect input: every pointer position on the Board maps to a Cell.
 _Avoid_: Grid, field, minefield
 
 **Cell**:
@@ -74,16 +74,20 @@ _Avoid_: click (as a name for a Gesture — see First Click), mouse event
 The stage a Gesture is in: `idle` — no gesture in progress, though a Right press may be held (its Flag already sent, the press remembered for a possible Chord); `pressing` — a Left press is in progress: the Press Preview follows the pointer, and releasing Left Reveals; `armed` — the Chord gesture is ready: the Chord Preview follows the pointer, and releasing Left Chords. A Gesture's phase is distinct from its button state: a held Right press alone stays `idle`, and releasing Right never leaves `armed`.
 _Avoid_: state, status, mode
 
+**Hairline**:
+The thin line between Cells showing the Board's surface color; purely visual. The Board is interactively contiguous — pointer positions on the hairline map to a Cell as if the Cells touched, so the hairline never interrupts a Gesture.
+_Avoid_: grid line, seam, gap
+
 **Chord**:
 An action on a Revealed numeric Cell: when the number of Flags around it equals the Cell's number, all remaining unflagged neighboring Cells are Revealed. It is armed by holding the Left and Right buttons together (see **Arm**). While armed, moving the pointer over a Revealed numeric Cell shows the Chord Preview, which follows the pointer until Left is released; releasing Left solves the Chord (Reveals the Preview's scope), and the gesture does nothing while the pointer is off a Revealed numeric Cell.
 _Avoid_: Combo, sweep
 
 **Arm**:
-The act of putting the Chord gesture into its ready state by holding the Left and Right buttons together, in any button order, provided both presses land on Revealed Cells (any Revealed content, not only numeric). An armed Chord shows the Chord Preview while the pointer is over a Revealed numeric Cell — a press that Arms over such a Cell shows it immediately — and stays inert elsewhere; when Left is released with a Preview shown, the Chord solves (Reveals), and a plain release just disarms. The gesture disarms when Left is released or the window loses focus; releasing Right alone does not disarm it, and moving the pointer off the Board keeps it armed.
+The act of putting the Chord gesture into its ready state by holding the Left and Right buttons together, in any button order, provided both presses land on Revealed Cells (any Revealed content, not only numeric). An armed Chord shows the Chord Preview while the pointer is over a Revealed numeric Cell — a press that Arms over such a Cell shows it immediately — and stays inert elsewhere; when Left is released with a Preview shown, the Chord solves (Reveals), and a plain release just disarms. The gesture disarms when Left is released or the window loses focus; releasing Right alone does not disarm it, and moving the pointer off the Board keeps it armed — but preview-less: the Chord Preview does not return on re-entry until the gesture re-arms.
 _Avoid_: Trigger, activate, engage
 
 **Chord Preview**:
-The transient highlight shown while the Chord gesture is armed: holding Left and Right together with the pointer over a Revealed numeric Cell renders all of its unflagged neighboring Cells as empty Revealed Cells, showing the scope of the pending Chord — the press that Arms the Chord shows it immediately, in either press order. While Left is held, moving the pointer over other Revealed numeric Cells moves the Preview (and the pending Chord's target) with it; the Preview clears whenever the pointer is not over a Revealed numeric Cell. Releasing Right does not clear it — once armed, the Preview is driven by Left alone. It clears when the window blurs or the pointer leaves the Board; when Left is released with a Preview shown, the Chord solves and the highlight stays visible until the game confirms the Reveal (the re-render that shows the Cells revealed replaces it). It is a pure visual — no action is sent — and independent of whether the Chord would actually solve.
+The transient highlight shown while the Chord gesture is armed: holding Left and Right together with the pointer over a Revealed numeric Cell renders all of its unflagged neighboring Cells as empty Revealed Cells, showing the scope of the pending Chord — the press that Arms the Chord shows it immediately, in either press order. While Left is held, moving the pointer over other Revealed numeric Cells moves the Preview (and the pending Chord's target) with it; the Preview clears whenever the pointer is not over a Revealed numeric Cell. Releasing Right does not clear it — once armed, the Preview is driven by Left alone. It clears when the window blurs or the pointer leaves the Board — leaving the Board clears it for the rest of the gesture (re-entering does not bring it back until the Chord re-arms); when Left is released with a Preview shown, the Chord solves and the highlight stays visible until the game confirms the Reveal (the re-render that shows the Cells revealed replaces it). It is a pure visual — no action is sent — and independent of whether the Chord would actually solve.
 _Avoid_: try-chord, preview
 
 **Press Preview**:

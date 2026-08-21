@@ -82,13 +82,19 @@ export interface GestureOutput {
 /** The machine's full state: the gesture `phase` — the control state the
  * transition table is defined over — plus the extended state (which
  * buttons are held, where each press went down for the Arm eligibility
- * rule, the Press Preview position and the Chord Preview). Data changes
- * alone are not phase changes and never produce a `phaseChange`. */
+ * rule, whether the pointer has left the Board since Arming, the Press
+ * Preview position and the Chord Preview). Data changes alone are not
+ * phase changes and never produce a `phaseChange`. */
 interface MachineState {
   phase: GesturePhase;
   rightHeld: boolean;
   rightOnRevealed: boolean;
   leftOnRevealed: boolean;
+  /** Whether the pointer has left the Board since the gesture Armed — once
+   * true, the Chord Preview stays cleared for the rest of the gesture
+   * (mirroring the Press Preview's terminal clear): re-entering the Board
+   * does not bring it back until the gesture re-arms. */
+  pointerLeftBoard: boolean;
   pressPreview: Pos | null;
   chordPreview: ChordPreview | null;
 }
@@ -108,6 +114,7 @@ const initial = (): MachineState => ({
   rightHeld: false,
   rightOnRevealed: false,
   leftOnRevealed: false,
+  pointerLeftBoard: false,
   pressPreview: null,
   chordPreview: null,
 });
@@ -119,10 +126,12 @@ const initial = (): MachineState => ({
  * and Right together Arms a Chord — in either press order — provided both
  * presses land on Revealed Cells; the Chord Preview follows the pointer
  * over Revealed numeric Cells, and releasing Left solves (Reveals the
- * flagged-consistent neighbors) when a Preview is shown. A Flag fires only
- * on Right-down with no Left held, and releasing Right does not disarm an
- * armed Chord. Pure: no DOM, no I/O — the caller renders the output and
- * traces the reported state changes and effects. */
+ * flagged-consistent neighbors) when a Preview is shown. Leaving the Board
+ * terminally clears the Chord Preview — it does not return on re-entry
+ * until the gesture re-arms — mirroring the Press Preview. A Flag fires
+ * only on Right-down with no Left held, and releasing Right does not
+ * disarm an armed Chord. Pure: no DOM, no I/O — the caller renders the
+ * output and traces the reported state changes and effects. */
 export function createGestureMachine() {
   let state: MachineState = initial();
   /** The enable gate: closed (false) once the game is Won or Lost — the
@@ -182,6 +191,7 @@ export function createGestureMachine() {
     rightHeld: state.rightHeld,
     rightOnRevealed: state.rightOnRevealed,
     leftOnRevealed: false,
+    pointerLeftBoard: false,
     pressPreview: null,
     chordPreview: null,
   });
@@ -196,7 +206,8 @@ export function createGestureMachine() {
 
   /** Arms the Chord over `cell` — the second press of either order just
    * landed on a Revealed Cell and the first press did too, so the gesture
-   * is now ready to solve. */
+   * is now ready to solve. A fresh arm also resets the pointer-left latch:
+   * a new Chord gesture starts with a recoverable Preview. */
   const arm = (cell: CellHit): GestureDecision => {
     const p = setChordPreview(cell);
     return {
@@ -205,6 +216,7 @@ export function createGestureMachine() {
         rightHeld: true,
         rightOnRevealed: true,
         leftOnRevealed: true,
+        pointerLeftBoard: false,
         pressPreview: null,
         chordPreview: p.chordPreview,
       },
@@ -353,6 +365,10 @@ export function createGestureMachine() {
           },
         };
       case "pointer-move": {
+        // The pointer left the Board while armed: the Chord Preview is
+        // terminally cleared (like the Press Preview) — re-entering the
+        // Board does not restore it until the gesture re-arms (ADR-0008).
+        if (state.pointerLeftBoard) return {};
         const p =
           !event.cell || !event.cell.isNumericCell
             ? clearChordPreview()
@@ -365,9 +381,14 @@ export function createGestureMachine() {
       }
       case "pointer-leave": {
         const p = clearChordPreview();
-        if (p.chordPreview === state.chordPreview) return {};
+        // The latch is set even when no Preview was shown, so re-entering
+        // over a previewable Cell cannot restore it.
         return {
-          next: { ...state, chordPreview: p.chordPreview },
+          next: {
+            ...state,
+            pointerLeftBoard: true,
+            chordPreview: p.chordPreview,
+          },
           effects: p.effect ? [p.effect] : [],
         };
       }

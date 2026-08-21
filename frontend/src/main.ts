@@ -1,5 +1,6 @@
 import { fetchState, postAction, type GameState, type Pos } from "./api";
 import { createGameClient } from "./client";
+import { cellAtPoint, measureBoard, type BoardGeometry } from "./hitTest";
 import { log } from "./log";
 import type { TopBarEls } from "./render";
 import "./style.css";
@@ -28,19 +29,37 @@ const client = createGameClient({
  * fires far more often than the Chord Preview needs to change. */
 let lastPointerCell: Pos | null = null;
 
-function cellAt(ev: MouseEvent): HTMLElement | null {
-  return (ev.target as HTMLElement).closest<HTMLElement>(".cell");
+/** The Board's cached hit-testing geometry (Cell pitch, hairline gap, Cell
+ * counts). Re-measured when the rendered Cell count changes (a difficulty
+ * switch re-renders the Board) or before the first event; the Board's origin
+ * is read fresh per event since layout can shift. */
+let boardGeometryCache: BoardGeometry | null = null;
+let boardCellCount = 0;
+
+function boardGeometry(): BoardGeometry | null {
+  const count = boardEl.querySelectorAll(".cell").length;
+  if (count !== boardCellCount || boardGeometryCache === null) {
+    boardGeometryCache = measureBoard(boardEl);
+    boardCellCount = count;
+  }
+  return boardGeometryCache;
 }
 
-function cellPos(cell: HTMLElement): Pos {
-  return { row: Number(cell.dataset.row), col: Number(cell.dataset.col) };
+/** The Cell under the pointer, or null when the Board has no measured
+ * geometry (defensive — the listeners are registered only after the initial
+ * state load, so this should not happen in practice). */
+function posAt(ev: MouseEvent | PointerEvent): Pos | null {
+  const geometry = boardGeometry();
+  return geometry
+    ? cellAtPoint(boardEl, ev.clientX, ev.clientY, geometry)
+    : null;
 }
 
 function handleRightDown(ev: MouseEvent): void {
-  const cell = cellAt(ev);
-  if (cell) {
+  const pos = posAt(ev);
+  if (pos) {
     ev.preventDefault();
-    client.handleInput({ kind: "right-down", pos: cellPos(cell) });
+    client.handleInput({ kind: "right-down", pos });
   } else {
     // The press is still remembered for the chord gesture, even off a Cell.
     client.handleInput({ kind: "right-down", pos: null });
@@ -56,10 +75,10 @@ function onBoardMouseDown(ev: MouseEvent): void {
 }
 
 function handleLeftDown(ev: MouseEvent): void {
-  const cell = cellAt(ev);
-  if (!cell) return;
+  const pos = posAt(ev);
+  if (!pos) return;
   ev.preventDefault();
-  client.handleInput({ kind: "left-down", pos: cellPos(cell) });
+  client.handleInput({ kind: "left-down", pos });
 }
 
 function onWindowMouseUp(ev: MouseEvent): void {
@@ -82,10 +101,9 @@ function onBoardPointerLeave(): void {
 }
 
 function onBoardPointerMove(ev: PointerEvent): void {
-  const cell = cellAt(ev);
-  const pos = cell ? cellPos(cell) : null;
-  // Equal when both are null (moving within Board space that is no Cell) or
-  // both name the same Cell — anything else is a change worth dispatching.
+  const pos = posAt(ev);
+  // Equal when both are null (the Board has no measured geometry — defensive)
+  // or both name the same Cell — anything else is a change worth dispatching.
   const sameCell =
     (pos === null && lastPointerCell === null) ||
     (pos !== null &&

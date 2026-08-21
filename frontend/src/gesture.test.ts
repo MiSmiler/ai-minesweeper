@@ -348,7 +348,7 @@ describe("createGestureMachine", () => {
       expect(out[3].effects).toEqual([]);
     });
 
-    it("clears the Preview on pointer-leave but keeps the gesture armed", () => {
+    it("clears the Preview on pointer-leave and does not restore it on re-entry", () => {
       const out = run([
         ...armed(),
         { kind: "pointer-leave" },
@@ -356,8 +356,56 @@ describe("createGestureMachine", () => {
         { kind: "left-up" },
       ]);
       expect(out[2].effects).toEqual(["preview-cleared"]);
-      expect(out[3].effects).toEqual(["preview-set"]);
-      expect(out[4].action).toEqual({ type: "chord", row: 1, col: 1 });
+      // Re-entering over a previewable Cell does not restore the Preview…
+      expect(out[3].effects).toEqual([]);
+      expect(out[3].chordPreview).toBeNull();
+      // …and releasing Left just disarms, sending no Chord.
+      expect(out[4].action).toBeUndefined();
+      expect(out[4].phaseChange).toBe("disarmed");
+      expect(out[4].effects).toEqual([]);
+    });
+
+    it("stays preview-less across repeated leave/re-enter while armed", () => {
+      const out = run([
+        ...armed(),
+        { kind: "pointer-leave" },
+        pointerMove(previewable(2, 2, [pos(1, 2)])),
+        { kind: "pointer-leave" },
+        pointerMove(previewable(3, 3, [pos(2, 3)])),
+      ]);
+      expect(out[3].effects).toEqual([]);
+      expect(out[4].effects).toEqual([]);
+      expect(out[4].chordPreview).toBeNull();
+    });
+
+    it("latches the terminal clear even when no Preview was shown on leave", () => {
+      const out = run([
+        ...armed(),
+        pointerMove(previewable(3, 3, [], false, true)),
+        { kind: "pointer-leave" },
+        pointerMove(previewable(2, 2, [pos(1, 2)])),
+      ]);
+      expect(out[2].effects).toEqual(["preview-cleared"]);
+      expect(out[3].effects).toEqual([]);
+      expect(out[4].effects).toEqual([]);
+      expect(out[4].chordPreview).toBeNull();
+    });
+
+    it("re-arms with a fresh Preview after a leave ended the gesture", () => {
+      const out = run([
+        ...armed(),
+        { kind: "pointer-leave" },
+        { kind: "left-up" },
+        leftDown(previewable(2, 2, [pos(1, 2)])),
+      ]);
+      expect(out[2].effects).toEqual(["preview-cleared"]);
+      expect(out[3].phaseChange).toBe("disarmed");
+      expect(out[4].phaseChange).toBe("armed");
+      expect(out[4].effects).toEqual(["preview-set"]);
+      expect(out[4].chordPreview).toEqual({
+        pos: pos(2, 2),
+        cells: [pos(1, 2)],
+      });
     });
   });
 
