@@ -119,8 +119,10 @@ button:hover {
 
 .board {
   display: grid;
-  gap: 0;
+  gap: 1.5px;
   width: max-content;
+  /* The 1.5px grid gap shows through as the hairline between Cells. */
+  background: #9a9aa2;
 }
 
 .cell {
@@ -140,6 +142,13 @@ button:hover {
   border-right: 2px solid var(--hidden-dark);
 }
 
+/* Hidden Cells cover the Board's grid gap with their own surface color so
+   they keep the bevel-touching look (no seam); only revealed Cells show the
+   1.5px hairline through the gap. */
+.cell:not(.cell-revealed):not(.cell-preview) {
+  box-shadow: 0 0 0 1.5px var(--hidden);
+}
+
 .cell-flagged {
   font-size: 15px;
 }
@@ -147,7 +156,9 @@ button:hover {
 .cell-preview,
 .cell-revealed {
   background: var(--revealed);
-  border: 1px solid #9a9aa2;
+  /* The .cell bevel must not show on revealed Cells; the gridline comes from
+     the Board's 1px gap. */
+  border: none;
 }
 
 .cell-revealed {
