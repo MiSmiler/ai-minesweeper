@@ -302,7 +302,7 @@ mod tests {
     fn reveal_action_places_mines_and_starts_playing() {
         // Preset Mines so the First Click is deterministically safe: #19
         // removed the protection, so a random game could lose on (0, 0).
-        // Two Mines adjacent to (0, 0) make it reveal a Number, not flood.
+        // Two Mines adjacent to (0, 0) make it reveal a Number, not cascade.
         let mut game = Game::with_mines(
             Difficulty::Beginner,
             GameMode::Classic,

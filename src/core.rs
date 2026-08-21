@@ -282,13 +282,17 @@ impl Game {
             self.state = GameState::Playing;
             self.started_at = Some(Instant::now());
         }
-        self.reveal_at(pos);
+        self.reveal_cell(pos);
         self.resolve_end(pos);
     }
 
-    fn reveal_at(&mut self, pos: Position) {
+    /// Reveals a single Cell and applies the cascade rule: a zero Cell (no
+    /// adjacent Mines) also Reveals its surrounding non-Mine Cells,
+    /// cascading through connected zero Cells. Shared by `reveal` (a
+    /// click) and `chord` (each neighbor it Reveals is subject to the same
+    /// rule). A Mine never cascades: the game ends on it in `resolve_end`.
+    fn reveal_cell(&mut self, pos: Position) {
         self.set_cell_state(pos, CellState::Revealed);
-        // A Mine never flood-fills: the game ends on it in `resolve_end`.
         if self.is_mine(pos) {
             return;
         }
@@ -486,9 +490,10 @@ impl Game {
     }
 
     /// Chord: on a Revealed numeric Cell whose Flag count matches its
-    /// number, Reveals all unflagged neighbors. No-op otherwise — including
-    /// on Hidden Cells, zero Cells, and mismatched Flag counts. Does not
-    /// flood-fill: only the immediate neighbors are Revealed.
+    /// number, Reveals all unflagged neighbors — each subject to the same
+    /// cascade rule as a click, so a zero Cell Revealed by the Chord
+    /// cascades through connected zero Cells. No-op otherwise — including
+    /// on Hidden Cells, zero Cells, and mismatched Flag counts.
     pub fn chord(&mut self, pos: Position) {
         if !self.can_operate(pos) {
             return;
@@ -509,7 +514,7 @@ impl Game {
         let mut hit_mine = None;
         for neighbor in Self::neighbors(self.size, pos) {
             if self.cell_state(neighbor) == CellState::Hidden {
-                self.set_cell_state(neighbor, CellState::Revealed);
+                self.reveal_cell(neighbor);
                 if self.is_mine(neighbor) && hit_mine.is_none() {
                     hit_mine = Some(neighbor);
                 }
@@ -710,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_cell_flood_fills_until_numbered_boundary() {
+    fn zero_cell_cascades_until_numbered_boundary() {
         let mut game = Game::with_mines(
             Difficulty::Beginner,
             GameMode::Classic,
@@ -722,7 +727,7 @@ mod tests {
             game.cell_view(Position::new(0, 0)).content,
             Some(CellContent::Number(0))
         );
-        // The numbered boundary of the flood fill is Revealed.
+        // The numbered boundary of the cascade is Revealed.
         assert_eq!(
             game.cell_view(Position::new(3, 3)).content,
             Some(CellContent::Number(1))
@@ -732,7 +737,7 @@ mod tests {
             game.cell_view(Position::new(8, 8)).content,
             Some(CellContent::Number(0))
         );
-        // One lone Mine means the flood fill wins instantly: the game is Won
+        // One lone Mine means the cascade wins instantly: the game is Won
         // and the Mine is auto-Flagged on the final board.
         assert_eq!(game.game_state(), GameState::Won);
         assert_eq!(
@@ -974,6 +979,80 @@ mod tests {
     }
 
     #[test]
+    fn chord_cascades_through_revealed_zero_cells() {
+        // A solid wall of Mines across row 4 splits the Board in two. The
+        // 3 at (3,1) sits against the wall; Flagging its three Mine
+        // neighbors and Chording Reveals the zero Cells at (2,0),(2,1),
+        // (2,2) — each subject to the same cascade rule as a click, so the
+        // connected zero region of the top half cascades several levels
+        // deep, while the bottom half stays untouched.
+        let mut mines: Vec<Position> = (0..9).map(|c| Position::new(4, c)).collect();
+        mines.push(Position::new(8, 8));
+        let mut game = Game::with_mines(Difficulty::Beginner, GameMode::Classic, &mines);
+        game.reveal(Position::new(3, 1));
+        assert_eq!(
+            game.cell_view(Position::new(3, 1)).content,
+            Some(CellContent::Number(3))
+        );
+        for col in 0..3 {
+            game.toggle_flag(Position::new(4, col));
+        }
+        game.chord(Position::new(3, 1));
+
+        // The zero Cell the Chord revealed cascades like a click: level 1…
+        assert_eq!(
+            game.cell_view(Position::new(2, 0)).content,
+            Some(CellContent::Number(0))
+        );
+        // …level 2…
+        assert_eq!(
+            game.cell_view(Position::new(1, 5)).content,
+            Some(CellContent::Number(0))
+        );
+        // …and level 3, at the Board's top edge.
+        assert_eq!(
+            game.cell_view(Position::new(0, 5)).content,
+            Some(CellContent::Number(0))
+        );
+        // The Mine wall bounds the cascade: the bottom half stays Hidden and
+        // the game is still in progress.
+        assert_eq!(game.cell_view(Position::new(5, 5)).state, CellState::Hidden);
+        assert_eq!(game.game_state(), GameState::Playing);
+    }
+
+    #[test]
+    fn chord_cascade_revealing_the_last_cell_wins() {
+        // Two corner Mines: Chording the 2 at (1,1) Reveals the remaining
+        // Mine-adjacent Cells directly, and the zero Cells it Reveals
+        // cascade across every other non-Mine Cell — the last Reveal wins.
+        let mut game = Game::with_mines(
+            Difficulty::Beginner,
+            GameMode::Classic,
+            &[Position::new(0, 0), Position::new(0, 1)],
+        );
+        game.reveal(Position::new(1, 1));
+        game.toggle_flag(Position::new(0, 0));
+        game.toggle_flag(Position::new(0, 1));
+        game.chord(Position::new(1, 1));
+
+        assert_eq!(game.game_state(), GameState::Won);
+        // The Mines are auto-Flagged on the Won board.
+        assert_eq!(
+            game.cell_view(Position::new(0, 0)).state,
+            CellState::Flagged
+        );
+        assert_eq!(
+            game.cell_view(Position::new(0, 1)).state,
+            CellState::Flagged
+        );
+        // A Cell deep in the cascaded region is Revealed.
+        assert_eq!(
+            game.cell_view(Position::new(8, 8)).state,
+            CellState::Revealed
+        );
+    }
+
+    #[test]
     fn chord_is_noop_when_flag_count_mismatches() {
         let mut game = Game::with_mines(
             Difficulty::Beginner,
@@ -1052,7 +1131,7 @@ mod tests {
 
     #[test]
     fn elapsed_runs_after_first_reveal() {
-        // Reveal a numeric Cell so the game stays Playing (no flood fill, no win).
+        // Reveal a numeric Cell so the game stays Playing (no cascade, no win).
         let mut game = Game::with_mines(
             Difficulty::Beginner,
             GameMode::Classic,
