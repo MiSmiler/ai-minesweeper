@@ -78,6 +78,9 @@ export interface GestureOutput {
   chordPreview: ChordPreview | null;
   phaseChange?: GesturePhaseChange;
   effects: GestureEffect[];
+  /** Whether a press is held over the Board — the caller renders the Smiley
+   * Button's surprise face from it (issue #50). */
+  boardPressed: boolean;
 }
 
 /** The machine's full state: the gesture `phase` — the control state the
@@ -431,6 +434,7 @@ export function createGestureMachine() {
         chordPreview: state.chordPreview,
         phaseChange: d.phaseChange,
         effects: d.effects ?? [],
+        boardPressed: state.phase !== "idle" || state.rightHeld,
       };
     },
   };

@@ -15,7 +15,13 @@ import {
 } from "./gesture";
 import { log } from "./log";
 import { createPreviewLayer } from "./previewHighlight";
-import { formatTimer, renderBoard, renderTopBar, SmileyFace } from "./render";
+import {
+  formatTimer,
+  renderBoard,
+  renderTopBar,
+  SmileyFace,
+  smileyFace,
+} from "./render";
 import "./style.css";
 
 const boardEl = document.getElementById("board")!;
@@ -25,6 +31,11 @@ let state: GameState | null = null;
 const gesture = createGestureMachine();
 const controller = createActionController(postAction);
 const previewLayer = createPreviewLayer(boardEl);
+
+/** Whether a press is currently held over the Board, as reported by the last
+ * gesture dispatch — kept so an action response re-rendering the top bar can
+ * keep the Smiley surprised while the press is still held (issue #50). */
+let boardPressed = false;
 
 /** Sends an Action through the controller and renders the fresh state. Only
  * the latest action's result is ever rendered — stale responses are dropped
@@ -36,6 +47,9 @@ async function applyAndRender(action: Action): Promise<void> {
     state = next;
     renderBoard(state, boardEl);
     renderTopBar(state);
+    // Re-assert the gesture-driven face: a response re-rendering the top bar
+    // must not wipe the surprise while a press is still held (issue #50).
+    renderSmiley();
     // The game ended with this response: cancel any in-progress gesture so
     // no press-set or Chord Preview survives onto the Won/Lost board (#50).
     if (prev && isGameEnded(next.game_state) && !isGameEnded(prev.game_state)) {
@@ -72,6 +86,8 @@ function dispatchGesture(event: GestureEvent): void {
     previewLayer.retain();
   }
   previewLayer.render(out.chordPreview, out.pressPreview);
+  boardPressed = out.boardPressed;
+  renderSmiley();
   if (out.action) {
     const action = out.action;
     void applyAndRender(action)
@@ -116,13 +132,11 @@ function cellHit(state: GameState, pos: Pos): CellHit {
   };
 }
 
-/** Sets the Smiley Button's face directly (used for the press surprise); the
- * state-driven face comes from renderTopBar. */
-function setSmileyFace(
-  face: (typeof SmileyFace)[keyof typeof SmileyFace],
-): void {
-  const smiley = document.getElementById("smiley");
-  if (smiley) smiley.textContent = face;
+/** Renders the Smiley Button's face: surprised while a press is held over
+ * the Board, otherwise the state-driven face (issue #50). */
+function renderSmiley(): void {
+  const smiley = document.getElementById("smiley")!;
+  smiley.textContent = boardPressed ? SmileyFace.surprised : smileyFace(state!);
 }
 
 function handleRightDown(ev: MouseEvent): void {
@@ -140,11 +154,6 @@ function handleRightDown(ev: MouseEvent): void {
 }
 
 function onBoardMouseDown(ev: MouseEvent): void {
-  // Any press over the Board surprises the Smiley Button (classic behaviour);
-  // release or blur restores the state-driven face (onWindowMouseUp/blur).
-  if (ev.button === 0 || ev.button === 2) {
-    setSmileyFace(SmileyFace.surprised);
-  }
   if (ev.button === 2) {
     handleRightDown(ev);
   } else if (ev.button === 0) {
@@ -168,14 +177,10 @@ function onWindowMouseUp(ev: MouseEvent): void {
   } else if (ev.button === 0) {
     dispatchGesture({ kind: "left-up" });
   }
-  // Restore the state-driven Smiley face after a press (the surprise set on
-  // mousedown is transient; an action response re-renders it anyway).
-  if (state) renderTopBar(state);
 }
 
 function onWindowBlur(): void {
   dispatchGesture({ kind: "blur" });
-  if (state) renderTopBar(state);
 }
 
 /** Tracks the last hit-tested Cell so pointer-move events are only

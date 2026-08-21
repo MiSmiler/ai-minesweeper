@@ -490,6 +490,75 @@ describe("createGestureMachine", () => {
     });
   });
 
+  describe("boardPressed (#50)", () => {
+    it("reports a held Left press", () => {
+      const out = run([leftDown(previewable(1, 1, []))]);
+      expect(out[0].boardPressed).toBe(true);
+    });
+
+    it("clears when the Left press is released", () => {
+      const out = run([leftDown(previewable(1, 1, [])), { kind: "left-up" }]);
+      expect(out[0].boardPressed).toBe(true);
+      expect(out[1].boardPressed).toBe(false);
+    });
+
+    it("reports a held Right press (which stays idle)", () => {
+      const out = run([rightDown(previewable(1, 2, [], false, false))]);
+      expect(out[0].phaseChange).toBeUndefined();
+      expect(out[0].boardPressed).toBe(true);
+    });
+
+    it("clears when the Right press is released", () => {
+      const out = run([
+        rightDown(previewable(1, 2, [], false, false)),
+        { kind: "right-up" },
+      ]);
+      expect(out[1].boardPressed).toBe(false);
+    });
+
+    it("stays true while Right remains held after a Left release (chord tail)", () => {
+      const out = run([
+        rightDown(previewable(1, 1, [pos(0, 0)])),
+        leftDown(previewable(1, 1, [pos(0, 0)])),
+        { kind: "left-up" },
+      ]);
+      expect(out[2].boardPressed).toBe(true);
+      const released = run([
+        rightDown(previewable(1, 1, [pos(0, 0)])),
+        leftDown(previewable(1, 1, [pos(0, 0)])),
+        { kind: "left-up" },
+        { kind: "right-up" },
+      ]);
+      expect(released[3].boardPressed).toBe(false);
+    });
+
+    it("clears on blur during a press", () => {
+      const out = run([leftDown(previewable(1, 1, [])), { kind: "blur" }]);
+      expect(out[1].boardPressed).toBe(false);
+    });
+
+    it("clears when the game ends mid-gesture", () => {
+      const out = run(
+        [leftDown(previewable(1, 1, [])), { kind: "game-ended" }],
+        ["playing", "won"],
+      );
+      expect(out[1].boardPressed).toBe(false);
+    });
+
+    it("is false for events ignored after the game is Won or Lost", () => {
+      const out = run([leftDown(previewable(1, 1, []))], "won");
+      expect(out[0].boardPressed).toBe(false);
+    });
+
+    it("resumes after a new game (Ready) following game-ended", () => {
+      const out = run(
+        [{ kind: "game-ended" }, leftDown(previewable(1, 1, []))],
+        ["won", "ready"],
+      );
+      expect(out[1].boardPressed).toBe(true);
+    });
+  });
+
   describe("blur", () => {
     it("disarms on blur, clearing the Preview and forgetting the buttons", () => {
       const out = run([
