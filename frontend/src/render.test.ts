@@ -165,9 +165,9 @@ describe("renderTopBar", () => {
     expect(document.getElementById("smiley")!.textContent).toBe("😎");
   });
 
-  it("shows the dead smiley on a Lost game", () => {
+  it("shows the crying smiley on a Lost game", () => {
     renderTopBar(gameState({ game_state: "lost" }));
-    expect(document.getElementById("smiley")!.textContent).toBe("💀");
+    expect(document.getElementById("smiley")!.textContent).toBe("😭");
   });
 
   it("highlights the active difficulty button", () => {

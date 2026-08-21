@@ -63,7 +63,7 @@ The elapsed time since the First Click, shown in the top bar as a three-digit se
 _Avoid_: Clock, stopwatch
 
 **Smiley Button**:
-The button in the top bar that starts a new game (the same new-game Action a difficulty switch sends). Its face reflects the game and the player's pressing: normal while Ready/Playing, surprised while pressing on the Board, sunglasses on Won, dead on Lost.
+The button in the top bar that starts a new game (the same new-game Action a difficulty switch sends). Its face reflects the game and the player's pressing: normal while Ready/Playing, surprised while pressing on the Board, sunglasses on Won, crying on Lost.
 _Avoid_: Face button, reset button
 
 **Gesture**:

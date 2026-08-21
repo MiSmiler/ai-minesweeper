@@ -6,7 +6,7 @@ export const SmileyFace = {
   neutral: "🙂",
   surprised: "😮",
   won: "😎",
-  lost: "💀",
+  lost: "😭",
 } as const;
 
 /** Renders the board grid from the server state. Pure function of state. */
