@@ -21,10 +21,17 @@ import {
   renderTopBar,
   SmileyFace,
   smileyFace,
+  type TopBarEls,
 } from "./render";
 import "./style.css";
 
 const boardEl = document.getElementById("board")!;
+const topBarEls: TopBarEls = {
+  counter: document.getElementById("counter")!,
+  smiley: document.getElementById("smiley")!,
+  timer: document.getElementById("timer")!,
+  difficultyRow: document.querySelector(".difficulty-row")!,
+};
 
 let state: GameState | null = null;
 
@@ -46,7 +53,7 @@ async function applyAndRender(action: Action): Promise<void> {
     const prev = state;
     state = next;
     renderBoard(state, boardEl);
-    renderTopBar(state);
+    renderTopBar(state, topBarEls);
     // Re-assert the gesture-driven face: a response re-rendering the top bar
     // must not wipe the surprise while a press is still held (issue #50).
     renderSmiley(state);
@@ -135,8 +142,9 @@ function cellHit(state: GameState, pos: Pos): CellHit {
 /** Renders the Smiley Button's face: surprised while a press is held over
  * the Board, otherwise the state-driven face (issue #50). */
 function renderSmiley(state: GameState): void {
-  const smiley = document.getElementById("smiley")!;
-  smiley.textContent = boardPressed ? SmileyFace.surprised : smileyFace(state);
+  topBarEls.smiley.textContent = boardPressed
+    ? SmileyFace.surprised
+    : smileyFace(state);
 }
 
 function handleRightDown(ev: MouseEvent): void {
@@ -240,7 +248,7 @@ async function main(): Promise<void> {
   try {
     state = await fetchState();
     renderBoard(state, boardEl);
-    renderTopBar(state);
+    renderTopBar(state, topBarEls);
     boardEl.addEventListener("mousedown", onBoardMouseDown);
     boardEl.addEventListener("pointermove", onBoardPointerMove);
     boardEl.addEventListener("pointerleave", onBoardPointerLeave);
