@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GameStateName, Pos } from "./api";
+import type { Pos } from "./api";
 import {
   createGestureMachine,
   type CellHit,
@@ -10,18 +10,10 @@ import {
 const pos = (row: number, col: number): Pos => ({ row, col });
 
 /** Runs a sequence of gesture events through a fresh machine, returning the
- * output of every event in order. `gameState` is the game state each event
- * is handled under (default: a live game); pass an array to vary the state
- * per event (e.g. a press before the game ends, then `game-ended` after). */
-function run(
-  events: GestureEvent[],
-  gameState: GameStateName | GameStateName[] = "playing",
-): GestureOutput[] {
+ * output of every event in order. */
+function run(events: GestureEvent[]): GestureOutput[] {
   const machine = createGestureMachine();
-  const states = Array.isArray(gameState)
-    ? gameState
-    : events.map(() => gameState);
-  return events.map((event, i) => machine.handle(event, states[i]));
+  return events.map((event) => machine.handle(event));
 }
 
 /** A hit-tested Cell for the machine. Defaults: a previewable Cell is a
@@ -370,32 +362,34 @@ describe("createGestureMachine", () => {
   });
 
   describe("game over (#50)", () => {
-    it("ignores left-down after the game is Won or Lost — no press-set, no Reveal", () => {
-      const [out] = run([leftDown(previewable(3, 4, []))], "won");
+    /** Runs events on a machine closed with setEnabled(false) — the game is
+     * Won or Lost. */
+    const runClosed = (events: GestureEvent[]): GestureOutput[] => {
+      const machine = createGestureMachine();
+      machine.setEnabled(false);
+      return events.map((event) => machine.handle(event));
+    };
+
+    it("ignores left-down once closed — no press-set, no Reveal", () => {
+      const [out] = runClosed([leftDown(previewable(3, 4, []))]);
       expect(out.action).toBeUndefined();
       expect(out.phaseChange).toBeUndefined();
       expect(out.effects).toEqual([]);
       expect(out.pressPreview).toBeNull();
     });
 
-    it("ignores right-down after the game is Won or Lost — no Flag", () => {
-      const [out] = run(
-        [rightDown(previewable(1, 2, [], false, false))],
-        "lost",
-      );
+    it("ignores right-down once closed — no Flag", () => {
+      const [out] = runClosed([rightDown(previewable(1, 2, [], false, false))]);
       expect(out.action).toBeUndefined();
       expect(out.phaseChange).toBeUndefined();
       expect(out.effects).toEqual([]);
     });
 
-    it("cannot arm a Chord after the game is Won or Lost", () => {
-      const out = run(
-        [
-          rightDown(previewable(1, 1, [pos(0, 0)])),
-          leftDown(previewable(1, 1, [pos(0, 0)])),
-        ],
-        "won",
-      );
+    it("cannot arm a Chord once closed", () => {
+      const out = runClosed([
+        rightDown(previewable(1, 1, [pos(0, 0)])),
+        leftDown(previewable(1, 1, [pos(0, 0)])),
+      ]);
       expect(out[0].phaseChange).toBeUndefined();
       expect(out[0].action).toBeUndefined();
       expect(out[1].phaseChange).toBeUndefined();
@@ -403,17 +397,14 @@ describe("createGestureMachine", () => {
       expect(out[1].effects).toEqual([]);
     });
 
-    it("ignores move, release, leave and blur after the game is Won or Lost", () => {
-      const out = run(
-        [
-          pointerMove(previewable(1, 1, [pos(0, 0)])),
-          { kind: "left-up" },
-          { kind: "right-up" },
-          { kind: "pointer-leave" },
-          { kind: "blur" },
-        ],
-        "lost",
-      );
+    it("ignores move, release, leave and blur once closed", () => {
+      const out = runClosed([
+        pointerMove(previewable(1, 1, [pos(0, 0)])),
+        { kind: "left-up" },
+        { kind: "right-up" },
+        { kind: "pointer-leave" },
+        { kind: "blur" },
+      ]);
       for (const o of out) {
         expect(o.action).toBeUndefined();
         expect(o.phaseChange).toBeUndefined();
@@ -421,73 +412,57 @@ describe("createGestureMachine", () => {
       }
     });
 
-    it("cancels a press in progress when the game ends, so its release reveals nothing", () => {
-      const out = run(
-        [
-          leftDown(previewable(1, 1, [])),
-          { kind: "game-ended" },
-          { kind: "left-up" },
-        ],
-        ["playing", "won", "won"],
-      );
-      expect(out[1].phaseChange).toBe("released");
-      expect(out[1].effects).toEqual(["press-cleared"]);
-      expect(out[1].pressPreview).toBeNull();
-      expect(out[2].action).toBeUndefined();
+    it("setEnabled(false) cancels a press in progress, so its release reveals nothing", () => {
+      const machine = createGestureMachine();
+      const pressed = machine.handle(leftDown(previewable(1, 1, [])));
+      expect(pressed.phaseChange).toBe("pressed");
+      const closed = machine.setEnabled(false);
+      expect(closed.phaseChange).toBe("released");
+      expect(closed.effects).toEqual(["press-cleared"]);
+      expect(closed.pressPreview).toBeNull();
+      const release = machine.handle({ kind: "left-up" });
+      expect(release.action).toBeUndefined();
     });
 
-    it("disarms a Chord in progress when the game ends, clearing its Preview", () => {
-      const out = run(
-        [
-          rightDown(previewable(1, 1, [pos(0, 0)])),
-          leftDown(previewable(1, 1, [pos(0, 0)])),
-          { kind: "game-ended" },
-        ],
-        ["playing", "playing", "won"],
-      );
-      expect(out[2].phaseChange).toBe("disarmed");
-      expect(out[2].effects).toEqual(["preview-cleared"]);
-      expect(out[2].chordPreview).toBeNull();
+    it("setEnabled(false) disarms a Chord in progress, clearing its Preview", () => {
+      const machine = createGestureMachine();
+      machine.handle(rightDown(previewable(1, 1, [pos(0, 0)])));
+      machine.handle(leftDown(previewable(1, 1, [pos(0, 0)])));
+      const closed = machine.setEnabled(false);
+      expect(closed.phaseChange).toBe("disarmed");
+      expect(closed.effects).toEqual(["preview-cleared"]);
+      expect(closed.chordPreview).toBeNull();
     });
 
-    it("game-ended on an idle machine with a held Right press is a clean reset", () => {
-      const out = run(
-        [
-          rightDown(previewable(1, 2, [], false, false)),
-          { kind: "game-ended" },
-        ],
-        ["playing", "won"],
-      );
-      expect(out[1].phaseChange).toBeUndefined();
-      expect(out[1].effects).toEqual([]);
+    it("setEnabled(false) on an idle machine with a held Right press is a clean reset", () => {
+      const machine = createGestureMachine();
+      machine.handle(rightDown(previewable(1, 2, [], false, false)));
+      const closed = machine.setEnabled(false);
+      expect(closed.phaseChange).toBeUndefined();
+      expect(closed.effects).toEqual([]);
+      expect(closed.boardPressed).toBe(false);
     });
 
-    it("keeps ignoring input after game-ended while the state stays Won/Lost", () => {
-      const out = run(
-        [
-          leftDown(previewable(1, 1, [])),
-          { kind: "game-ended" },
-          leftDown(previewable(1, 1, [])),
-        ],
-        ["playing", "won", "won"],
-      );
-      expect(out[1].phaseChange).toBe("released");
-      expect(out[2].phaseChange).toBeUndefined();
-      expect(out[2].effects).toEqual([]);
+    it("keeps ignoring input while closed", () => {
+      const machine = createGestureMachine();
+      machine.handle(leftDown(previewable(1, 1, [])));
+      machine.setEnabled(false);
+      const after = machine.handle(leftDown(previewable(1, 1, [])));
+      expect(after.phaseChange).toBeUndefined();
+      expect(after.effects).toEqual([]);
     });
 
-    it("resumes normal gestures after a new game (Ready) following game-ended", () => {
-      const out = run(
-        [
-          { kind: "game-ended" },
-          leftDown(previewable(1, 1, [])),
-          { kind: "left-up" },
-        ],
-        ["won", "ready", "ready"],
-      );
-      expect(out[1].phaseChange).toBe("pressed");
-      expect(out[1].effects).toEqual(["press-set"]);
-      expect(out[2].action).toEqual({ type: "reveal", row: 1, col: 1 });
+    it("resumes normal gestures after a new game (Ready) following setEnabled(true)", () => {
+      const machine = createGestureMachine();
+      machine.setEnabled(false);
+      machine.setEnabled(true);
+      const out = [
+        machine.handle(leftDown(previewable(1, 1, []))),
+        machine.handle({ kind: "left-up" }),
+      ];
+      expect(out[0].phaseChange).toBe("pressed");
+      expect(out[0].effects).toEqual(["press-set"]);
+      expect(out[1].action).toEqual({ type: "reveal", row: 1, col: 1 });
     });
   });
 
@@ -538,25 +513,26 @@ describe("createGestureMachine", () => {
       expect(out[1].boardPressed).toBe(false);
     });
 
-    it("clears when the game ends mid-gesture", () => {
-      const out = run(
-        [leftDown(previewable(1, 1, [])), { kind: "game-ended" }],
-        ["playing", "won"],
-      );
-      expect(out[1].boardPressed).toBe(false);
+    it("clears when the machine is closed mid-gesture", () => {
+      const machine = createGestureMachine();
+      machine.handle(leftDown(previewable(1, 1, [])));
+      const closed = machine.setEnabled(false);
+      expect(closed.boardPressed).toBe(false);
     });
 
-    it("is false for events ignored after the game is Won or Lost", () => {
-      const out = run([leftDown(previewable(1, 1, []))], "won");
-      expect(out[0].boardPressed).toBe(false);
+    it("is false for events ignored while closed", () => {
+      const machine = createGestureMachine();
+      machine.setEnabled(false);
+      const out = machine.handle(leftDown(previewable(1, 1, [])));
+      expect(out.boardPressed).toBe(false);
     });
 
-    it("resumes after a new game (Ready) following game-ended", () => {
-      const out = run(
-        [{ kind: "game-ended" }, leftDown(previewable(1, 1, []))],
-        ["won", "ready"],
-      );
-      expect(out[1].boardPressed).toBe(true);
+    it("resumes after a new game (Ready) following setEnabled(true)", () => {
+      const machine = createGestureMachine();
+      machine.setEnabled(false);
+      machine.setEnabled(true);
+      const out = machine.handle(leftDown(previewable(1, 1, [])));
+      expect(out.boardPressed).toBe(true);
     });
   });
 

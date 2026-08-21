@@ -1,4 +1,4 @@
-import { isGameEnded, type Action, type GameStateName, type Pos } from "./api";
+import { type Action, type Pos } from "./api";
 
 /** A hit-tested Cell plus the Cells its Chord Preview would highlight
  * (computed by the caller from the game state). `isNumericCell` is the
@@ -25,11 +25,7 @@ export type GestureEvent =
   | { kind: "left-up" }
   | { kind: "right-up" }
   | { kind: "blur" }
-  | { kind: "pointer-leave" }
-  // The game ended (a response flipped the state to Won/Lost) while a
-  // gesture was in progress: cancels the gesture and forgets the held
-  // buttons (issue #50).
-  | { kind: "game-ended" };
+  | { kind: "pointer-leave" };
 
 /** The transient highlight shown while the Chord gesture is armed: the Cell
  * the Chord would be applied to and the Cells it would Reveal. */
@@ -129,6 +125,11 @@ const initial = (): MachineState => ({
  * traces the reported state changes and effects. */
 export function createGestureMachine() {
   let state: MachineState = initial();
+  /** The enable gate: closed (false) once the game is Won or Lost — the
+   * machine then ignores every event — and reopened on a new game. Driven
+   * by the caller from the game state; kept outside the phase state so the
+   * phase transitions never have to carry it. */
+  let enabled = true;
 
   /** True when two Chord Previews name the same Cell and highlight set. */
   const sameChordPreview = (
@@ -380,8 +381,8 @@ export function createGestureMachine() {
 
   /** Resets the machine to idle, reporting what the gesture was doing: the
    * phase change it was in and the Previews it clears. Shared by blur (the
-   * window losing focus cancels the gesture) and game-ended (the game ending
-   * mid-gesture cancels it, issue #50). */
+   * window losing focus cancels the gesture) and setEnabled(false) (the
+   * game ending mid-gesture cancels it, issue #50). */
   const resetToIdle = (): GestureDecision => {
     const effects: GestureEffect[] = [];
     if (state.pressPreview) effects.push("press-cleared");
@@ -398,15 +399,10 @@ export function createGestureMachine() {
     };
   };
 
-  /** Decides the event's effect in the current phase. Once the game is Won
-   * or Lost the Board is inert: every event is ignored except `game-ended`,
-   * which resets the machine (issue #50). */
-  const decide = (
-    event: GestureEvent,
-    gameState: GameStateName,
-  ): GestureDecision => {
-    if (event.kind === "game-ended") return resetToIdle();
-    if (isGameEnded(gameState)) return {};
+  /** Decides the event's effect in the current phase. A closed machine (the
+   * game Won or Lost, issue #50) is handled by `handle` before `decide` is
+   * reached — the gate lives outside the phase table. */
+  const decide = (event: GestureEvent): GestureDecision => {
     switch (state.phase) {
       case "idle":
         return decideIdle(event);
@@ -417,9 +413,19 @@ export function createGestureMachine() {
     }
   };
 
+  /** The machine's current renderable output when nothing changed. */
+  const currentOutput = (): GestureOutput => ({
+    pressPreview: state.pressPreview,
+    chordPreview: state.chordPreview,
+    effects: [],
+    boardPressed: state.phase !== "idle" || state.rightHeld,
+  });
+
   return {
-    handle(event: GestureEvent, gameState: GameStateName): GestureOutput {
-      const d = decide(event, gameState);
+    handle(event: GestureEvent): GestureOutput {
+      // A closed machine reports nothing and ignores every event.
+      if (!enabled) return currentOutput();
+      const d = decide(event);
       if (d.next) state = d.next;
       return {
         action: d.action,
@@ -428,6 +434,28 @@ export function createGestureMachine() {
         phaseChange: d.phaseChange,
         effects: d.effects ?? [],
         boardPressed: state.phase !== "idle" || state.rightHeld,
+      };
+    },
+    /** Closes or reopens the machine. Disabling cancels any in-progress
+     * gesture (reported like a blur: the phase it was in, plus the Previews
+     * it clears) and makes every event ignored; enabling restores handling.
+     * The caller drives the gate from the game state on every response so it
+     * cannot drift — idempotent when unchanged (issue #50). */
+    setEnabled(value: boolean): GestureOutput {
+      if (value === enabled) return currentOutput();
+      if (value) {
+        enabled = true;
+        return currentOutput();
+      }
+      const reset = resetToIdle();
+      state = reset.next!;
+      enabled = false;
+      return {
+        pressPreview: null,
+        chordPreview: null,
+        phaseChange: reset.phaseChange,
+        effects: reset.effects ?? [],
+        boardPressed: false,
       };
     },
   };

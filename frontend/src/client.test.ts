@@ -103,7 +103,7 @@ describe("createGameClient", () => {
     });
   });
 
-  describe("game-ended cancellation", () => {
+  describe("enable-gate cancellation (game over)", () => {
     it("cancels a held press when a response ends the game mid-gesture", async () => {
       const d = deferred<GameState>();
       const post = vi.fn(() => d.promise);

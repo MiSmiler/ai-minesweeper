@@ -5,6 +5,7 @@ import {
   createGestureMachine,
   type CellHit,
   type GestureEvent,
+  type GestureOutput,
 } from "./gesture";
 import { log } from "./log";
 import { createPreviewLayer } from "./previewHighlight";
@@ -99,20 +100,20 @@ export function createGameClient(deps: GameClientDeps): GameClient {
   const applyAndRender = async (action: Action): Promise<void> => {
     const next = await controller.apply(action);
     if (next) {
-      const prev = state;
       state = next;
+      // The machine's gate mirrors the game state: a Won/Lost response
+      // closes it (cancelling any in-progress gesture so no press-set or
+      // Chord Preview survives onto the Won/Lost board, issue #50); any
+      // other response leaves it open — idempotent, so in-progress gestures
+      // survive non-ending responses.
+      const gated = gesture.setEnabled(!isGameEnded(next.game_state));
+      traceGesture(gated, "game-ended");
+      boardPressed = gated.boardPressed;
       renderBoard(state, boardEl);
       renderTopBar(state, topBarEls);
       // Re-assert the gesture-driven face: a response re-rendering the top
       // bar must not wipe the surprise while a press is still held.
       renderSmiley(state);
-      if (
-        prev &&
-        isGameEnded(next.game_state) &&
-        !isGameEnded(prev.game_state)
-      ) {
-        dispatchGesture({ kind: "game-ended" });
-      }
     }
   };
 
@@ -128,25 +129,32 @@ export function createGameClient(deps: GameClientDeps): GameClient {
       .finally(() => previewLayer.release());
   };
 
+  /** Traces a gesture output's phase change and in-phase effects at
+   * `debug` so gesture problems are diagnosable from the console alone (the
+   * machine itself stays pure). */
+  const traceGesture = (out: GestureOutput, eventKind: string): void => {
+    if (out.phaseChange) {
+      log.debug(`gesture ${out.phaseChange}`, {
+        event: eventKind,
+        ...(out.action ? { action: out.action } : {}),
+      });
+    }
+    for (const effect of out.effects) {
+      log.debug(`gesture ${effect}`, {
+        event: eventKind,
+        ...(out.action ? { action: out.action } : {}),
+      });
+    }
+  };
+
   /** Feeds a gesture event to the machine and applies its output. Phase
    * changes and in-phase effects are traced at `debug` so gesture problems
    * are diagnosable from the console alone (the machine itself stays pure). */
   const dispatchGesture = (event: GestureEvent): void => {
     // The listeners are registered only after the initial state load, so
     // `state` is always present when a gesture is dispatched.
-    const out = gesture.handle(event, state!.game_state);
-    if (out.phaseChange) {
-      log.debug(`gesture ${out.phaseChange}`, {
-        event: event.kind,
-        ...(out.action ? { action: out.action } : {}),
-      });
-    }
-    for (const effect of out.effects) {
-      log.debug(`gesture ${effect}`, {
-        event: event.kind,
-        ...(out.action ? { action: out.action } : {}),
-      });
-    }
+    const out = gesture.handle(event);
+    traceGesture(out, event.kind);
     // A Reveal/Chord keeps its highlight until the response re-renders the
     // Board, so the Cells do not flash back to Hidden mid round trip.
     if (
