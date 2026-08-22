@@ -37,13 +37,13 @@ pub struct StateDto {
     pub flags_remaining: i32,
     pub elapsed_secs: u64,
     /// The Trigger Mine of a Lost game; `None` otherwise.
-    pub trigger: Option<PosDto>,
+    pub trigger: Option<PositionDto>,
     /// One entry per Cell, row-major.
     pub cells: Vec<CellDto>,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
-pub struct PosDto {
+pub struct PositionDto {
     pub row: usize,
     pub col: usize,
 }
@@ -146,7 +146,7 @@ pub fn snapshot(game: &Game) -> StateDto {
         game.trigger().is_some(),
         game.game_state() == GameState::Lost
     );
-    let trigger = game.trigger().map(|pos| PosDto {
+    let trigger = game.trigger().map(|pos| PositionDto {
         row: pos.row,
         col: pos.col,
     });
@@ -224,15 +224,28 @@ pub fn log_new_game(game: &Game, source: &str) {
 
 // --- Handlers ---
 
-pub async fn get_state(State(app): State<Arc<AppState>>) -> Json<StateDto> {
-    Json(snapshot(&app.game.lock().unwrap()))
+pub async fn get_state(
+    State(app): State<Arc<AppState>>,
+) -> Result<Json<StateDto>, (StatusCode, String)> {
+    let game = app.game.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "game state poisoned".to_string(),
+        )
+    })?;
+    Ok(Json(snapshot(&game)))
 }
 
 pub async fn post_action(
     State(app): State<Arc<AppState>>,
     Json(action): Json<ActionDto>,
 ) -> Result<Json<StateDto>, (StatusCode, String)> {
-    let mut game = app.game.lock().unwrap();
+    let mut game = app.game.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "game state poisoned".to_string(),
+        )
+    })?;
     let before = game.game_state();
     let created = apply_action(&mut game, app.mode, app.seed, &action).map_err(|e| {
         // Malformed actions are client bugs; the raw payload makes them
@@ -383,7 +396,7 @@ mod tests {
         .unwrap();
         let dto = snapshot(&game);
         assert_eq!(dto.game_state, "lost");
-        assert_eq!(dto.trigger, Some(PosDto { row: 0, col: 0 }));
+        assert_eq!(dto.trigger, Some(PositionDto { row: 0, col: 0 }));
         // The wire only ever shows a Lost game — the mode itself is invisible (ADR-0002).
     }
 
@@ -397,7 +410,7 @@ mod tests {
         game.reveal(Position::new(0, 0));
         let dto = snapshot(&game);
         assert_eq!(dto.game_state, "lost");
-        assert_eq!(dto.trigger, Some(PosDto { row: 0, col: 0 }));
+        assert_eq!(dto.trigger, Some(PositionDto { row: 0, col: 0 }));
         assert_eq!(dto.cells[0].state, "revealed");
         assert_eq!(dto.cells[0].content, Some(ContentDto::Mine));
 

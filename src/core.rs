@@ -96,7 +96,8 @@ pub struct CellView {
 /// The game variant being played.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameMode {
-    /// Standard rules: the First Click is never a Mine (ADR-0001).
+    /// Standard rules: Mines are placed at Game creation and the First
+    /// Click is unprotected — it may be a Mine (ADR-0004).
     Classic,
     /// Prank: the First Click is always a Mine, losing the game instantly.
     Prank,
@@ -265,7 +266,7 @@ impl Game {
 
     /// Reveals a Cell. No-op when the game has ended, the Cell is Flagged,
     /// or it is out of bounds. The first Reveal of a game places the Prank
-    /// Mines (ADR-0002) and starts the clock.
+    /// Mines (ADR-0002) and starts the Timer.
     pub fn reveal(&mut self, pos: Position) {
         if !self.can_operate(pos) {
             return;
@@ -334,11 +335,11 @@ impl Game {
             .into_iter()
             .map(|i| {
                 // Skip over the forced Cell by offsetting its index.
-                let j = match forced_idx {
+                let adjusted = match forced_idx {
                     Some(f) if i >= f => i + 1,
                     _ => i,
                 };
-                Position::new(j / size.cols, j % size.cols)
+                Position::new(adjusted / size.cols, adjusted % size.cols)
             })
             .collect();
         if let Some(pos) = forced {
