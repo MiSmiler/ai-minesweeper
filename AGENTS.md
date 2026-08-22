@@ -38,3 +38,7 @@ The five canonical triage labels use the default vocabulary: `needs-triage`, `ne
 ### Domain docs
 
 Single-context repo — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Repro a scene (Playwright)
+
+Use the `repro-by-playwright` skill for a visual / gesture issue or a "reproduce this scene" report — it drives real mouse events (`frontend/scripts/shot.mjs`) and screenshots to `.scratch/shots/`.
