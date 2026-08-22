@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import type { Pos } from "./api";
+import type { Position } from "./api";
 import type { ChordPreview } from "./gesture";
 import { createPreviewLayer } from "./previewHighlight";
 
-const pos = (row: number, col: number): Pos => ({ row, col });
+const pos = (row: number, col: number): Position => ({ row, col });
 
 /** A board with a grid of Cells addressed by data-row/data-col. */
 function makeBoard(rows: number, cols: number): HTMLElement {

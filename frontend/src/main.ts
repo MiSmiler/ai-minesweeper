@@ -1,4 +1,9 @@
-import { fetchState, postAction, type GameState, type Pos } from "./api";
+import {
+  fetchState,
+  postAction,
+  type GameSnapshot,
+  type Position,
+} from "./api";
 import { createGameClient } from "./client";
 import { cellAtPoint, measureBoard, type BoardGeometry } from "./hitTest";
 import { log } from "./log";
@@ -27,7 +32,7 @@ const client = createGameClient({
 /** Tracks the last hit-tested Cell so pointer-move events are only
  * dispatched when the pointer actually crosses onto/off a Cell — pointermove
  * fires far more often than the Chord Preview needs to change. */
-let lastPointerCell: Pos | null = null;
+let lastPointerCell: Position | null = null;
 
 /** The Board's cached hit-testing geometry (Cell pitch, hairline gap, Cell
  * counts). Re-measured when the rendered Cell count changes (a difficulty
@@ -48,7 +53,7 @@ function boardGeometry(): BoardGeometry | null {
 /** The Cell under the pointer, or null when the Board has no measured
  * geometry (defensive — the listeners are registered only after the initial
  * state load, so this should not happen in practice). */
-function posAt(ev: MouseEvent | PointerEvent): Pos | null {
+function posAt(ev: MouseEvent | PointerEvent): Position | null {
   const geometry = boardGeometry();
   return geometry
     ? cellAtPoint(boardEl, ev.clientX, ev.clientY, geometry)
@@ -124,7 +129,9 @@ function onAppClick(ev: Event): void {
   const difficultyBtn = target.closest<HTMLElement>("[data-difficulty]");
   if (difficultyBtn) {
     // A difficulty button starts a fresh game of that difficulty.
-    client.newGame(difficultyBtn.dataset.difficulty as GameState["difficulty"]);
+    client.newGame(
+      difficultyBtn.dataset.difficulty as GameSnapshot["difficulty"],
+    );
     return;
   }
   if (target.closest("#smiley")) {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import type { CellView, GameState } from "./api";
+import type { CellView, GameSnapshot } from "./api";
 import {
   formatCounter,
   formatTimer,
@@ -19,7 +19,7 @@ const cell = (
 });
 
 /** Renders a board into a fresh container and returns its .cell elements. */
-function renderCells(state: GameState): HTMLElement[] {
+function renderCells(state: GameSnapshot): HTMLElement[] {
   const container = document.createElement("div");
   document.body.appendChild(container);
   renderBoard(state, container);

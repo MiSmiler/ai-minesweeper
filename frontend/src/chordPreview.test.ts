@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import type { CellContent, CellState, GameState, Pos } from "./api";
+import type { CellContent, CellState, GameSnapshot, Position } from "./api";
 import { chordPreviewCells } from "./chordPreview";
 
 type CellSpec = { state: CellState; content: CellContent };
 
-/** Builds a GameState from a sparse map of cell specs; default is Hidden. */
+/** Builds a GameSnapshot from a sparse map of cell specs; default is Hidden. */
 function mkState(
   rows: number,
   cols: number,
   cells: Record<string, CellSpec>,
-): GameState {
+): GameSnapshot {
   const flat: CellSpec[] = [];
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
@@ -29,7 +29,7 @@ function mkState(
 }
 
 /** Orders a set of Cells as "row,col" keys so assertions are order-independent. */
-function cellKeys(cells: Pos[]): string[] {
+function cellKeys(cells: Position[]): string[] {
   return cells.map((p) => `${p.row},${p.col}`).sort();
 }
 

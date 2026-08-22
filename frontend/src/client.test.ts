@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import type { Action, CellView, GameState, Pos } from "./api";
+import type { Action, CellView, GameSnapshot, Position } from "./api";
 import { createGameClient } from "./client";
 import type { TopBarEls } from "./render";
 import { gameState } from "./testUtils";
@@ -51,18 +51,18 @@ const timer = (): HTMLElement => document.getElementById("timer")!;
 const cell = (row: number, col: number): HTMLElement | null =>
   document.querySelector(`.board [data-row="${row}"][data-col="${col}"]`);
 
-const pos = (row: number, col: number): Pos => ({ row, col });
+const pos = (row: number, col: number): Position => ({ row, col });
 
 /** A client over the jsdom document with the given post/fetchState mocks. */
 function makeClient(
   over: {
-    post?: Mock<(action: Action) => Promise<GameState>>;
-    fetchState?: Mock<() => Promise<GameState>>;
+    post?: Mock<(action: Action) => Promise<GameSnapshot>>;
+    fetchState?: Mock<() => Promise<GameSnapshot>>;
   } = {},
 ) {
-  const post: Mock<(action: Action) => Promise<GameState>> =
+  const post: Mock<(action: Action) => Promise<GameSnapshot>> =
     over.post ?? vi.fn().mockResolvedValue(gameState());
-  const fetchState: Mock<() => Promise<GameState>> =
+  const fetchState: Mock<() => Promise<GameSnapshot>> =
     over.fetchState ?? vi.fn().mockResolvedValue(gameState());
   const client = createGameClient({
     boardEl: boardEl(),
@@ -85,7 +85,7 @@ describe("createGameClient", () => {
 
   describe("preview highlight round trip", () => {
     it("keeps the Reveal highlight until the response re-renders", async () => {
-      const d = deferred<GameState>();
+      const d = deferred<GameSnapshot>();
       const post = vi.fn(() => d.promise);
       const { client } = makeClient({ post });
       await client.init();
@@ -105,7 +105,7 @@ describe("createGameClient", () => {
 
   describe("enable-gate cancellation (game over)", () => {
     it("cancels a held press when a response ends the game mid-gesture", async () => {
-      const d = deferred<GameState>();
+      const d = deferred<GameSnapshot>();
       const post = vi.fn(() => d.promise);
       const { client } = makeClient({ post });
       await client.init();
@@ -127,7 +127,7 @@ describe("createGameClient", () => {
     });
 
     it("ignores Board input once the game has ended", async () => {
-      const d = deferred<GameState>();
+      const d = deferred<GameSnapshot>();
       const post = vi.fn(() => d.promise);
       const { client } = makeClient({ post });
       await client.init();
@@ -198,8 +198,8 @@ describe("createGameClient", () => {
 
   describe("stale responses", () => {
     it("renders only the latest action's response", async () => {
-      const reveal = deferred<GameState>();
-      const flag = deferred<GameState>();
+      const reveal = deferred<GameSnapshot>();
+      const flag = deferred<GameSnapshot>();
       let call = 0;
       const post = vi.fn(() => (call++ === 0 ? reveal.promise : flag.promise));
       const { client } = makeClient({ post });

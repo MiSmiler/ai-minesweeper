@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Action, GameState } from "./api";
+import type { Action, GameSnapshot } from "./api";
 import { createActionController } from "./controller";
 import { gameState } from "./testUtils";
 
@@ -36,8 +36,8 @@ describe("createActionController", () => {
   });
 
   it("drops the stale response of a superseded action", async () => {
-    const first = deferred<GameState>();
-    const second = deferred<GameState>();
+    const first = deferred<GameSnapshot>();
+    const second = deferred<GameSnapshot>();
     let call = 0;
     const post = vi.fn(() => (call++ === 0 ? first.promise : second.promise));
     const controller = createActionController(post);

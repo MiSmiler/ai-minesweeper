@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Pos } from "./api";
+import type { Position } from "./api";
 import {
   createGestureMachine,
   type CellHit,
@@ -7,7 +7,7 @@ import {
   type GestureOutput,
 } from "./gesture";
 
-const pos = (row: number, col: number): Pos => ({ row, col });
+const pos = (row: number, col: number): Position => ({ row, col });
 
 /** Runs a sequence of gesture events through a fresh machine, returning the
  * output of every event in order. */
@@ -22,7 +22,7 @@ function run(events: GestureEvent[]): GestureOutput[] {
 const previewable = (
   row: number,
   col: number,
-  previewCells: Pos[],
+  previewCells: Position[],
   isNumericCell = previewCells.length > 0,
   isRevealed = isNumericCell,
 ): CellHit => ({
@@ -99,7 +99,7 @@ describe("createGestureMachine", () => {
       const [out] = run([leftDown(previewable(3, 4, []))]);
       expect(out.action).toBeUndefined();
       expect(out.phaseChange).toBe("pressed");
-      expect(out.effects).toEqual(["press-set"]);
+      expect(out.effects).toEqual(["press-preview-set"]);
       expect(out.pressPreview).toEqual(pos(3, 4));
     });
 
@@ -120,7 +120,7 @@ describe("createGestureMachine", () => {
         pointerMove(previewable(2, 2, [])),
       ]);
       expect(out[1].pressPreview).toEqual(pos(2, 2));
-      expect(out[1].effects).toEqual(["press-moved"]);
+      expect(out[1].effects).toEqual(["press-preview-moved"]);
     });
 
     it("ignores pointer-move over the same Cell while pressing", () => {
@@ -138,7 +138,7 @@ describe("createGestureMachine", () => {
         pointerMove(null),
         { kind: "left-up" },
       ]);
-      expect(out[1].effects).toEqual(["press-cleared"]);
+      expect(out[1].effects).toEqual(["press-preview-cleared"]);
       expect(out[1].pressPreview).toBeNull();
       expect(out[2].action).toBeUndefined();
       expect(out[2].phaseChange).toBe("released");
@@ -152,7 +152,7 @@ describe("createGestureMachine", () => {
         rightDown(previewable(2, 2, [pos(1, 2)])),
         { kind: "left-up" },
       ]);
-      expect(out[1].effects).toEqual(["press-cleared"]);
+      expect(out[1].effects).toEqual(["press-preview-cleared"]);
       // The cancelled press cannot arm a later Chord…
       expect(out[2].phaseChange).toBeUndefined();
       expect(out[2].action).toBeUndefined();
@@ -170,7 +170,7 @@ describe("createGestureMachine", () => {
       ]);
       expect(out[1].action).toBeUndefined();
       expect(out[1].phaseChange).toBe("armed");
-      expect(out[1].effects).toEqual(["preview-set"]);
+      expect(out[1].effects).toEqual(["chord-preview-set"]);
       expect(out[1].chordPreview).toEqual({ pos: pos(1, 1), cells });
       expect(out[1].pressPreview).toBeNull();
     });
@@ -185,7 +185,7 @@ describe("createGestureMachine", () => {
       expect(out[1].phaseChange).toBe("armed");
       expect(out[1].effects).toEqual([]);
       expect(out[1].chordPreview).toBeNull();
-      expect(out[2].effects).toEqual(["preview-set"]);
+      expect(out[2].effects).toEqual(["chord-preview-set"]);
       expect(out[3].action).toEqual({ type: "chord", row: 2, col: 2 });
     });
 
@@ -195,7 +195,7 @@ describe("createGestureMachine", () => {
         leftDown(previewable(1, 1, [pos(0, 0)])),
       ]);
       expect(out[1].phaseChange).toBe("pressed");
-      expect(out[1].effects).toEqual(["press-set"]);
+      expect(out[1].effects).toEqual(["press-preview-set"]);
       expect(out[1].action).toBeUndefined();
     });
 
@@ -230,7 +230,7 @@ describe("createGestureMachine", () => {
       expect(out[0].action).toBeUndefined();
       expect(out[0].phaseChange).toBe("pressed");
       expect(out[1].phaseChange).toBe("armed");
-      expect(out[1].effects).toEqual(["preview-set"]);
+      expect(out[1].effects).toEqual(["chord-preview-set"]);
       expect(out[1].chordPreview).toEqual({ pos: pos(1, 1), cells });
       expect(out[1].action).toBeUndefined();
     });
@@ -258,7 +258,7 @@ describe("createGestureMachine", () => {
       const out = run([...armed(), { kind: "left-up" }]);
       expect(out[2].action).toEqual({ type: "chord", row: 1, col: 1 });
       expect(out[2].phaseChange).toBe("disarmed");
-      expect(out[2].effects).toEqual(["chord", "preview-cleared"]);
+      expect(out[2].effects).toEqual(["chord", "chord-preview-cleared"]);
       expect(out[2].chordPreview).toBeNull();
     });
 
@@ -285,7 +285,7 @@ describe("createGestureMachine", () => {
         { kind: "right-up" },
         pointerMove(previewable(2, 2, [pos(1, 2)])),
       ]);
-      expect(out[3].effects).toEqual(["preview-moved"]);
+      expect(out[3].effects).toEqual(["chord-preview-moved"]);
       expect(out[3].chordPreview).toEqual({
         pos: pos(2, 2),
         cells: [pos(1, 2)],
@@ -310,7 +310,7 @@ describe("createGestureMachine", () => {
         ...armed(),
         pointerMove(previewable(2, 2, [pos(1, 2)])),
       ]);
-      expect(out[2].effects).toEqual(["preview-moved"]);
+      expect(out[2].effects).toEqual(["chord-preview-moved"]);
       expect(out[2].chordPreview).toEqual({
         pos: pos(2, 2),
         cells: [pos(1, 2)],
@@ -322,13 +322,13 @@ describe("createGestureMachine", () => {
         ...armed(),
         pointerMove(previewable(3, 3, [], false, true)),
       ]);
-      expect(out[2].effects).toEqual(["preview-cleared"]);
+      expect(out[2].effects).toEqual(["chord-preview-cleared"]);
       expect(out[2].chordPreview).toBeNull();
     });
 
     it("clears the Preview on pointer-move off a Cell while armed", () => {
       const out = run([...armed(), pointerMove(null)]);
-      expect(out[2].effects).toEqual(["preview-cleared"]);
+      expect(out[2].effects).toEqual(["chord-preview-cleared"]);
     });
 
     it("re-renders the Preview on pointer-move back over a previewable Cell after leaving", () => {
@@ -337,8 +337,8 @@ describe("createGestureMachine", () => {
         pointerMove(null),
         pointerMove(previewable(2, 2, [pos(1, 2)])),
       ]);
-      expect(out[2].effects).toEqual(["preview-cleared"]);
-      expect(out[3].effects).toEqual(["preview-set"]);
+      expect(out[2].effects).toEqual(["chord-preview-cleared"]);
+      expect(out[3].effects).toEqual(["chord-preview-set"]);
     });
 
     it("sends no Chord on left-up when the Preview was cleared by moving off", () => {
@@ -355,7 +355,7 @@ describe("createGestureMachine", () => {
         pointerMove(previewable(1, 1, [pos(0, 0)])),
         { kind: "left-up" },
       ]);
-      expect(out[2].effects).toEqual(["preview-cleared"]);
+      expect(out[2].effects).toEqual(["chord-preview-cleared"]);
       // Re-entering over a previewable Cell does not restore the Preview…
       expect(out[3].effects).toEqual([]);
       expect(out[3].chordPreview).toBeNull();
@@ -385,7 +385,7 @@ describe("createGestureMachine", () => {
         { kind: "pointer-leave" },
         pointerMove(previewable(2, 2, [pos(1, 2)])),
       ]);
-      expect(out[2].effects).toEqual(["preview-cleared"]);
+      expect(out[2].effects).toEqual(["chord-preview-cleared"]);
       expect(out[3].effects).toEqual([]);
       expect(out[4].effects).toEqual([]);
       expect(out[4].chordPreview).toBeNull();
@@ -398,10 +398,10 @@ describe("createGestureMachine", () => {
         { kind: "left-up" },
         leftDown(previewable(2, 2, [pos(1, 2)])),
       ]);
-      expect(out[2].effects).toEqual(["preview-cleared"]);
+      expect(out[2].effects).toEqual(["chord-preview-cleared"]);
       expect(out[3].phaseChange).toBe("disarmed");
       expect(out[4].phaseChange).toBe("armed");
-      expect(out[4].effects).toEqual(["preview-set"]);
+      expect(out[4].effects).toEqual(["chord-preview-set"]);
       expect(out[4].chordPreview).toEqual({
         pos: pos(2, 2),
         cells: [pos(1, 2)],
@@ -418,7 +418,7 @@ describe("createGestureMachine", () => {
       return events.map((event) => machine.handle(event));
     };
 
-    it("ignores left-down once closed — no press-set, no Reveal", () => {
+    it("ignores left-down once closed — no press-preview-set, no Reveal", () => {
       const [out] = runClosed([leftDown(previewable(3, 4, []))]);
       expect(out.action).toBeUndefined();
       expect(out.phaseChange).toBeUndefined();
@@ -466,7 +466,7 @@ describe("createGestureMachine", () => {
       expect(pressed.phaseChange).toBe("pressed");
       const closed = machine.setEnabled(false);
       expect(closed.phaseChange).toBe("released");
-      expect(closed.effects).toEqual(["press-cleared"]);
+      expect(closed.effects).toEqual(["press-preview-cleared"]);
       expect(closed.pressPreview).toBeNull();
       const release = machine.handle({ kind: "left-up" });
       expect(release.action).toBeUndefined();
@@ -478,7 +478,7 @@ describe("createGestureMachine", () => {
       machine.handle(leftDown(previewable(1, 1, [pos(0, 0)])));
       const closed = machine.setEnabled(false);
       expect(closed.phaseChange).toBe("disarmed");
-      expect(closed.effects).toEqual(["preview-cleared"]);
+      expect(closed.effects).toEqual(["chord-preview-cleared"]);
       expect(closed.chordPreview).toBeNull();
     });
 
@@ -509,7 +509,7 @@ describe("createGestureMachine", () => {
         machine.handle({ kind: "left-up" }),
       ];
       expect(out[0].phaseChange).toBe("pressed");
-      expect(out[0].effects).toEqual(["press-set"]);
+      expect(out[0].effects).toEqual(["press-preview-set"]);
       expect(out[1].action).toEqual({ type: "reveal", row: 1, col: 1 });
     });
   });
@@ -594,7 +594,7 @@ describe("createGestureMachine", () => {
         { kind: "left-up" },
       ]);
       expect(out[2].phaseChange).toBe("disarmed");
-      expect(out[2].effects).toEqual(["preview-cleared"]);
+      expect(out[2].effects).toEqual(["chord-preview-cleared"]);
       expect(out[3].effects).toEqual([]);
       expect(out[4].action).toBeUndefined();
     });
@@ -602,7 +602,7 @@ describe("createGestureMachine", () => {
     it("clears the Press Preview on blur during a press", () => {
       const out = run([leftDown(previewable(1, 1, [])), { kind: "blur" }]);
       expect(out[1].phaseChange).toBe("released");
-      expect(out[1].effects).toEqual(["press-cleared"]);
+      expect(out[1].effects).toEqual(["press-preview-cleared"]);
     });
   });
 });

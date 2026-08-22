@@ -1,7 +1,7 @@
-import type { CellView, GameState } from "./api";
+import type { CellView, GameSnapshot } from "./api";
 
-/** Builds a minimal 2×2 playing GameState for tests; override any field. */
-export function gameState(over: Partial<GameState> = {}): GameState {
+/** Builds a minimal 2×2 playing GameSnapshot for tests; override any field. */
+export function gameState(over: Partial<GameSnapshot> = {}): GameSnapshot {
   const cells: CellView[] = [];
   for (let i = 0; i < 4; i++) {
     cells.push({ state: "hidden", content: null });

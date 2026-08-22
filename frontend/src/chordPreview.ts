@@ -1,4 +1,4 @@
-import type { GameState, Pos } from "./api";
+import type { GameSnapshot, Position } from "./api";
 
 /** Row-major offsets of the 8 neighboring Cells. */
 const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
@@ -13,7 +13,7 @@ const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
 ];
 
 export function isRevealedNumericCell(
-  state: GameState,
+  state: GameSnapshot,
   row: number,
   col: number,
 ): boolean {
@@ -31,14 +31,14 @@ export function isRevealedNumericCell(
  * the preview still shows its scope). Empty unless the Cell is a Revealed
  * numeric Cell. */
 export function chordPreviewCells(
-  state: GameState,
+  state: GameSnapshot,
   row: number,
   col: number,
-): Pos[] {
+): Position[] {
   if (!isRevealedNumericCell(state, row, col)) {
     return [];
   }
-  const out: Pos[] = [];
+  const out: Position[] = [];
   for (const [dr, dc] of NEIGHBOR_OFFSETS) {
     const r = row + dr;
     const c = col + dc;

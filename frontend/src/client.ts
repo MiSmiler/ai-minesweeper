@@ -1,4 +1,9 @@
-import { isGameEnded, type Action, type GameState, type Pos } from "./api";
+import {
+  isGameEnded,
+  type Action,
+  type GameSnapshot,
+  type Position,
+} from "./api";
 import { chordPreviewCells, isRevealedNumericCell } from "./chordPreview";
 import { createActionController } from "./controller";
 import {
@@ -23,9 +28,9 @@ import {
  * off-Board). The module builds the gesture machine's hit payload from its
  * cached state. */
 export type ClientInput =
-  | { kind: "right-down"; pos: Pos | null }
-  | { kind: "left-down"; pos: Pos | null }
-  | { kind: "pointer-move"; pos: Pos | null }
+  | { kind: "right-down"; pos: Position | null }
+  | { kind: "left-down"; pos: Position | null }
+  | { kind: "pointer-move"; pos: Position | null }
   | { kind: "left-up" }
   | { kind: "right-up" }
   | { kind: "blur" }
@@ -37,8 +42,8 @@ export type ClientInput =
 export interface GameClientDeps {
   boardEl: HTMLElement;
   topBarEls: TopBarEls;
-  post: (action: Action) => Promise<GameState>;
-  fetchState: () => Promise<GameState>;
+  post: (action: Action) => Promise<GameSnapshot>;
+  fetchState: () => Promise<GameSnapshot>;
 }
 
 /** The client module: the frontend's view of the game. It owns the cached
@@ -53,7 +58,7 @@ export interface GameClient {
   handleInput(event: ClientInput): void;
   /** Starts a new game; an optional difficulty switches to it (the Smiley
    * Button path keeps the current one). */
-  newGame(difficulty?: GameState["difficulty"]): void;
+  newGame(difficulty?: GameSnapshot["difficulty"]): void;
   /** Refreshes the Timer from the server; the counter and Smiley come from
    * action responses, which are always fresher. */
   pollTimer(): Promise<void>;
@@ -66,7 +71,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
   const controller = createActionController(post);
   const previewLayer = createPreviewLayer(boardEl);
 
-  let state: GameState | null = null;
+  let state: GameSnapshot | null = null;
   /** Whether a press is held over the Board, as reported by the last gesture
    * dispatch — kept so an action response re-rendering the top bar can keep
    * the Smiley surprised while the press is still held. */
@@ -76,7 +81,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
    * scope plus whether it is a Revealed numeric Cell (the criterion for
    * showing the Chord Preview) and whether it is Revealed (the criterion for
    * Arming). */
-  const cellHit = (state: GameState, pos: Pos): CellHit => ({
+  const cellHit = (state: GameSnapshot, pos: Position): CellHit => ({
     pos,
     previewCells: chordPreviewCells(state, pos.row, pos.col),
     isNumericCell: isRevealedNumericCell(state, pos.row, pos.col),
@@ -86,7 +91,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
 
   /** Renders the Smiley Button's face: surprised while a press is held over
    * the Board, otherwise the state-driven face. */
-  const renderSmiley = (state: GameState): void => {
+  const renderSmiley = (state: GameSnapshot): void => {
     topBarEls.smiley.textContent = boardPressed
       ? SmileyFace.surprised
       : smileyFace(state);
@@ -95,14 +100,14 @@ export function createGameClient(deps: GameClientDeps): GameClient {
   /** Applies an action through the controller and renders the fresh state.
    * Only the latest action's result is ever rendered — stale responses are
    * dropped by the controller. When the response ends the game, cancels any
-   * in-progress gesture so no press-set or Chord Preview survives onto the
+   * in-progress gesture so no press-preview-set or Chord Preview survives onto the
    * Won/Lost board. */
   const applyAndRender = async (action: Action): Promise<void> => {
     const next = await controller.apply(action);
     if (next) {
       state = next;
       // The machine's gate mirrors the game state: a Won/Lost response
-      // closes it (cancelling any in-progress gesture so no press-set or
+      // closes it (cancelling any in-progress gesture so no press-preview-set or
       // Chord Preview survives onto the Won/Lost board, issue #50); any
       // other response leaves it open — idempotent, so in-progress gestures
       // survive non-ending responses.
@@ -195,7 +200,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
     }
   };
 
-  const newGame = (difficulty?: GameState["difficulty"]): void => {
+  const newGame = (difficulty?: GameSnapshot["difficulty"]): void => {
     sendAction(
       difficulty ? { type: "new-game", difficulty } : { type: "new-game" },
     );

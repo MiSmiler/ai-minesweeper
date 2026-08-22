@@ -1,4 +1,4 @@
-import type { Pos } from "./api";
+import type { Position } from "./api";
 import type { ChordPreview } from "./gesture";
 
 /** The preview highlight layer: renders the gesture machine's Previews onto
@@ -8,7 +8,10 @@ export interface PreviewLayer {
   /** Renders the machine's current Previews: clears the highlight, shows
    * the Press Preview Cell and the Chord Preview Cells, then re-shows any
    * retained highlight (an action in flight). */
-  render(chordPreview: ChordPreview | null, pressPreview: Pos | null): void;
+  render(
+    chordPreview: ChordPreview | null,
+    pressPreview: Position | null,
+  ): void;
   /** Retains the currently shown highlight so render() keeps showing it
    * until release(). Call when a Reveal/Chord action is sent, so the Cells
    * do not flash back to Hidden while the response is in flight. */
@@ -30,26 +33,26 @@ export interface PreviewLayer {
  * Cells until the newer response renders. Self-correcting; accepted. */
 export function createPreviewLayer(board: HTMLElement): PreviewLayer {
   let currentChord: ChordPreview | null = null;
-  let currentPress: Pos | null = null;
+  let currentPress: Position | null = null;
   let retainedChord: ChordPreview | null = null;
-  let retainedPress: Pos | null = null;
+  let retainedPress: Position | null = null;
 
-  const cell = (pos: Pos): HTMLElement | null =>
+  const cell = (pos: Position): HTMLElement | null =>
     board.querySelector(`[data-row="${pos.row}"][data-col="${pos.col}"]`);
 
-  const add = (pos: Pos): void => {
+  const add = (pos: Position): void => {
     cell(pos)?.classList.add("cell-preview");
   };
 
-  const remove = (pos: Pos): void => {
+  const remove = (pos: Position): void => {
     cell(pos)?.classList.remove("cell-preview");
   };
 
-  const addAll = (cells: readonly Pos[]): void => {
+  const addAll = (cells: readonly Position[]): void => {
     for (const p of cells) add(p);
   };
 
-  const removeAll = (cells: readonly Pos[]): void => {
+  const removeAll = (cells: readonly Position[]): void => {
     for (const p of cells) remove(p);
   };
 

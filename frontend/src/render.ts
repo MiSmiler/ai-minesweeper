@@ -1,4 +1,4 @@
-import type { CellView, GameState } from "./api";
+import type { CellView, GameSnapshot } from "./api";
 
 /** The Smiley Button's emoji faces, keyed by use. The state-driven face comes
  * from renderTopBar; the surprised face is set directly while pressing. */
@@ -10,7 +10,7 @@ export const SmileyFace = {
 } as const;
 
 /** Renders the board grid from the server state. Pure function of state. */
-export function renderBoard(state: GameState, container: HTMLElement): void {
+export function renderBoard(state: GameSnapshot, container: HTMLElement): void {
   const board = document.createElement("div");
   board.className = "board";
   board.style.gridTemplateColumns = `repeat(${state.cols}, var(--cell-size))`;
@@ -51,7 +51,7 @@ export function renderBoard(state: GameState, container: HTMLElement): void {
 /** The Smiley Button's state-driven face for a game state — the surprised
  * face while pressing is rendered by the caller from the gesture machine's
  * output (issue #50). */
-export function smileyFace(state: GameState): SmileyFaceValue {
+export function smileyFace(state: GameSnapshot): SmileyFaceValue {
   if (state.game_state === "won") return SmileyFace.won;
   if (state.game_state === "lost") return SmileyFace.lost;
   return SmileyFace.neutral;
@@ -71,7 +71,7 @@ export interface TopBarEls {
 
 /** Renders the top bar (flag counter, smiley button, timer) from state into
  * the given elements, highlighting the active difficulty button in the row. */
-export function renderTopBar(state: GameState, els: TopBarEls): void {
+export function renderTopBar(state: GameSnapshot, els: TopBarEls): void {
   els.counter.textContent = formatCounter(state.flags_remaining);
   els.smiley.textContent = smileyFace(state);
 

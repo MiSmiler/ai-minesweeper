@@ -13,7 +13,9 @@ export type CellState = "hidden" | "flagged" | "revealed";
 /** `"mine"` or a neighbor count; null unless the Cell is Revealed. */
 export type CellContent = "mine" | number | null;
 
-export interface Pos {
+/** The coordinates of a Cell on the Board, in (row, col) order — the
+ * glossary's Position. */
+export interface Position {
   row: number;
   col: number;
 }
@@ -23,14 +25,17 @@ export interface CellView {
   content: CellContent;
 }
 
-export interface GameState {
+/** The full wire snapshot of the game, mirroring the server's StateDto
+ * (src/server.rs): the frontend's view of the whole game. Not the Rust-side
+ * GameState phase enum — that phase is the `game_state` field below. */
+export interface GameSnapshot {
   game_state: GameStateName;
   difficulty: Difficulty;
   rows: number;
   cols: number;
   flags_remaining: number;
   elapsed_secs: number;
-  trigger: Pos | null;
+  trigger: Position | null;
   cells: CellView[];
 }
 
@@ -41,17 +46,17 @@ export type Action =
   | { type: "new-game"; difficulty?: Difficulty };
 
 /** Fetches the current game state. */
-export async function fetchState(): Promise<GameState> {
+export async function fetchState(): Promise<GameSnapshot> {
   const res = await fetch("/state");
   if (!res.ok) {
     log.error(`GET /state failed: ${res.status}`);
     throw new Error(`GET /state failed: ${res.status}`);
   }
-  return (await res.json()) as GameState;
+  return (await res.json()) as GameSnapshot;
 }
 
 /** Sends an action and returns the new state. */
-export async function postAction(action: Action): Promise<GameState> {
+export async function postAction(action: Action): Promise<GameSnapshot> {
   const res = await fetch("/action", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -61,5 +66,5 @@ export async function postAction(action: Action): Promise<GameState> {
     log.error(`POST /action failed: ${res.status}`, action);
     throw new Error(`POST /action failed: ${res.status}`);
   }
-  return (await res.json()) as GameState;
+  return (await res.json()) as GameSnapshot;
 }
