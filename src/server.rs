@@ -96,7 +96,7 @@ pub enum ActionKind {
 
 // --- Core mapping ---
 
-fn game_state_str(state: GameState) -> &'static str {
+pub(crate) fn game_state_str(state: GameState) -> &'static str {
     match state {
         GameState::Ready => "ready",
         GameState::Playing => "playing",
@@ -105,7 +105,7 @@ fn game_state_str(state: GameState) -> &'static str {
     }
 }
 
-fn difficulty_str(difficulty: Difficulty) -> &'static str {
+pub(crate) fn difficulty_str(difficulty: Difficulty) -> &'static str {
     match difficulty {
         Difficulty::Beginner => "beginner",
         Difficulty::Intermediate => "intermediate",
