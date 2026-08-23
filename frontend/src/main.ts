@@ -1,5 +1,7 @@
+import { postAction } from "./api";
 import { bootstrapGamePage } from "./bootstrap";
 import { log } from "./log";
+import { navigateTo, wirePageNav } from "./nav";
 import "./style.css";
 
 // The human-player page. The Board input, top-bar controls, and rendering are
@@ -10,6 +12,7 @@ async function main(): Promise<void> {
     log.error("Failed to load game: missing #app");
     return;
   }
+  wirePageNav(document.body, { post: postAction, navigate: navigateTo });
   try {
     await bootstrapGamePage(root);
   } catch (err) {

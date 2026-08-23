@@ -255,3 +255,53 @@ button:hover {
 .n8 {
   color: #606060;
 }
+
+/* The cross-page jump bar above the game (human <-> ai). */
+.page-nav {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.page-nav a {
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+  padding: 4px 10px;
+  background: var(--face);
+  border: 1px solid #6a6a72;
+  border-radius: 6px;
+  box-shadow:
+    inset 1px 1px 0 var(--hidden-light),
+    inset -1px -1px 0 var(--hidden-dark);
+}
+
+.page-nav a:hover {
+  background: var(--hidden-light);
+}
+
+/* The DeepSeek panel below the Board on the ai page. */
+.ai-panel {
+  align-self: center;
+  width: max-content;
+  max-width: min(92vw, 480px);
+  margin-top: 14px;
+  padding: 12px 16px;
+  background: var(--face);
+  border-radius: 8px;
+  box-shadow:
+    inset 1px 1px 0 var(--hidden-light),
+    inset -1px -1px 0 var(--hidden-dark);
+  font-size: 14px;
+}
+
+.ai-panel h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.ai-panel-placeholder {
+  margin: 0;
+  color: #3a3a42;
+}

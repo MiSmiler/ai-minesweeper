@@ -3,11 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Minesweeper</title>
+    <title>Minesweeper — AI player</title>
   </head>
   <body>
     <nav class="page-nav">
-      <a data-nav href="/ai.html">跳到 AI 玩法</a>
+      <a data-nav href="/">回到人工玩法</a>
     </nav>
     <div id="app">
       <div class="difficulty-row">
@@ -25,7 +25,11 @@
         </div>
         <div id="board"></div>
       </div>
+      <section id="ai-panel" class="ai-panel">
+        <h2>DeepSeek 分析</h2>
+        <p class="ai-panel-placeholder">DeepSeek 的推理与回答将显示在这里。</p>
+      </section>
     </div>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/ai/main.ts"></script>
   </body>
 </html>
