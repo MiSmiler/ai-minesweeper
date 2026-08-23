@@ -32,7 +32,6 @@ fn digit_width(n: usize) -> usize {
 /// a metadata line (`board`, `game_state`, `difficulty`, `flags_remaining`),
 /// a blank line, a column header, then one line per row (row label plus the
 /// Cell glyphs). Rows and columns are 0-indexed, matching `Position`.
-#[allow(dead_code)] // wired by the `/ai/analyze` session (T4)
 pub fn board_snapshot_text(game: &Game) -> String {
     let size = game.size();
     let rows = size.rows;
@@ -72,7 +71,6 @@ pub fn board_snapshot_text(game: &Game) -> String {
 
 /// The `read_board` tool definition in the OpenAI/DeepSeek `tools` format:
 /// no arguments, returns the Board text from `board_snapshot_text`.
-#[allow(dead_code)] // wired by the `/ai/analyze` session (T4)
 pub fn read_board_tool() -> serde_json::Value {
     json!({
         "type": "function",

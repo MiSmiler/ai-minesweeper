@@ -12,6 +12,7 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
+use crate::ai::client::AiConfig;
 use crate::core::{CellContent, CellState, Difficulty, Game, GameMode, GameState, Position, Seed};
 
 /// The shared server state: the single live Game, the fixed GameMode, and
@@ -23,6 +24,9 @@ pub struct AppState {
     /// The Seed pinned for every game of this session (`--seed`); `None`
     /// draws a fresh random Seed per game.
     pub seed: Option<Seed>,
+    /// The DeepSeek harness config; `None` when `MY_DS_API_KEY` is unset
+    /// (the AI routes are then disabled with a clear error).
+    pub ai: Option<AiConfig>,
 }
 
 // --- Wire DTOs ---

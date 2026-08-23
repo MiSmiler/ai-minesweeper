@@ -3,4 +3,7 @@
 //! state — it reads the live `Game` through `core`'s public interface and is
 //! deliberately not part of `core.rs`.
 
+pub mod client;
+pub mod routes;
+pub mod session;
 pub mod tools;

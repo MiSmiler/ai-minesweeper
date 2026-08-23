@@ -12,6 +12,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+use crate::ai::client::AiConfig;
 use crate::core::{Difficulty, Game, GameMode, Seed};
 use crate::server::AppState;
 
@@ -59,10 +60,12 @@ async fn main() {
     let seed = cli.seed.unwrap_or_else(rand::random);
     let game = Game::with_seed(Difficulty::Beginner, mode, seed);
     server::log_new_game(&game, "startup");
+    let ai = AiConfig::from_env();
     let state = Arc::new(AppState {
         game: std::sync::Mutex::new(game),
         mode,
         seed: cli.seed,
+        ai,
     });
 
     // The built frontend (frontend/dist) is served at the root; unknown
@@ -70,6 +73,7 @@ async fn main() {
     let app = Router::new()
         .route("/state", get(server::get_state))
         .route("/action", post(server::post_action))
+        .route("/ai/analyze", post(crate::ai::routes::analyze))
         .fallback_service(
             ServeDir::new("frontend/dist").fallback(ServeFile::new("frontend/dist/index.html")),
         )
