@@ -1,15 +1,10 @@
 import { fetchState, postAction } from "./api";
+import { queryGameFrame } from "./gameFrame";
 import { startGamePage } from "./gamePage";
-import type { TopBarEls } from "./render";
+import { wirePageNav } from "./pageNav";
 import "./style.css";
 
-const boardEl = document.getElementById("board")!;
-const topBarEls: TopBarEls = {
-  counter: document.getElementById("counter")!,
-  smiley: document.getElementById("smiley")!,
-  timer: document.getElementById("timer")!,
-  difficultyRow: document.querySelector(".difficulty-row")!,
-};
+const { boardEl, topBarEls } = queryGameFrame();
 
 // The entry point is a thin DOM lookup: the reusable game-page bootstrap owns
 // the client module, the geometry/hit-testing, the input listeners, and the
@@ -21,3 +16,10 @@ void startGamePage({
   post: postAction,
   fetchState,
 }).start();
+
+// Swapping to the ai page starts a fresh Game (keeping the current
+// Difficulty) then navigates; both pages act on the one backend Game.
+wirePageNav(document.getElementById("app")!, {
+  fetchState,
+  post: postAction,
+});

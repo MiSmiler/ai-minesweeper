@@ -3,13 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Minesweeper</title>
+    <title>Minesweeper — AI</title>
   </head>
   <body>
     <div id="app">
       <nav class="page-nav" aria-label="Pages">
-        <span class="page-nav-link active" aria-current="page">Human</span>
-        <a class="page-nav-link" data-nav href="/ai.html">AI</a>
+        <a class="page-nav-link" data-nav href="/">Human</a>
+        <span class="page-nav-link active" aria-current="page">AI</span>
       </nav>
       <div class="difficulty-row">
         <button class="difficulty" data-difficulty="beginner">Beginner</button>
@@ -26,7 +26,16 @@
         </div>
         <div id="board"></div>
       </div>
+      <section id="ai-panel" class="ai-panel" aria-label="AI assistant">
+        <h2 class="ai-panel-title">AI Assistant</h2>
+        <textarea
+          id="ai-transcript"
+          class="ai-transcript"
+          readonly
+          placeholder="The AI's Board analysis will appear here."
+        ></textarea>
+      </section>
     </div>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/aiMain.ts"></script>
   </body>
 </html>
