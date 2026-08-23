@@ -6,6 +6,7 @@
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 /// The harness configuration, read from the environment at startup.
 #[derive(Debug, Clone)]
@@ -69,12 +70,12 @@ pub struct ChatRequest<'a> {
     pub stream: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct ChatResponse {
     choices: Vec<Choice>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct Choice {
     message: ChatMessage,
 }
@@ -123,6 +124,11 @@ impl DeepSeekClient {
 #[async_trait]
 impl LlmClient for DeepSeekClient {
     async fn complete(&self, request: &ChatRequest<'_>) -> Result<ChatMessage, LlmError> {
+        // Log exactly what goes over the wire so the harness is observable
+        // without a live debugger (requires `RUST_LOG=debug`).
+        let request_json = serde_json::to_string(request).unwrap_or_default();
+        debug!(request = %request_json, "deepseek request");
+
         let resp = self
             .http
             .post("https://api.deepseek.com/chat/completions")
@@ -130,13 +136,22 @@ impl LlmClient for DeepSeekClient {
             .json(request)
             .send()
             .await
-            .map_err(LlmError::Http)?;
+            .map_err(|e| {
+                debug!(error = %e, "deepseek request failed");
+                LlmError::Http(e)
+            })?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
+            debug!(status = status.as_u16(), response = %body, "deepseek error response");
             return Err(LlmError::Status(status.as_u16(), body));
         }
-        let body: ChatResponse = resp.json().await.map_err(LlmError::Http)?;
+        let body: ChatResponse = resp.json().await.map_err(|e| {
+            debug!(error = %e, "deepseek response parse failed");
+            LlmError::Http(e)
+        })?;
+        let response_json = serde_json::to_string(&body).unwrap_or_default();
+        debug!(response = %response_json, "deepseek response");
         body.choices
             .into_iter()
             .next()
