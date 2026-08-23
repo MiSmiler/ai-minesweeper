@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cellAtPoint, measureBoard, offsetToIndex } from "./hitTest";
-
-const CELL = 24;
-const GAP = 1.5;
-const PITCH = CELL + GAP;
+import {
+  CELL,
+  GAP,
+  PITCH,
+  mockBoardGeometry,
+  mockBoardOrigin,
+} from "./testUtils";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -20,12 +23,10 @@ function laidOutBoard(rows: number, cols: number): HTMLElement {
       cell.className = "cell";
       cell.dataset.row = String(r);
       cell.dataset.col = String(c);
-      vi.spyOn(cell, "getBoundingClientRect").mockReturnValue(
-        new DOMRect(c * PITCH, r * PITCH, CELL, CELL),
-      );
       board.appendChild(cell);
     }
   }
+  mockBoardGeometry(board);
   return board;
 }
 
@@ -106,9 +107,7 @@ describe("cellAtPoint", () => {
   };
   const boardAt = (left: number, top: number): HTMLElement => {
     const board = document.createElement("div");
-    vi.spyOn(board, "getBoundingClientRect").mockReturnValue(
-      new DOMRect(left, top, 0, 0),
-    );
+    mockBoardOrigin(board, left, top);
     return board;
   };
 
