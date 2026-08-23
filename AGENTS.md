@@ -35,7 +35,7 @@ Before executing `git commit`, **show the proposed commit message and wait for c
 
 ### Issue tracker
 
-Issues are tracked as local markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+Issues live in the repo's GitHub Issues and are managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
