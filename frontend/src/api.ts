@@ -45,6 +45,25 @@ export type Action =
   | { type: "chord"; row: number; col: number }
   | { type: "new-game"; difficulty?: Difficulty };
 
+/** A tool call in a DeepSeek transcript turn. */
+export interface TranscriptToolCall {
+  name: string;
+  arguments: string;
+}
+
+/** One model turn: its reasoning, its answer, and any tool calls it made. */
+export interface TranscriptTurn {
+  reasoning_content: string | null;
+  content: string | null;
+  tool_calls: TranscriptToolCall[];
+}
+
+/** The full transcript returned by `POST /ai/analyze`, mirroring the backend's
+ * `SessionResult` (src/ai/session.rs). */
+export interface SessionResult {
+  steps: TranscriptTurn[];
+}
+
 /** Fetches the current game state. */
 export async function fetchState(): Promise<GameSnapshot> {
   const res = await fetch("/state");
@@ -53,6 +72,19 @@ export async function fetchState(): Promise<GameSnapshot> {
     throw new Error(`GET /state failed: ${res.status}`);
   }
   return (await res.json()) as GameSnapshot;
+}
+
+/** Runs a DeepSeek analysis of the current board and returns the transcript. */
+export async function analyzeBoard(): Promise<SessionResult> {
+  const res = await fetch("/ai/analyze", { method: "POST" });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    log.error(`POST /ai/analyze failed: ${res.status}`, body);
+    throw new Error(
+      `POST /ai/analyze failed: ${res.status}${body ? ` — ${body}` : ""}`,
+    );
+  }
+  return (await res.json()) as SessionResult;
 }
 
 /** Sends an action and returns the new state. */

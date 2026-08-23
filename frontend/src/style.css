@@ -296,12 +296,55 @@ button:hover {
   font-size: 14px;
 }
 
+.ai-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
 .ai-panel h2 {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 15px;
+}
+
+.ai-analyze {
+  font-size: 13px;
 }
 
 .ai-panel-placeholder {
   margin: 0;
   color: #3a3a42;
+}
+
+.ai-turn {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  background: var(--hidden-light);
+  border-radius: 6px;
+  border-left: 3px solid var(--hidden-dark);
+}
+
+.ai-tool {
+  font-size: 12px;
+  font-family: "Consolas", "Menlo", monospace;
+  color: #3a3a42;
+  margin-bottom: 4px;
+}
+
+.ai-reasoning {
+  font-size: 13px;
+  color: #55555c;
+  margin-bottom: 4px;
+}
+
+.ai-content {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.ai-error {
+  margin: 0;
+  color: #cc0000;
 }
