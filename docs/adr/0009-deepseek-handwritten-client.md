@@ -1,0 +1,3 @@
+# Hand-written DeepSeek client instead of an OpenAI SDK
+
+The AI harness calls the DeepSeek Chat Completions API with a hand-written reqwest + serde client in `src/ai` rather than an OpenAI-compatible SDK. DeepSeek's request augments the standard body with `thinking`/`reasoning_effort` and its response adds `reasoning_content` alongside `content` and `tool_calls`; an SDK either hides these extensions or forces `extra_body` gymnastics, so we own the wire DTOs in `ai/client.rs` and keep exactly the fields the harness needs. The client hides behind an `LlmClient` trait so the agent session (`ai/session.rs`) is unit-tested against a fake instead of the network.

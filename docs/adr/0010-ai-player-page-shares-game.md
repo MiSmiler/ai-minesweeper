@@ -1,0 +1,3 @@
+# The AI Player page shares the single Game, resetting on navigation
+
+Issue #24 asks for the ai-player page to be independent of the human-player page, but the first slice (a read-only analysis, issue #55) deliberately keeps them on the single backend Game: the model only reads the Board here, so sharing cannot corrupt a human's position, and the smallest step avoids introducing multi-game state. Each jump between the two pages fires a `new-game` first, so a navigation always lands on a fresh Board — which is what makes the destinations look independent while they share one Game. The deferral is explicit: when write tools (Reveal/Flag/Chord) arrive, the pages must stop sharing a Game and each get its own instance; that is a follow-up change, not a defect of this slice.

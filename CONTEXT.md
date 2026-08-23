@@ -109,3 +109,25 @@ _Avoid_: Layout seed, RNG key
 **Prank Mode**:
 A game variant in which the First Click is always a Mine, ending the game immediately in `Lost` — the game is unwinnable by design. Enabled by the `--prank` launch parameter; the UI never indicates it is active.
 _Avoid_: Trick mode, joke mode, jinx mode
+
+## AI Player
+
+**AI Player**:
+The DeepSeek model that acts on the Game through the harness, distinct from the human player. In the read-only slice it observes the Board via the Read Tool and produces an analysis; later slices add Reveal/Flag/Chord.
+_Avoid_: Bot, agent, assistant
+
+**AI Player page**:
+The page where a user starts and observes the AI Player. It shows the Board — shared with the human page in the first slice, reset to a new Game on each jump — and a panel holding the model's Transcript. Distinct from the human-page (the existing `index.html`).
+_Avoid_: AI page, bot page
+
+**Read Tool**:
+The tool exposed to the AI Player that returns the current Board as compact text — rows and columns 0-indexed, `.` hidden, a digit the revealed neighbor count (0 shown), `F` flagged, `*` a revealed Mine — so the model can reason about the position.
+_Avoid_: read_board (implementation name), observe tool
+
+**Agent Session**:
+One run of the AI Player talking to the Game through the tools, from the initial prompt to a final answer. The model may call the Read Tool repeatedly, each result fed back, until it stops calling tools or the session hits its turn cap.
+_Avoid_: Conversation, round, chat
+
+**Transcript**:
+The record of an Agent Session's turns, shown on the AI Player page so the user can observe each decision: a turn carries the model's reasoning, its answer, and any tool calls it made.
+_Avoid_: Log, chat history
