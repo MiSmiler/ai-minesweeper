@@ -1,3 +1,9 @@
+## Toolchain
+
+- **Backend** (`src/`): Rust (edition 2024) + axum, built and tested with `cargo` (`cargo fmt`, `cargo test`).
+- **Frontend** (`frontend/`): Vite + TypeScript app, built with `npm run build` (tsc + Vite), tested with `vitest`, formatted with `prettier`.
+- **Playwright** (`frontend/` devDependency): a headless browser you can drive to **screenshot the web UI** with no repo wiring — launch `chromium` from a one-off node invocation, load the app (a running `cargo run` backend on port 8080, or the Vite dev server via `npm run dev`, default `:5173`), and save screenshots to `.scratch/shot/` (gitignored). Live state is at `GET /state`, actions at `POST /action`.
+
 ## Development habits
 
 ### Before modifying code
