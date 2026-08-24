@@ -10,6 +10,7 @@ node_modules/
 /.trash/
 /.scratch/
 /.review_suggestion/
+/.pi/
 
 # Logs
 *.log
