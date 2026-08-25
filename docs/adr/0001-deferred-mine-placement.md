@@ -4,6 +4,11 @@
 > creation; the deferred, first-click-safe placement now applies to Prank
 > Mode only (ADR-0002).
 >
+> Re-amended by ADR-0009: a random Classic game again defers placement to the
+> First Click, re-engaging this record's deferred, first-click-safe guarantee
+> for that path (via Seed regeneration rather than the old never-on-adjacent
+> filter); a pinned `--seed` still places its Mines at creation.
+>
 > Terminology note (issue #25): the glossary later renamed the
 > "flood-fill" mechanic to "cascade"; this record keeps the original term.
 
