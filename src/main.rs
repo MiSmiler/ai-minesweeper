@@ -55,9 +55,17 @@ async fn main() {
         GameMode::Classic
     };
 
-    let seed = cli.seed.unwrap_or_else(rand::random);
-    let game = Game::with_seed(Difficulty::Beginner, mode, seed);
-    server::log_new_game(&game, "startup");
+    let game = match cli.seed {
+        Some(seed) => Game::with_seed(Difficulty::Beginner, mode, seed),
+        None => Game::new(Difficulty::Beginner, mode),
+    };
+    // A pinned `--seed` is the replay anchor at startup; a random game's
+    // Seed is committed (and logged) only at the First Click.
+    if cli.seed.is_some() {
+        server::log_new_game(&game, "startup");
+    } else {
+        info!("random game started; its Seed is committed at the First Click");
+    }
     let state = Arc::new(AppState {
         game: std::sync::Mutex::new(game),
         mode,
