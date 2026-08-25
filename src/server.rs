@@ -177,9 +177,11 @@ pub fn apply_action(
                 Some(raw) => parse_difficulty(raw)?,
                 None => game.difficulty(),
             };
-            let seed = fixed_seed.unwrap_or_else(rand::random);
-            *game = Game::with_seed(difficulty, mode, seed);
-            Ok(Some(seed))
+            *game = match fixed_seed {
+                Some(seed) => Game::with_seed(difficulty, mode, seed),
+                None => Game::new(difficulty, mode),
+            };
+            Ok(Some(game.seed()))
         }
         ActionKind::Reveal | ActionKind::Flag | ActionKind::Chord => {
             let (row, col) = match (action.row, action.col) {
@@ -253,10 +255,19 @@ pub async fn post_action(
         warn!(action = ?action, error = %e, "rejected action");
         (StatusCode::BAD_REQUEST, e)
     })?;
-    if created.is_some() {
-        log_new_game(&game, "player");
-    }
     let after = game.game_state();
+    // A pinned `--seed` is the replay anchor at creation; a random game's
+    // Seed is committed (and logged) only when the First Click leaves Ready
+    // (Classic -> Playing, Prank -> Lost).
+    if created.is_some() && app.seed.is_some() {
+        log_new_game(&game, "player");
+    } else if before == GameState::Ready && after != GameState::Ready && app.seed.is_none() {
+        info!(
+            seed = game.seed(),
+            difficulty = difficulty_str(game.difficulty()),
+            "first click committed the Seed"
+        );
+    }
     debug!(
         action = ?action,
         from = game_state_str(before),
