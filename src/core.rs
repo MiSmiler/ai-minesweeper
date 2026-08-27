@@ -264,6 +264,16 @@ impl Game {
         }
     }
 
+    /// Starts a fresh game from this game's config, optionally switching
+    /// Difficulty. Reuses the same Features and pinned Seed set at creation,
+    /// so the session's launch-time intent is preserved. `None` keeps the
+    /// current Difficulty.
+    pub fn new_game(&mut self, difficulty: Option<Difficulty>) {
+        let difficulty = difficulty.unwrap_or(self.config.difficulty);
+        let config = GameConfig::new(difficulty, self.config.features, self.config.pinned_seed);
+        *self = Self::build(config);
+    }
+
     /// Creates a game with a preset Mine list (test use). For a non-Prank
     /// game the caller is responsible for first-click safety: Mines on or
     /// adjacent to the first-clicked Cell are NOT filtered. A preset is a
@@ -1474,5 +1484,34 @@ mod tests {
             game.cell_view(Position::new(0, 0)).content,
             Some(CellContent::Mine)
         );
+    }
+
+    #[test]
+    fn new_game_keeps_session_features_and_seed() {
+        // A Prank game's `new_game(None)` reuses the session config: the same
+        // Features and the (dropped) Seed, so it stays an unseedable Prank.
+        let mut game = Game::with_config(GameConfig::new(
+            Difficulty::Beginner,
+            Features::prank(),
+            None,
+        ));
+        game.new_game(None);
+        assert_eq!(game.features(), Features::prank());
+        assert_eq!(game.committed_seed(), None);
+    }
+
+    #[test]
+    fn new_game_switches_difficulty_and_resets_state() {
+        // Reveal to Playing, then `new_game(Some(Expert))`: a fresh board at
+        // the new Difficulty, with no Mines and no committed Seed.
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
+        game.reveal(Position::new(1, 1)); // non-Mine, keeps Playing
+        assert_eq!(game.game_state(), GameState::Playing);
+        game.new_game(Some(Difficulty::Expert));
+        assert_eq!(game.game_state(), GameState::Ready);
+        assert_eq!(game.difficulty(), Difficulty::Expert);
+        assert_eq!(game.mines(), None);
+        assert_eq!(game.committed_seed(), None);
     }
 }

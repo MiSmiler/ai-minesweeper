@@ -2,7 +2,7 @@ mod core;
 mod server;
 
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::routing::{get, post};
@@ -12,7 +12,6 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use crate::core::{Difficulty, Features, Game, GameConfig, Seed};
-use crate::server::AppState;
 
 /// Command-line options for the game server.
 #[derive(Parser)]
@@ -62,13 +61,14 @@ async fn main() {
     // mutually exclusive (Prank is unseedable); absent both, a fresh Random
     // game per play (issue #100). The Seed is committed (and logged) at the
     // First Click for every game.
+    //
+    // The session's launch-time intent is fixed here: one game at a time, with
+    // the Features and pinned Seed set once at launch (issue #103). The Game's
+    // config is the single source of truth — every New Game reuses it, switching
+    // only the Difficulty.
     let game = Game::with_config(GameConfig::new(Difficulty::Beginner, features, cli.seed));
     server::log_new_game(&game, "startup");
-    let state = Arc::new(AppState {
-        game: std::sync::Mutex::new(game),
-        features,
-        seed: cli.seed,
-    });
+    let state: Arc<Mutex<Game>> = Arc::new(Mutex::new(game));
 
     // The built frontend (frontend/dist) is served at the root; unknown
     // paths fall back to index.html so client-side routing never 404s.

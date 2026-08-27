@@ -99,7 +99,7 @@ The first Reveal of a game; the Timer starts at it, and it places the Mines for 
 _Avoid_: Initial click, opening move
 
 **pinned_seed**:
-The optional Seed fixed in `GameConfig` for a game's Mine layout: `Some` pins one Seed so the same Difficulty reproduces the same layout, `None` draws a fresh random Seed per game. Prank is mutually exclusive with a pinned Seed — a Prank game drops any passed Seed — so a pinned Seed is only ever a non-Prank channel. It is a backend detail, never shown to the player.
+The optional Seed fixed in `GameConfig` for a game's Mine layout: `Some` pins one Seed so the same Difficulty reproduces the same layout, `None` draws a fresh random Seed per game. Prank is mutually exclusive with a pinned Seed — a Prank game drops any passed Seed — so a pinned Seed is only ever a non-Prank channel. It is a backend detail, never shown to the player. It is the session's intent, set at launch and flowing into every GameConfig, distinct from a Game's committed Seed.
 _Avoid_: Seed policy, pinned policy
 
 **committed_seed**:
