@@ -1,4 +1,7 @@
-//! Core game logic for Minesweeper: pure rules, zero UI dependencies.
+//! Core game logic for Minesweeper: pure rules, with no UI, framework,
+//! network, or serde dependencies — freely testable through its public seam.
+//! Domain enums expose their canonical names via `as_str()`, which the wire
+//! and format adapters reuse instead of re-deriving a mapping per adapter.
 //!
 //! The public interface of this module is the only seam — both the UI layer
 //! and the unit tests drive the game through it.
@@ -56,6 +59,15 @@ impl Difficulty {
             Difficulty::Expert => 99,
         }
     }
+
+    /// The canonical wire/format name: `beginner` / `intermediate` / `expert`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Difficulty::Beginner => "beginner",
+            Difficulty::Intermediate => "intermediate",
+            Difficulty::Expert => "expert",
+        }
+    }
 }
 
 /// A Cell's coordinates on the Board, in (row, col) order.
@@ -108,6 +120,16 @@ pub enum GameMode {
     Prank,
 }
 
+impl GameMode {
+    /// The canonical wire name: `classic` / `prank`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GameMode::Classic => "classic",
+            GameMode::Prank => "prank",
+        }
+    }
+}
+
 /// The state of a game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameState {
@@ -120,6 +142,18 @@ pub enum GameState {
     Won,
     /// A Mine was Revealed.
     Lost,
+}
+
+impl GameState {
+    /// The canonical wire/format name: `ready` / `playing` / `won` / `lost`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GameState::Ready => "ready",
+            GameState::Playing => "playing",
+            GameState::Won => "won",
+            GameState::Lost => "lost",
+        }
+    }
 }
 
 /// A Minesweeper game. In Classic Mode a pinned `--seed` places the Mines at
@@ -268,7 +302,11 @@ impl Game {
     /// plain `Seed` (ADR-0009).
     fn commit_mines(&mut self, mines: Vec<Position>, at: &str) {
         self.mines = Some(mines);
-        info!(seed = self.seed(), "seed committed {at}");
+        info!(
+            seed = self.seed(),
+            difficulty = self.difficulty.as_str(),
+            "seed committed {at}"
+        );
     }
 
     /// The placed Mines, if any; `None` until placed (Prank Mode's `Ready`
@@ -639,6 +677,27 @@ mod tests {
         assert_eq!(Difficulty::Intermediate.mine_count(), 40);
         assert_eq!(Difficulty::Expert.size(), BoardSize::new(16, 30));
         assert_eq!(Difficulty::Expert.mine_count(), 99);
+    }
+
+    #[test]
+    fn difficulty_canonical_names_match_the_wire() {
+        assert_eq!(Difficulty::Beginner.as_str(), "beginner");
+        assert_eq!(Difficulty::Intermediate.as_str(), "intermediate");
+        assert_eq!(Difficulty::Expert.as_str(), "expert");
+    }
+
+    #[test]
+    fn game_mode_canonical_names_match_the_wire() {
+        assert_eq!(GameMode::Classic.as_str(), "classic");
+        assert_eq!(GameMode::Prank.as_str(), "prank");
+    }
+
+    #[test]
+    fn game_state_canonical_names_match_the_wire() {
+        assert_eq!(GameState::Ready.as_str(), "ready");
+        assert_eq!(GameState::Playing.as_str(), "playing");
+        assert_eq!(GameState::Won.as_str(), "won");
+        assert_eq!(GameState::Lost.as_str(), "lost");
     }
 
     #[test]

@@ -107,23 +107,6 @@ pub enum ActionOutcome {
 
 // --- Core mapping ---
 
-fn game_state_str(state: GameState) -> &'static str {
-    match state {
-        GameState::Ready => "ready",
-        GameState::Playing => "playing",
-        GameState::Won => "won",
-        GameState::Lost => "lost",
-    }
-}
-
-fn difficulty_str(difficulty: Difficulty) -> &'static str {
-    match difficulty {
-        Difficulty::Beginner => "beginner",
-        Difficulty::Intermediate => "intermediate",
-        Difficulty::Expert => "expert",
-    }
-}
-
 fn cell_state_str(state: CellState) -> &'static str {
     match state {
         CellState::Hidden => "hidden",
@@ -162,8 +145,8 @@ pub fn snapshot(game: &Game) -> StateDto {
         col: pos.col,
     });
     StateDto {
-        game_state: game_state_str(game.game_state()),
-        difficulty: difficulty_str(game.difficulty()),
+        game_state: game.game_state().as_str(),
+        difficulty: game.difficulty().as_str(),
         rows: size.rows,
         cols: size.cols,
         flags_remaining: game.flags_remaining(),
@@ -230,10 +213,7 @@ pub fn parse_difficulty(s: &str) -> Result<Difficulty, String> {
 /// created. `source` distinguishes the initial game from player-triggered
 /// New Games.
 pub fn log_new_game(game: &Game, source: &str) {
-    info!(
-        difficulty = difficulty_str(game.difficulty()),
-        source, "new game"
-    );
+    info!(difficulty = game.difficulty().as_str(), source, "new game");
 }
 
 // --- Handlers ---
@@ -275,13 +255,13 @@ pub async fn post_action(
     }
     debug!(
         action = ?action,
-        from = game_state_str(before),
-        to = game_state_str(after),
+        from = before.as_str(),
+        to = after.as_str(),
         "action applied"
     );
     if before != after && matches!(after, GameState::Won | GameState::Lost) {
         info!(
-            game_state = game_state_str(after),
+            game_state = after.as_str(),
             elapsed_secs = game.elapsed().as_secs(),
             flags_remaining = game.flags_remaining(),
             "game over"

@@ -87,10 +87,7 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("failed to bind");
-    let mode_str = match mode {
-        GameMode::Classic => "classic",
-        GameMode::Prank => "prank",
-    };
+    let mode_str = mode.as_str();
     info!(mode = mode_str, "Minesweeper web UI at http://{addr}");
     axum::serve(listener, app).await.expect("server error");
 }
