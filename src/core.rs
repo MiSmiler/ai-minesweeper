@@ -118,16 +118,17 @@ pub struct CellView {
     pub content: Option<CellContent>,
 }
 
-/// The game variant being played.
+/// A shim over the new configuration (ADR-0010): maps a legacy mode value
+/// to the corresponding `Features` / `SeedPolicy`. The game model no longer
+/// stores a `GameMode` — this enum survives only so existing call sites and
+/// tests keep compiling while `GameConfig` is threaded through the tree
+/// (the expand step of ADR-0010; issues #99–#101).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameMode {
-    /// Standard rules. A random game defers Mine placement to the First
-    /// Click and regenerates the Seed until the clicked Cell's 3x3 is
-    /// Mine-free, so the First Click is safe; a pinned `--seed` places the
-    /// Mines at creation and reproduces the layout exactly, leaving the
-    /// First Click unprotected (ADR-0004, amended by ADR-0009).
+    /// Standard rules. Maps to no Features; the SeedPolicy is chosen by the
+    /// constructor (`Game::new` → Random, `Game::with_seed` → Pinned).
     Classic,
-    /// Prank: the First Click is always a Mine, losing the game instantly.
+    /// Prank. Maps to the Prank Feature; the First Click is always a Mine.
     Prank,
 }
 
@@ -141,11 +142,67 @@ impl GameMode {
     }
 }
 
+/// The origin of the Mine layout (ADR-0010): where the Mines come from and
+/// whether the First Click is protected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeedPolicy {
+    /// Places the full Mine set at Game creation from a fixed Seed,
+    /// reproducing the layout exactly and leaving the First Click
+    /// unprotected (ADR-0004).
+    Pinned,
+    /// Defers Mine placement to the First Click, re-drawing the Seed until
+    /// the clicked Cell's 3x3 is Mine-free, so the First Click is safe
+    /// (ADR-0009).
+    Random,
+}
+
+/// An opt-in behavior that modifies how a game plays, independent of the
+/// rule set and the SeedPolicy (ADR-0010). The only Feature is Prank.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Feature {
+    /// The First Click is always a Mine, losing the game instantly.
+    Prank,
+}
+
+/// The set of opt-in Features enabled on a Game; presence means the
+/// behavior is on. Fixed at Game creation (ADR-0010).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Features(u8);
+
+impl Features {
+    /// The empty feature set.
+    pub const NONE: Self = Self(0);
+
+    const PRANK: u8 = 1 << 0;
+
+    /// A set with only the Prank Feature.
+    pub fn prank() -> Self {
+        Self(Self::PRANK)
+    }
+
+    /// Whether the given Feature is enabled (present in the set).
+    pub fn contains(self, feature: Feature) -> bool {
+        match feature {
+            Feature::Prank => self.0 & Self::PRANK != 0,
+        }
+    }
+}
+
+/// The immutable configuration a Game is created from: a Difficulty, a
+/// SeedPolicy, a set of Features, and the Seed value (ADR-0010).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GameConfig {
+    pub difficulty: Difficulty,
+    pub seed_policy: SeedPolicy,
+    pub features: Features,
+    pub seed: Seed,
+}
+
 /// The state of a game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameState {
-    /// Board exists. A pinned Classic `--seed` has placed its Mines; a
-    /// random Classic game or a Prank game has not yet.
+    /// Board exists. A Pinned (non-Prank) game has placed its Mines; a
+    /// Random game or a Prank game has not yet.
     Ready,
     /// Mines placed, game in progress.
     Playing,
@@ -167,17 +224,18 @@ impl GameState {
     }
 }
 
-/// A Minesweeper game. In Classic Mode a pinned `--seed` places the Mines at
-/// creation (ADR-0004) and a random game defers them to the First Click
-/// (ADR-0009); in Prank Mode they are placed at the First Click (ADR-0002).
+/// A Minesweeper game: standard rules plus optional Features and a
+/// SeedPolicy (ADR-0010). A Pinned (non-Prank) game places its Mines at
+/// creation (ADR-0004); a Random game defers them to the First Click and
+/// regenerates the Seed until it is safe (ADR-0009); a Prank game places
+/// them at the First Click, forcing the clicked Cell in (ADR-0002).
 #[derive(Debug)]
 pub struct Game {
-    difficulty: Difficulty,
-    mode: GameMode,
+    config: GameConfig,
     size: BoardSize,
     state: GameState,
-    /// Mine positions; `None` until placed — placed at creation for a pinned
-    /// Classic `--seed`, otherwise at the First Click.
+    /// Mine positions; `None` until placed — placed at creation for a Pinned
+    /// non-Prank game, otherwise at the First Click.
     mines: Option<Vec<Position>>,
     /// CellState per Cell, indexed by Position (row-major).
     cell_states: Vec<CellState>,
@@ -188,76 +246,91 @@ pub struct Game {
     mine_count: usize,
     /// Trigger Mine position; `None` unless the game is Lost.
     trigger: Option<Position>,
-    /// The Seed the Mine layout derives from. Fixed at creation for a pinned
-    /// `--seed`; a random game's provisional candidate until the First Click
-    /// commits it.
-    seed: Seed,
-    /// Whether the First Click must be safe: a random Classic game regenerates
-    /// its Seed until the clicked Cell's 3x3 is Mine-free; a pinned `--seed`
-    /// reproduces the layout exactly and leaves the First Click unprotected.
-    /// Always false in Prank Mode (its First Click is a Mine by design).
-    first_click_safe: bool,
     started_at: Option<Instant>,
     elapsed_at_end: Option<Duration>,
 }
 
 impl Game {
-    /// Creates a game in `Ready` state with a fresh random Seed. A random
-    /// Classic game defers Mine placement and regenerates the Seed until the
-    /// First Click is safe (ADR-0009); a Prank game places its Mines at the
-    /// First Click (ADR-0002). The Seed is a provisional candidate until the
-    /// First Click commits it.
+    /// Creates a game in `Ready` state with a fresh random Seed (shim,
+    /// ADR-0010). A Random (non-Prank) game defers Mine placement and
+    /// regenerates the Seed until the First Click is safe (ADR-0009); a
+    /// Prank game places its Mines at the First Click (ADR-0002). The Seed
+    /// is a provisional candidate until the First Click commits it.
     pub fn new(difficulty: Difficulty, mode: GameMode) -> Self {
-        Self::build(difficulty, mode, rand::random(), true)
+        Self::with_config(GameConfig {
+            difficulty,
+            seed_policy: SeedPolicy::Random,
+            features: Self::mode_features(mode),
+            seed: rand::random(),
+        })
     }
 
     /// Creates a game in `Ready` state whose Mine layout derives from the
-    /// given Seed — a pinned `--seed`: the same Seed and Difficulty reproduce
-    /// the same layout. In Classic Mode the Mines are placed at creation and
-    /// the First Click is unprotected (reproduction mode, ADR-0004); in Prank
-    /// Mode they are placed at the First Click (ADR-0002). Guaranteed only
-    /// within the same build (rand version, sampling algorithm).
+    /// given Seed (shim, ADR-0010). A pinned `--seed`: the same Seed and
+    /// Difficulty reproduce the same layout. A Pinned (non-Prank) game
+    /// places its Mines at creation and leaves the First Click unprotected
+    /// (ADR-0004); a Prank game places them at the First Click (ADR-0002).
+    /// Guaranteed only within the same build (rand version, sampling
+    /// algorithm).
     pub fn with_seed(difficulty: Difficulty, mode: GameMode, seed: Seed) -> Self {
-        Self::build(difficulty, mode, seed, false)
+        Self::with_config(GameConfig {
+            difficulty,
+            seed_policy: SeedPolicy::Pinned,
+            features: Self::mode_features(mode),
+            seed,
+        })
     }
 
-    /// Builds a game. `first_click_safe` is honored only for Classic Mode: a
-    /// safe game defers Mine placement (and regenerates the Seed until the
-    /// First Click's 3x3 is Mine-free); an unsafe (pinned) game places the
-    /// full Mine set at creation, reproducing the layout exactly.
-    fn build(difficulty: Difficulty, mode: GameMode, seed: Seed, first_click_safe: bool) -> Self {
-        let size = difficulty.size();
-        let safe = first_click_safe && mode == GameMode::Classic;
+    /// Creates a game from an explicit `GameConfig` (canonical constructor,
+    /// ADR-0010). A Pinned (non-Prank) game places its Mines at creation; a
+    /// Random game defers them to the First Click, regenerating the Seed
+    /// until it is safe; a Prank game places them at the First Click,
+    /// forcing the clicked Cell in.
+    pub fn with_config(config: GameConfig) -> Self {
+        Self::build(config)
+    }
+
+    /// Maps a shim `GameMode` to the corresponding `Features` set.
+    fn mode_features(mode: GameMode) -> Features {
+        match mode {
+            GameMode::Classic => Features::NONE,
+            GameMode::Prank => Features::prank(),
+        }
+    }
+
+    /// Builds a game from its configuration. A Pinned (non-Prank) game
+    /// commits its full Mine set at creation; a Random game or a Prank game
+    /// defers Mine placement to the First Click.
+    fn build(config: GameConfig) -> Self {
+        let size = config.difficulty.size();
+        let mine_count = config.difficulty.mine_count();
         let mut game = Self {
-            difficulty,
-            mode,
+            config,
             size,
             state: GameState::Ready,
             mines: None,
             cell_states: vec![CellState::Hidden; size.rows * size.cols],
             flags: 0,
-            mine_count: difficulty.mine_count(),
+            mine_count,
             trigger: None,
-            seed,
-            first_click_safe: safe,
             started_at: None,
             elapsed_at_end: None,
         };
-        if mode == GameMode::Classic && !safe {
+        if game.place_mines_at_creation() {
             game.commit_mines(
-                Self::sample_mines(size, game.mine_count, seed, None),
+                Self::sample_mines(size, mine_count, game.config.seed, None),
                 "at game creation",
             );
         }
         game
     }
 
-    /// Creates a game with a preset Mine list (test use). In Classic mode
-    /// the caller is responsible for first-click safety: Mines on or
-    /// adjacent to the first-clicked Cell are NOT filtered. In Prank mode
-    /// the first-clicked Cell is always forced into the Mine list. The
-    /// mine count is still set from the Difficulty (the recipe) and is
-    /// independent of the preset length.
+    /// Creates a game with a preset Mine list (test use). For a Classic
+    /// game (no Prank) the caller is responsible for first-click safety:
+    /// Mines on or adjacent to the first-clicked Cell are NOT filtered. In
+    /// a Prank game the first-clicked Cell is always forced into the Mine
+    /// list. The mine count is still set from the Difficulty (the recipe)
+    /// and is independent of the preset length.
     #[cfg(test)]
     pub fn with_mines(difficulty: Difficulty, mode: GameMode, mines: &[Position]) -> Self {
         let mut game = Self::with_seed(difficulty, mode, 0);
@@ -277,7 +350,7 @@ impl Game {
 
     /// The difficulty this game was created with.
     pub fn difficulty(&self) -> Difficulty {
-        self.difficulty
+        self.config.difficulty
     }
 
     /// The current candidate Seed (provisional until committed). Internal
@@ -285,7 +358,24 @@ impl Game {
     /// candidate, so the "committed vs provisional" axis is boundary-visible
     /// (see `committed_seed`), never a `None` on the field.
     pub(crate) fn seed(&self) -> Seed {
-        self.seed
+        self.config.seed
+    }
+
+    /// The SeedPolicy this game was created with (ADR-0010).
+    // `seed_policy` and `features` are the public read seams for the new
+    // configuration (ADR-0010). Today their only callers are the tests; the
+    // AI boundary and #100/#101 read them once that lands, but the non-test
+    // build would otherwise flag them as dead. They are authoritative and
+    // must stay.
+    #[allow(dead_code)]
+    pub fn seed_policy(&self) -> SeedPolicy {
+        self.config.seed_policy
+    }
+
+    /// The set of Features enabled on this game (ADR-0010).
+    #[allow(dead_code)]
+    pub fn features(&self) -> Features {
+        self.config.features
     }
 
     /// The committed replay Seed, or `None` while the Mine layout isn't fixed
@@ -302,7 +392,7 @@ impl Game {
     // read side and must stay.
     #[allow(dead_code)]
     pub fn committed_seed(&self) -> Option<Seed> {
-        self.mines.is_some().then_some(self.seed)
+        self.mines.is_some().then_some(self.config.seed)
     }
 
     /// Fixes the Mine layout, committing the Seed: the moment a Mine list
@@ -315,9 +405,19 @@ impl Game {
         self.mines = Some(mines);
         info!(
             seed = self.seed(),
-            difficulty = self.difficulty.as_str(),
+            difficulty = self.config.difficulty.as_str(),
             "seed committed {at}"
         );
+    }
+
+    /// Whether the Mine layout is placed at Game creation: a Pinned
+    /// (non-Prank) game commits its full Mine set immediately (ADR-0004); a
+    /// Random game defers to the First Click (ADR-0009), and a Prank game
+    /// defers too (ADR-0002), because the layout depends on the First Click
+    /// either way.
+    fn place_mines_at_creation(&self) -> bool {
+        !self.config.features.contains(Feature::Prank)
+            && self.config.seed_policy == SeedPolicy::Pinned
     }
 
     /// The placed Mines, if any; `None` until placed (Prank Mode's `Ready`
@@ -380,14 +480,17 @@ impl Game {
             return;
         }
         if self.state == GameState::Ready {
-            // A pinned Classic `--seed` has its Mines placed at creation
-            // (ADR-0004); a random Classic game defers them and regenerates
-            // the Seed until the First Click is safe (ADR-0009); Prank Mode
-            // places them at the First Click, forcing the clicked Cell in.
-            match self.mode {
-                GameMode::Prank => self.place_mines(pos),
-                GameMode::Classic if self.first_click_safe => self.ensure_safe_first_click(pos),
-                GameMode::Classic => {}
+            // The First Click outcome derives from SeedPolicy + Features
+            // (ADR-0010): Prank forces the clicked Cell into the Mine list;
+            // Random regenerates the Seed until the First Click is safe;
+            // Pinned placed its Mines at creation (First Click unprotected).
+            if self.config.features.contains(Feature::Prank) {
+                self.place_mines(pos);
+            } else {
+                match self.config.seed_policy {
+                    SeedPolicy::Random => self.ensure_safe_first_click(pos),
+                    SeedPolicy::Pinned => {}
+                }
             }
             self.state = GameState::Playing;
             self.started_at = Some(Instant::now());
@@ -467,11 +570,16 @@ impl Game {
     fn place_mines(&mut self, first_click: Position) {
         let mut mines = match &self.mines {
             Some(preset) => preset.clone(),
-            None => Self::sample_mines(self.size, self.mine_count, self.seed, Some(first_click)),
+            None => Self::sample_mines(
+                self.size,
+                self.mine_count,
+                self.config.seed,
+                Some(first_click),
+            ),
         };
         // `sample_mines` above already forces the First Click in for the
         // random path; this union only matters for preset Mines (test use).
-        if self.mode == GameMode::Prank && !mines.contains(&first_click) {
+        if self.config.features.contains(Feature::Prank) && !mines.contains(&first_click) {
             mines.push(first_click);
         }
         self.commit_mines(mines, "at first click");
@@ -485,16 +593,16 @@ impl Game {
             .chain(std::iter::once(pos))
             .collect();
         loop {
-            let mines = Self::sample_mines(self.size, self.mine_count, self.seed, None);
+            let mines = Self::sample_mines(self.size, self.mine_count, self.config.seed, None);
             if !region.iter().any(|p| mines.contains(p)) {
                 self.commit_mines(mines, "at first click");
                 return;
             }
             debug!(
-                seed = self.seed,
+                seed = self.config.seed,
                 "seed candidate rejected; first click not safe"
             );
-            self.seed = rand::random();
+            self.config.seed = rand::random();
         }
     }
 
@@ -1412,5 +1520,131 @@ mod tests {
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Lost);
         assert_eq!(game.trigger(), Some(Position::new(0, 0)));
+    }
+
+    #[test]
+    fn game_mode_shims_map_to_the_new_config() {
+        // The shim constructors translate a legacy GameMode into the new
+        // Features + SeedPolicy (ADR-0010); the resulting Game stores no
+        // mode.
+        let random = Game::new(Difficulty::Beginner, GameMode::Classic);
+        assert_eq!(random.features(), Features::NONE);
+        assert_eq!(random.seed_policy(), SeedPolicy::Random);
+
+        let random_prank = Game::new(Difficulty::Beginner, GameMode::Prank);
+        assert_eq!(random_prank.features(), Features::prank());
+        assert_eq!(random_prank.seed_policy(), SeedPolicy::Random);
+
+        let pinned = Game::with_seed(Difficulty::Beginner, GameMode::Classic, 5);
+        assert_eq!(pinned.features(), Features::NONE);
+        assert_eq!(pinned.seed_policy(), SeedPolicy::Pinned);
+        assert_eq!(pinned.seed(), 5);
+
+        let pinned_prank = Game::with_seed(Difficulty::Beginner, GameMode::Prank, 5);
+        assert_eq!(pinned_prank.features(), Features::prank());
+        assert_eq!(pinned_prank.seed_policy(), SeedPolicy::Pinned);
+    }
+
+    #[test]
+    fn pinned_config_places_all_mines_at_creation() {
+        let config = GameConfig {
+            difficulty: Difficulty::Beginner,
+            seed_policy: SeedPolicy::Pinned,
+            features: Features::NONE,
+            seed: 42,
+        };
+        let game = Game::with_config(config);
+        assert_eq!(game.seed_policy(), SeedPolicy::Pinned);
+        assert_eq!(game.features(), Features::NONE);
+        let mines = game.mines().expect("Pinned game places Mines at creation");
+        assert_eq!(mines.len(), Difficulty::Beginner.mine_count());
+    }
+
+    #[test]
+    fn random_config_defers_mines_until_first_click() {
+        let config = GameConfig {
+            difficulty: Difficulty::Beginner,
+            seed_policy: SeedPolicy::Random,
+            features: Features::NONE,
+            seed: 7,
+        };
+        let mut game = Game::with_config(config);
+        assert_eq!(game.mines(), None);
+        assert_eq!(game.seed_policy(), SeedPolicy::Random);
+        game.reveal(Position::new(0, 0));
+        assert!(game.mines().is_some());
+    }
+
+    #[test]
+    fn random_config_first_click_is_safe() {
+        // A Random (non-Prank) game regenerates the Seed until the clicked
+        // Cell's 3x3 is Mine-free (ADR-0009), so it cascades as a zero Cell.
+        let first = Position::new(4, 4);
+        for _ in 0..8 {
+            let config = GameConfig {
+                difficulty: Difficulty::Beginner,
+                seed_policy: SeedPolicy::Random,
+                features: Features::NONE,
+                seed: rand::random(),
+            };
+            let mut game = Game::with_config(config);
+            game.reveal(first);
+            assert_ne!(game.game_state(), GameState::Lost);
+            assert_eq!(
+                game.cell_view(first).content,
+                Some(CellContent::Number(0)),
+                "First Click {first:?} was not a safe zero Cell"
+            );
+        }
+    }
+
+    #[test]
+    fn prank_config_first_click_is_always_a_mine() {
+        // Prank overrides the First Click outcome for either SeedPolicy.
+        for seed_policy in [SeedPolicy::Pinned, SeedPolicy::Random] {
+            let config = GameConfig {
+                difficulty: Difficulty::Beginner,
+                seed_policy,
+                features: Features::prank(),
+                seed: 42,
+            };
+            let mut game = Game::with_config(config);
+            assert_eq!(game.features(), Features::prank());
+            game.reveal(Position::new(0, 0));
+            assert_eq!(game.game_state(), GameState::Lost);
+            assert_eq!(game.trigger(), Some(Position::new(0, 0)));
+            assert_eq!(
+                game.cell_view(Position::new(0, 0)).content,
+                Some(CellContent::Mine)
+            );
+        }
+    }
+
+    #[test]
+    fn prank_config_reproduces_layout_given_seed_and_first_click() {
+        // A Prank game always places its Mines at the First Click, forcing the
+        // clicked Cell in; the Seed pins that layout for either SeedPolicy
+        // (ADR-0010).
+        let first_click = Position::new(0, 0);
+        let make = |seed_policy| {
+            Game::with_config(GameConfig {
+                difficulty: Difficulty::Beginner,
+                seed_policy,
+                features: Features::prank(),
+                seed: 42,
+            })
+        };
+        let a = {
+            let mut game = make(SeedPolicy::Pinned);
+            game.reveal(first_click);
+            game
+        };
+        let b = {
+            let mut game = make(SeedPolicy::Random);
+            game.reveal(first_click);
+            game
+        };
+        assert_eq!(a.mines(), b.mines());
+        assert!(a.mines().unwrap().contains(&first_click));
     }
 }
