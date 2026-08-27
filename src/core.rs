@@ -91,6 +91,17 @@ pub enum CellState {
     Flagged,
 }
 
+impl CellState {
+    /// The canonical wire name: `hidden` / `flagged` / `revealed`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CellState::Hidden => "hidden",
+            CellState::Flagged => "flagged",
+            CellState::Revealed => "revealed",
+        }
+    }
+}
+
 /// The content of a Cell, visible only after it is Revealed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellContent {
@@ -698,6 +709,13 @@ mod tests {
         assert_eq!(GameState::Playing.as_str(), "playing");
         assert_eq!(GameState::Won.as_str(), "won");
         assert_eq!(GameState::Lost.as_str(), "lost");
+    }
+
+    #[test]
+    fn cell_state_canonical_names_match_the_wire() {
+        assert_eq!(CellState::Hidden.as_str(), "hidden");
+        assert_eq!(CellState::Flagged.as_str(), "flagged");
+        assert_eq!(CellState::Revealed.as_str(), "revealed");
     }
 
     #[test]

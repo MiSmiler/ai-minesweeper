@@ -12,7 +12,7 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::core::{CellContent, CellState, Difficulty, Game, GameMode, GameState, Position, Seed};
+use crate::core::{CellContent, Difficulty, Game, GameMode, GameState, Position, Seed};
 
 /// The shared server state: the single live Game, the fixed GameMode, and
 /// the Seed policy. Mirrors the terminal `App`: one game at a time, mode
@@ -107,14 +107,6 @@ pub enum ActionOutcome {
 
 // --- Core mapping ---
 
-fn cell_state_str(state: CellState) -> &'static str {
-    match state {
-        CellState::Hidden => "hidden",
-        CellState::Flagged => "flagged",
-        CellState::Revealed => "revealed",
-    }
-}
-
 /// Builds the wire snapshot of a game. Pure function of the `Game`, so
 /// handlers and tests share it.
 pub fn snapshot(game: &Game) -> StateDto {
@@ -129,7 +121,7 @@ pub fn snapshot(game: &Game) -> StateDto {
                 CellContent::Mine => ContentDto::Mine,
             });
             cells.push(CellDto {
-                state: cell_state_str(view.state),
+                state: view.state.as_str(),
                 content,
             });
         }
