@@ -200,6 +200,29 @@ pub struct GameConfig {
     pub seed: Seed,
 }
 
+impl GameConfig {
+    /// Builds a `GameConfig` from a Difficulty, the session's Features, and
+    /// the Seed setup (issue #100). A `Some(seed)` yields a `Pinned` policy
+    /// with that exact Seed; `None` makes a fresh `Random` game (a new Seed
+    /// drawn per play).
+    pub fn new(difficulty: Difficulty, features: Features, seed: Option<Seed>) -> Self {
+        match seed {
+            Some(seed) => Self {
+                difficulty,
+                seed_policy: SeedPolicy::Pinned,
+                features,
+                seed,
+            },
+            None => Self {
+                difficulty,
+                seed_policy: SeedPolicy::Random,
+                features,
+                seed: rand::random(),
+            },
+        }
+    }
+}
+
 /// The state of a game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameState {
@@ -375,7 +398,7 @@ impl Game {
     // `seed_policy` and `features` expose the new configuration (ADR-0010)
     // at the read seam. Their only callers today are the tests; the server
     // builds New Games from the session `Features` / `Seed` (via
-    // `game_config`) rather than these getters, so the non-test build would
+    // `GameConfig::new`) rather than these getters, so the non-test build would
     // otherwise flag them as dead. They are authoritative and must stay.
     #[allow(dead_code)]
     pub fn seed_policy(&self) -> SeedPolicy {

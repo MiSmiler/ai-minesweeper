@@ -11,7 +11,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use crate::core::{Difficulty, Features, Game, Seed};
+use crate::core::{Difficulty, Features, Game, GameConfig, Seed};
 use crate::server::AppState;
 
 /// Command-line options for the game server.
@@ -57,11 +57,7 @@ async fn main() {
 
     // `--prank` maps to the Prank Feature; `--seed` pins the Seed (Pinned
     // policy); absent both, a fresh Random game per play (issue #100).
-    let game = Game::with_config(server::game_config(
-        Difficulty::Beginner,
-        features,
-        cli.seed,
-    ));
+    let game = Game::with_config(GameConfig::new(Difficulty::Beginner, features, cli.seed));
     // A pinned `--seed` is the replay anchor at startup; a random game's
     // Seed is committed (and logged) only at the First Click.
     if cli.seed.is_some() {

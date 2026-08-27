@@ -12,14 +12,12 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::core::{
-    CellContent, Difficulty, Features, Game, GameConfig, GameState, Position, Seed, SeedPolicy,
-};
+use crate::core::{CellContent, Difficulty, Features, Game, GameConfig, GameState, Position, Seed};
 
 /// The shared server state: the single live Game, the session's Features,
 /// and the Seed setup. Mirrors the terminal `App`: one game at a time, the
 /// Features and Seed are set once at launch. New games are built from these
-/// via `game_config`.
+/// via `GameConfig::new`.
 pub struct AppState {
     pub game: Mutex<Game>,
     /// The Features enabled for every game of this session (`--prank`).
@@ -152,31 +150,10 @@ pub fn snapshot(game: &Game) -> StateDto {
     }
 }
 
-/// Builds the `GameConfig` for a new game from a Difficulty, the session's
-/// Features, and the Seed setup (issue #100). A pinned `--seed` yields a
-/// Pinned policy with that exact Seed; absent it, a fresh Random game (a new
-/// Seed drawn per play).
-pub fn game_config(difficulty: Difficulty, features: Features, seed: Option<Seed>) -> GameConfig {
-    match seed {
-        Some(seed) => GameConfig {
-            difficulty,
-            seed_policy: SeedPolicy::Pinned,
-            features,
-            seed,
-        },
-        None => GameConfig {
-            difficulty,
-            seed_policy: SeedPolicy::Random,
-            features,
-            seed: rand::random(),
-        },
-    }
-}
-
 /// Applies an action to the game, replacing it for a new-game. Returns the
 /// outcome (`NewGame` for a new-game, `Applied` for a mutation), or an error
 /// message for malformed actions (missing coordinates, bad difficulty). A new
-/// game is built from `features` + `seed` via `game_config`; the committed
+/// game is built from `features` + `seed` via `GameConfig::new`; the committed
 /// Seed of a new game is on `game.committed_seed()`.
 pub fn apply_action(
     game: &mut Game,
@@ -190,7 +167,7 @@ pub fn apply_action(
                 Some(raw) => parse_difficulty(raw)?,
                 None => game.difficulty(),
             };
-            *game = Game::with_config(game_config(difficulty, features, seed));
+            *game = Game::with_config(GameConfig::new(difficulty, features, seed));
             Ok(ActionOutcome::NewGame)
         }
         ActionKind::Reveal | ActionKind::Flag | ActionKind::Chord => {
@@ -288,6 +265,7 @@ pub async fn post_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::SeedPolicy;
 
     fn action(
         kind: ActionKind,
@@ -305,7 +283,7 @@ mod tests {
 
     #[test]
     fn snapshot_reflects_a_fresh_game() {
-        let game = Game::with_config(game_config(Difficulty::Beginner, Features::NONE, None));
+        let game = Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
         let dto = snapshot(&game);
         assert_eq!(dto.game_state, "ready");
         assert_eq!(dto.difficulty, "beginner");
@@ -344,7 +322,8 @@ mod tests {
 
     #[test]
     fn new_game_action_switches_difficulty() {
-        let mut game = Game::with_config(game_config(Difficulty::Beginner, Features::NONE, None));
+        let mut game =
+            Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
         apply_action(
             &mut game,
             Features::NONE,
@@ -358,7 +337,7 @@ mod tests {
 
     #[test]
     fn new_game_without_difficulty_keeps_current() {
-        let mut game = Game::with_config(game_config(Difficulty::Expert, Features::NONE, None));
+        let mut game = Game::with_config(GameConfig::new(Difficulty::Expert, Features::NONE, None));
         apply_action(
             &mut game,
             Features::NONE,
@@ -371,7 +350,8 @@ mod tests {
 
     #[test]
     fn missing_coordinates_are_rejected() {
-        let mut game = Game::with_config(game_config(Difficulty::Beginner, Features::NONE, None));
+        let mut game =
+            Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
         let err = apply_action(
             &mut game,
             Features::NONE,
@@ -384,7 +364,8 @@ mod tests {
 
     #[test]
     fn bad_difficulty_is_rejected() {
-        let mut game = Game::with_config(game_config(Difficulty::Beginner, Features::NONE, None));
+        let mut game =
+            Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
         let err = apply_action(
             &mut game,
             Features::NONE,
@@ -397,8 +378,11 @@ mod tests {
 
     #[test]
     fn prank_first_reveal_loses_with_trigger_in_snapshot() {
-        let mut game =
-            Game::with_config(game_config(Difficulty::Beginner, Features::prank(), None));
+        let mut game = Game::with_config(GameConfig::new(
+            Difficulty::Beginner,
+            Features::prank(),
+            None,
+        ));
         apply_action(
             &mut game,
             Features::prank(),
@@ -463,7 +447,8 @@ mod tests {
 
     #[test]
     fn fixed_seed_is_reused_for_every_new_game() {
-        let mut game = Game::with_config(game_config(Difficulty::Beginner, Features::NONE, None));
+        let mut game =
+            Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
         apply_action(
             &mut game,
             Features::NONE,
@@ -484,7 +469,8 @@ mod tests {
 
     #[test]
     fn new_game_without_fixed_seed_draws_fresh_seeds() {
-        let mut game = Game::with_config(game_config(Difficulty::Beginner, Features::NONE, None));
+        let mut game =
+            Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
         apply_action(
             &mut game,
             Features::NONE,
@@ -505,7 +491,8 @@ mod tests {
 
     #[test]
     fn new_game_action_reports_a_new_game() {
-        let mut game = Game::with_config(game_config(Difficulty::Beginner, Features::NONE, None));
+        let mut game =
+            Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
         let outcome = apply_action(
             &mut game,
             Features::NONE,
@@ -527,7 +514,7 @@ mod tests {
 
     #[test]
     fn game_config_pins_seed_when_given() {
-        let config = game_config(Difficulty::Beginner, Features::prank(), Some(5));
+        let config = GameConfig::new(Difficulty::Beginner, Features::prank(), Some(5));
         assert_eq!(config.difficulty, Difficulty::Beginner);
         assert_eq!(config.seed_policy, SeedPolicy::Pinned);
         assert_eq!(config.features, Features::prank());
@@ -536,7 +523,7 @@ mod tests {
 
     #[test]
     fn game_config_is_random_without_fixed_seed() {
-        let config = game_config(Difficulty::Expert, Features::NONE, None);
+        let config = GameConfig::new(Difficulty::Expert, Features::NONE, None);
         assert_eq!(config.difficulty, Difficulty::Expert);
         assert_eq!(config.seed_policy, SeedPolicy::Random);
         assert_eq!(config.features, Features::NONE);
@@ -544,7 +531,8 @@ mod tests {
 
     #[test]
     fn new_game_builds_session_features_and_seed() {
-        let mut game = Game::with_config(game_config(Difficulty::Beginner, Features::NONE, None));
+        let mut game =
+            Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
         apply_action(
             &mut game,
             Features::prank(),
@@ -559,7 +547,8 @@ mod tests {
 
     #[test]
     fn new_game_without_seed_is_random_and_unpranked() {
-        let mut game = Game::with_config(game_config(Difficulty::Beginner, Features::NONE, None));
+        let mut game =
+            Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
         apply_action(
             &mut game,
             Features::NONE,
