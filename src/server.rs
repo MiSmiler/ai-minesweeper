@@ -12,18 +12,10 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::core::{CellContent, Difficulty, Game, GameMode, GameState, Position, Seed};
+use crate::core::{CellContent, Difficulty, Game, GameState, Position};
 
-/// The shared server state: the single live Game, the fixed GameMode, and
-/// the Seed policy. Mirrors the terminal `App`: one game at a time, mode
-/// set once at launch.
-pub struct AppState {
-    pub game: Mutex<Game>,
-    pub mode: GameMode,
-    /// The Seed pinned for every game of this session (`--seed`); `None`
-    /// draws a fresh random Seed per game.
-    pub seed: Option<Seed>,
-}
+#[cfg(test)]
+use crate::core::{Features, GameConfig};
 
 // --- Wire DTOs ---
 
@@ -98,8 +90,9 @@ pub enum ActionKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionOutcome {
     /// A New Game replaced the previous one. The committed Seed is on
-    /// `game.committed_seed()` (`Some` for a pinned `--seed` at creation,
-    /// `None` for a random game until the First Click).
+    /// `game.committed_seed()` (`None` until the First Click, for every game;
+    /// a pinned `--seed` then commits to the pinned value, a random game to a
+    /// fresh draw).
     NewGame,
     /// A Reveal / Flag / Chord mutated the existing game.
     Applied,
@@ -150,24 +143,17 @@ pub fn snapshot(game: &Game) -> StateDto {
 
 /// Applies an action to the game, replacing it for a new-game. Returns the
 /// outcome (`NewGame` for a new-game, `Applied` for a mutation), or an error
-/// message for malformed actions (missing coordinates, bad difficulty). The
-/// committed Seed of a new game is on `game.committed_seed()`.
-pub fn apply_action(
-    game: &mut Game,
-    mode: GameMode,
-    fixed_seed: Option<Seed>,
-    action: &ActionDto,
-) -> Result<ActionOutcome, String> {
+/// message for malformed actions (missing coordinates, bad difficulty). A new
+/// game reuses the Game's own config via `Game::new_game`, switching only the
+/// Difficulty; the committed Seed of a new game is on `game.committed_seed()`.
+pub fn apply_action(game: &mut Game, action: &ActionDto) -> Result<ActionOutcome, String> {
     match action.kind {
         ActionKind::NewGame => {
             let difficulty = match &action.difficulty {
-                Some(raw) => parse_difficulty(raw)?,
-                None => game.difficulty(),
+                Some(raw) => Some(parse_difficulty(raw)?),
+                None => None, // None = new_game keeps the current Difficulty
             };
-            *game = match fixed_seed {
-                Some(seed) => Game::with_seed(difficulty, mode, seed),
-                None => Game::new(difficulty, mode),
-            };
+            game.new_game(difficulty);
             Ok(ActionOutcome::NewGame)
         }
         ActionKind::Reveal | ActionKind::Flag | ActionKind::Chord => {
@@ -211,9 +197,9 @@ pub fn log_new_game(game: &Game, source: &str) {
 // --- Handlers ---
 
 pub async fn get_state(
-    State(app): State<Arc<AppState>>,
+    State(game): State<Arc<Mutex<Game>>>,
 ) -> Result<Json<StateDto>, (StatusCode, String)> {
-    let game = app.game.lock().map_err(|_| {
+    let game = game.lock().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             "game state poisoned".to_string(),
@@ -223,17 +209,17 @@ pub async fn get_state(
 }
 
 pub async fn post_action(
-    State(app): State<Arc<AppState>>,
+    State(game): State<Arc<Mutex<Game>>>,
     Json(action): Json<ActionDto>,
 ) -> Result<Json<StateDto>, (StatusCode, String)> {
-    let mut game = app.game.lock().map_err(|_| {
+    let mut game = game.lock().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             "game state poisoned".to_string(),
         )
     })?;
     let before = game.game_state();
-    let outcome = apply_action(&mut game, app.mode, app.seed, &action).map_err(|e| {
+    let outcome = apply_action(&mut game, &action).map_err(|e| {
         // Malformed actions are client bugs; the raw payload makes them
         // diagnosable from the log alone.
         warn!(action = ?action, error = %e, "rejected action");
@@ -282,7 +268,7 @@ mod tests {
 
     #[test]
     fn snapshot_reflects_a_fresh_game() {
-        let game = Game::new(Difficulty::Beginner, GameMode::Classic);
+        let game = Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
         let dto = snapshot(&game);
         assert_eq!(dto.game_state, "ready");
         assert_eq!(dto.difficulty, "beginner");
@@ -306,13 +292,11 @@ mod tests {
         // Two Mines adjacent to (0, 0) make it reveal a Number, not cascade.
         let mut game = Game::with_mines(
             Difficulty::Beginner,
-            GameMode::Classic,
+            Features::NONE,
             &[Position::new(0, 1), Position::new(1, 0)],
         );
         apply_action(
             &mut game,
-            GameMode::Classic,
-            None,
             &action(ActionKind::Reveal, Some(0), Some(0), None),
         )
         .unwrap();
@@ -321,11 +305,10 @@ mod tests {
 
     #[test]
     fn new_game_action_switches_difficulty() {
-        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
+        let mut game =
+            Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
         apply_action(
             &mut game,
-            GameMode::Classic,
-            None,
             &action(ActionKind::NewGame, None, None, Some("expert")),
         )
         .unwrap();
@@ -335,37 +318,26 @@ mod tests {
 
     #[test]
     fn new_game_without_difficulty_keeps_current() {
-        let mut game = Game::new(Difficulty::Expert, GameMode::Classic);
-        apply_action(
-            &mut game,
-            GameMode::Classic,
-            None,
-            &action(ActionKind::NewGame, None, None, None),
-        )
-        .unwrap();
+        let mut game = Game::with_config(GameConfig::new(Difficulty::Expert, Features::NONE, None));
+        apply_action(&mut game, &action(ActionKind::NewGame, None, None, None)).unwrap();
         assert_eq!(game.difficulty(), Difficulty::Expert);
     }
 
     #[test]
     fn missing_coordinates_are_rejected() {
-        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
-        let err = apply_action(
-            &mut game,
-            GameMode::Classic,
-            None,
-            &action(ActionKind::Reveal, None, None, None),
-        )
-        .unwrap_err();
+        let mut game =
+            Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
+        let err =
+            apply_action(&mut game, &action(ActionKind::Reveal, None, None, None)).unwrap_err();
         assert!(err.contains("row and col"));
     }
 
     #[test]
     fn bad_difficulty_is_rejected() {
-        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
+        let mut game =
+            Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
         let err = apply_action(
             &mut game,
-            GameMode::Classic,
-            None,
             &action(ActionKind::NewGame, None, None, Some("insane")),
         )
         .unwrap_err();
@@ -373,28 +345,27 @@ mod tests {
     }
 
     #[test]
-    fn prank_mode_first_reveal_loses_with_trigger_in_snapshot() {
-        let mut game = Game::new(Difficulty::Beginner, GameMode::Prank);
+    fn prank_first_reveal_loses_with_trigger_in_snapshot() {
+        let mut game = Game::with_config(GameConfig::new(
+            Difficulty::Beginner,
+            Features::prank(),
+            None,
+        ));
         apply_action(
             &mut game,
-            GameMode::Prank,
-            None,
             &action(ActionKind::Reveal, Some(0), Some(0), None),
         )
         .unwrap();
         let dto = snapshot(&game);
         assert_eq!(dto.game_state, "lost");
         assert_eq!(dto.trigger, Some(PositionDto { row: 0, col: 0 }));
-        // The wire only ever shows a Lost game — the mode itself is invisible (ADR-0002).
+        // The wire only ever shows a Lost game — the Prank Feature is invisible on it (ADR-0002).
     }
 
     #[test]
     fn snapshot_maps_mine_and_number_content() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         game.reveal(Position::new(0, 0));
         let dto = snapshot(&game);
         assert_eq!(dto.game_state, "lost");
@@ -402,11 +373,8 @@ mod tests {
         assert_eq!(dto.cells[0].state, "revealed");
         assert_eq!(dto.cells[0].content, Some(ContentDto::Mine));
 
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         game.reveal(Position::new(1, 1)); // one neighbor Mine
         let dto = snapshot(&game);
         let idx = dto.cols + 1;
@@ -416,11 +384,8 @@ mod tests {
 
     #[test]
     fn won_snapshot_flags_all_mines() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         let size = Difficulty::Beginner.size();
         for row in 0..size.rows {
             for col in 0..size.cols {
@@ -448,65 +413,111 @@ mod tests {
 
     #[test]
     fn fixed_seed_is_reused_for_every_new_game() {
-        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
+        let mut game = Game::with_config(GameConfig::new(
+            Difficulty::Beginner,
+            Features::NONE,
+            Some(42),
+        ));
+        apply_action(&mut game, &action(ActionKind::NewGame, None, None, None)).unwrap();
+        // A pinned Seed is deferred: committed only at the First Click.
+        assert_eq!(game.committed_seed(), None);
+        game.reveal(Position::new(0, 0));
+        assert_eq!(game.committed_seed(), Some(42));
         apply_action(
             &mut game,
-            GameMode::Classic,
-            Some(42),
-            &action(ActionKind::NewGame, None, None, None),
-        )
-        .unwrap();
-        assert_eq!(game.seed(), 42);
-        apply_action(
-            &mut game,
-            GameMode::Classic,
-            Some(42),
             &action(ActionKind::NewGame, None, None, Some("expert")),
         )
         .unwrap();
-        assert_eq!(game.seed(), 42);
+        game.reveal(Position::new(0, 0));
+        assert_eq!(game.committed_seed(), Some(42));
     }
 
     #[test]
     fn new_game_without_fixed_seed_draws_fresh_seeds() {
-        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
-        apply_action(
-            &mut game,
-            GameMode::Classic,
-            None,
-            &action(ActionKind::NewGame, None, None, None),
-        )
-        .unwrap();
-        let first = game.seed();
-        apply_action(
-            &mut game,
-            GameMode::Classic,
-            None,
-            &action(ActionKind::NewGame, None, None, None),
-        )
-        .unwrap();
-        assert_ne!(game.seed(), first);
+        let mut game =
+            Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
+        apply_action(&mut game, &action(ActionKind::NewGame, None, None, None)).unwrap();
+        game.reveal(Position::new(0, 0));
+        let first = game.committed_seed().unwrap();
+        apply_action(&mut game, &action(ActionKind::NewGame, None, None, None)).unwrap();
+        game.reveal(Position::new(0, 0));
+        assert_ne!(game.committed_seed().unwrap(), first);
     }
 
     #[test]
     fn new_game_action_reports_a_new_game() {
-        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
-        let outcome = apply_action(
-            &mut game,
-            GameMode::Classic,
+        let mut game = Game::with_config(GameConfig::new(
+            Difficulty::Beginner,
+            Features::NONE,
             Some(7),
-            &action(ActionKind::NewGame, None, None, None),
-        )
-        .unwrap();
+        ));
+        let outcome =
+            apply_action(&mut game, &action(ActionKind::NewGame, None, None, None)).unwrap();
         assert!(matches!(outcome, ActionOutcome::NewGame));
-        assert_eq!(game.committed_seed(), Some(7));
+        // A pinned Seed is deferred to the First Click.
+        assert_eq!(game.committed_seed(), None);
         let outcome = apply_action(
             &mut game,
-            GameMode::Classic,
-            None,
             &action(ActionKind::Reveal, Some(0), Some(0), None),
         )
         .unwrap();
         assert!(matches!(outcome, ActionOutcome::Applied));
+        assert_eq!(game.committed_seed(), Some(7));
+    }
+
+    #[test]
+    fn game_config_pins_seed_when_given() {
+        let config = GameConfig::new(Difficulty::Beginner, Features::NONE, Some(5));
+        assert_eq!(config.difficulty, Difficulty::Beginner);
+        assert_eq!(config.features, Features::NONE);
+        assert_eq!(config.pinned_seed, Some(5));
+    }
+
+    #[test]
+    fn game_config_drops_seed_for_prank() {
+        let config = GameConfig::new(Difficulty::Beginner, Features::prank(), Some(5));
+        assert_eq!(config.difficulty, Difficulty::Beginner);
+        assert_eq!(config.features, Features::prank());
+        // Prank is mutually exclusive with a pinned Seed (ADR-0010).
+        assert_eq!(config.pinned_seed, None);
+    }
+
+    #[test]
+    fn game_config_is_random_without_fixed_seed() {
+        let config = GameConfig::new(Difficulty::Expert, Features::NONE, None);
+        assert_eq!(config.difficulty, Difficulty::Expert);
+        assert_eq!(config.features, Features::NONE);
+        assert_eq!(config.pinned_seed, None);
+    }
+
+    #[test]
+    fn new_game_reuses_session_features_and_seed() {
+        let mut game = Game::with_config(GameConfig::new(
+            Difficulty::Beginner,
+            Features::prank(),
+            None,
+        ));
+        apply_action(&mut game, &action(ActionKind::NewGame, None, None, None)).unwrap();
+        assert_eq!(game.features(), Features::prank());
+        // Prank is non-reproducible: the Seed is dropped at the model
+        // boundary (ADR-0010), so the committed Seed is a local draw at the
+        // First Click, not a pinned value.
+        assert_eq!(game.committed_seed(), None);
+        apply_action(
+            &mut game,
+            &action(ActionKind::Reveal, Some(0), Some(0), None),
+        )
+        .unwrap();
+        assert_eq!(game.game_state(), GameState::Lost);
+        assert_ne!(game.committed_seed(), Some(5));
+    }
+
+    #[test]
+    fn new_game_without_seed_is_random_and_unpranked() {
+        let mut game =
+            Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
+        apply_action(&mut game, &action(ActionKind::NewGame, None, None, None)).unwrap();
+        assert_eq!(game.features(), Features::NONE);
+        assert_eq!(game.committed_seed(), None);
     }
 }
