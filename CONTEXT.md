@@ -32,7 +32,7 @@ The state of a game: `Ready` (Board exists, no Cell has been Revealed, the Timer
 _Avoid_: Status, phase
 
 **Mine**:
-A Cell that ends the game if Revealed. In Classic Mode a random game never places a Mine on or adjacent to the First Clicked Cell (it regenerates the Seed to guarantee this), while a pinned `--seed` reproduces an exact layout and may put a Mine under the First Click; in Prank Mode the First Clicked Cell is always a Mine.
+A Cell that ends the game if Revealed. With a `Random` SeedPolicy a game never places a Mine on or adjacent to the First Clicked Cell (it regenerates the Seed to guarantee this), while a `Pinned` SeedPolicy reproduces an exact layout and may put a Mine under the First Click; with the Prank Feature the First Clicked Cell is always a Mine.
 _Avoid_: Bomb
 
 **Flag Budget**:
@@ -95,17 +95,25 @@ The transient highlight shown while the Left button is held: the Cell under the 
 _Avoid_: click-preview, hover preview
 
 **First Click**:
-The first Reveal of a game; the Timer starts at it. In Classic Mode a random game regenerates the Seed so the clicked Cell's 3×3 is Mine-free — the First Click is safe — while a pinned `--seed` reproduces the exact layout and leaves the First Click unprotected; in Prank Mode it is always a Mine, ending the game immediately in `Lost`.
+The first Reveal of a game; the Timer starts at it. With a `Random` SeedPolicy the game regenerates the Seed so the clicked Cell's 3×3 is Mine-free — the First Click is safe — while a `Pinned` SeedPolicy reproduces the exact layout and leaves the First Click unprotected; with the Prank Feature it is always a Mine, ending the game immediately in `Lost`.
 _Avoid_: Initial click, opening move
 
-**Classic Mode**:
-The standard game variant. A random game defers Mine placement to the First Click and regenerates the Seed until the clicked Cell's 3×3 is Mine-free, so the First Click is safe; a pinned `--seed` places the full Mine set at Game creation and reproduces the layout exactly, leaving the First Click unprotected.
-_Avoid_: Normal mode, standard mode
+**SeedPolicy**:
+Whether the Mine layout derives from a fixed Seed or a fresh one. `Pinned` places the full Mine set at Game creation and reproduces the layout exactly, leaving the First Click unprotected; `Random` defers Mine placement and re-draws the Seed at the First Click until the clicked Cell's 3×3 is Mine-free, so the First Click is safe. Independent of Prank.
+_Avoid_: Placement policy, seeding
 
 **Seed**:
-The value that pins the Mine layout. In Classic Mode a pinned `--seed` places the Mines at Game creation, so the Seed alone (with the Difficulty) reproduces the layout exactly and the First Click is unprotected; a random game re-draws the Seed at the First Click, regenerating until the clicked Cell's 3×3 is Mine-free, so the committed Seed reproduces that safe board. Before commit a random game's Seed is only a provisional candidate, not yet the layout key. In Prank Mode the First Clicked Cell is always a Mine, so the Seed pins the layout only given the First Click. The Seed is a backend detail — the player never sees it — and reproducibility is guaranteed only within the same build.
+The value that pins the Mine layout. With a `Pinned` SeedPolicy the Mines are placed at Game creation, so the Seed alone (with the Difficulty) reproduces the layout exactly and the First Click is unprotected; a `Random` game re-draws the Seed at the First Click, regenerating until the clicked Cell's 3×3 is Mine-free, so the committed Seed reproduces that safe board. Before commit a Random game's Seed is only a provisional candidate, not yet the layout key. With the Prank Feature the First Clicked Cell is always a Mine, so the Seed pins the layout only given the First Click. The Seed is a backend detail — the player never sees it — and reproducibility is guaranteed only within the same build.
 _Avoid_: Layout seed, RNG key
 
-**Prank Mode**:
-A game variant in which the First Click is always a Mine, ending the game immediately in `Lost` — the game is unwinnable by design. Enabled by the `--prank` launch parameter; the UI never indicates it is active.
-_Avoid_: Trick mode, joke mode, jinx mode
+**Feature**:
+An opt-in behavior that modifies how a game plays, independent of the rule set and the SeedPolicy. The only Feature is Prank.
+_Avoid_: Mode, variant, option (when meaning an opt-in behavior)
+
+**Features**:
+The set of opt-in behaviors enabled on a Game; presence means a behavior is on. A Game's Features are fixed at creation.
+_Avoid_: Options, flags, settings
+
+**Prank**:
+A Feature that makes the First Click always a Mine, ending the game immediately in `Lost` — the game is unwinnable by design. Enabled by the `--prank` launch parameter; the UI never indicates it is active. Independent of the SeedPolicy.
+_Avoid_: Prank mode, trick mode, joke mode, jinx mode
