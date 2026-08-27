@@ -120,9 +120,10 @@ pub struct CellView {
 
 /// A shim over the new configuration (ADR-0010): maps a legacy mode value
 /// to the corresponding `Features` / `SeedPolicy`. The game model no longer
-/// stores a `GameMode` — this enum survives only so existing call sites and
-/// tests keep compiling while `GameConfig` is threaded through the tree
-/// (the expand step of ADR-0010; issues #99–#101).
+/// stores a `GameMode`. Issue #100 migrated the server, CLI, and every test
+/// to `GameConfig`; with no caller left, this enum (and its shim
+/// constructors) are dead and removed by the contract step (issue #101).
+#[allow(dead_code)] // removed by #101; keeps the non-test build warning-free
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameMode {
     /// Standard rules. Maps to no Features; the SeedPolicy is chosen by the
@@ -134,6 +135,7 @@ pub enum GameMode {
 
 impl GameMode {
     /// The canonical wire name: `classic` / `prank`.
+    #[allow(dead_code)] // removed by #101
     pub fn as_str(self) -> &'static str {
         match self {
             GameMode::Classic => "classic",
@@ -256,6 +258,7 @@ impl Game {
     /// regenerates the Seed until the First Click is safe (ADR-0009); a
     /// Prank game places its Mines at the First Click (ADR-0002). The Seed
     /// is a provisional candidate until the First Click commits it.
+    #[allow(dead_code)] // removed by #101
     pub fn new(difficulty: Difficulty, mode: GameMode) -> Self {
         Self::with_config(GameConfig {
             difficulty,
@@ -272,6 +275,7 @@ impl Game {
     /// (ADR-0004); a Prank game places them at the First Click (ADR-0002).
     /// Guaranteed only within the same build (rand version, sampling
     /// algorithm).
+    #[allow(dead_code)] // removed by #101
     pub fn with_seed(difficulty: Difficulty, mode: GameMode, seed: Seed) -> Self {
         Self::with_config(GameConfig {
             difficulty,
@@ -291,6 +295,7 @@ impl Game {
     }
 
     /// Maps a shim `GameMode` to the corresponding `Features` set.
+    #[allow(dead_code)] // removed by #101
     fn mode_features(mode: GameMode) -> Features {
         match mode {
             GameMode::Classic => Features::NONE,
@@ -325,15 +330,20 @@ impl Game {
         game
     }
 
-    /// Creates a game with a preset Mine list (test use). For a Classic
-    /// game (no Prank) the caller is responsible for first-click safety:
+    /// Creates a game with a preset Mine list (test use). For a game
+    /// without Prank the caller is responsible for first-click safety:
     /// Mines on or adjacent to the first-clicked Cell are NOT filtered. In
     /// a Prank game the first-clicked Cell is always forced into the Mine
     /// list. The mine count is still set from the Difficulty (the recipe)
     /// and is independent of the preset length.
     #[cfg(test)]
-    pub fn with_mines(difficulty: Difficulty, mode: GameMode, mines: &[Position]) -> Self {
-        let mut game = Self::with_seed(difficulty, mode, 0);
+    pub fn with_mines(difficulty: Difficulty, features: Features, mines: &[Position]) -> Self {
+        let mut game = Self::with_config(GameConfig {
+            difficulty,
+            seed_policy: SeedPolicy::Pinned,
+            features,
+            seed: 0,
+        });
         game.mines = Some(mines.to_vec());
         game
     }
@@ -362,11 +372,11 @@ impl Game {
     }
 
     /// The SeedPolicy this game was created with (ADR-0010).
-    // `seed_policy` and `features` are the public read seams for the new
-    // configuration (ADR-0010). Today their only callers are the tests; the
-    // AI boundary and #100/#101 read them once that lands, but the non-test
-    // build would otherwise flag them as dead. They are authoritative and
-    // must stay.
+    // `seed_policy` and `features` expose the new configuration (ADR-0010)
+    // at the read seam. Their only callers today are the tests; the server
+    // builds New Games from the session `Features` / `Seed` (via
+    // `game_config`) rather than these getters, so the non-test build would
+    // otherwise flag them as dead. They are authoritative and must stay.
     #[allow(dead_code)]
     pub fn seed_policy(&self) -> SeedPolicy {
         self.config.seed_policy
@@ -386,10 +396,10 @@ impl Game {
     /// plain `Seed` because the candidate is always present — the `Option`
     /// lives here, at this boundary, where the provisional candidate is never
     /// exposed.
-    // `committed_seed` is the public read seam (ADR-0009). On `main` its only
-    // caller today is the AI boundary, which hasn't landed yet, so the
-    // non-test build would otherwise flag it as dead. It is the authoritative
-    // read side and must stay.
+    // `committed_seed` is the public read seam (ADR-0009). Its only caller
+    // today is a test; the server reads a New Game's committed Seed off the
+    // freshly built `Game`, so the non-test build would otherwise flag it as
+    // dead. It is the authoritative read side and must stay.
     #[allow(dead_code)]
     pub fn committed_seed(&self) -> Option<Seed> {
         self.mines.is_some().then_some(self.config.seed)
@@ -806,12 +816,6 @@ mod tests {
     }
 
     #[test]
-    fn game_mode_canonical_names_match_the_wire() {
-        assert_eq!(GameMode::Classic.as_str(), "classic");
-        assert_eq!(GameMode::Prank.as_str(), "prank");
-    }
-
-    #[test]
     fn game_state_canonical_names_match_the_wire() {
         assert_eq!(GameState::Ready.as_str(), "ready");
         assert_eq!(GameState::Playing.as_str(), "playing");
@@ -828,7 +832,12 @@ mod tests {
 
     #[test]
     fn new_game_starts_ready_with_all_cells_hidden() {
-        let game = Game::new(Difficulty::Beginner, GameMode::Classic);
+        let game = Game::with_config(GameConfig {
+            difficulty: Difficulty::Beginner,
+            seed_policy: SeedPolicy::Random,
+            features: Features::NONE,
+            seed: rand::random(),
+        });
         assert_eq!(game.game_state(), GameState::Ready);
         let size = Difficulty::Beginner.size();
         for row in 0..size.rows {
@@ -847,7 +856,12 @@ mod tests {
             Difficulty::Intermediate,
             Difficulty::Expert,
         ] {
-            let game = Game::new(difficulty, GameMode::Classic);
+            let game = Game::with_config(GameConfig {
+                difficulty,
+                seed_policy: SeedPolicy::Random,
+                features: Features::NONE,
+                seed: rand::random(),
+            });
             assert_eq!(game.flags_remaining(), difficulty.mine_count() as i32);
         }
     }
@@ -857,11 +871,8 @@ mod tests {
         // A pinned `--seed` (here a preset) places its Mines at creation, so
         // the First Click outside them starts play; a Mine under the First
         // Click loses (covered by `reveal_mine_loses_and_auto_reveals_board`).
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         game.reveal(Position::new(1, 1)); // not a Mine
         assert_eq!(game.game_state(), GameState::Playing);
     }
@@ -873,7 +884,12 @@ mod tests {
             Difficulty::Intermediate,
             Difficulty::Expert,
         ] {
-            let game = Game::with_seed(difficulty, GameMode::Classic, 42);
+            let game = Game::with_config(GameConfig {
+                difficulty,
+                seed_policy: SeedPolicy::Pinned,
+                features: Features::NONE,
+                seed: 42,
+            });
             let mines = game
                 .mines()
                 .expect("pinned Classic mines are placed at creation");
@@ -892,7 +908,12 @@ mod tests {
 
     #[test]
     fn random_classic_ready_game_has_no_mines_until_first_click() {
-        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
+        let mut game = Game::with_config(GameConfig {
+            difficulty: Difficulty::Beginner,
+            seed_policy: SeedPolicy::Random,
+            features: Features::NONE,
+            seed: rand::random(),
+        });
         assert_eq!(game.mines(), None);
         game.reveal(Position::new(0, 0));
         assert!(game.mines().is_some());
@@ -911,7 +932,12 @@ mod tests {
             let size = difficulty.size();
             let first = Position::new(size.rows / 2, size.cols / 2);
             for _ in 0..8 {
-                let mut game = Game::new(difficulty, GameMode::Classic);
+                let mut game = Game::with_config(GameConfig {
+                    difficulty,
+                    seed_policy: SeedPolicy::Random,
+                    features: Features::NONE,
+                    seed: rand::random(),
+                });
                 game.reveal(first);
                 assert_ne!(game.game_state(), GameState::Lost);
                 assert_eq!(
@@ -925,14 +951,24 @@ mod tests {
 
     #[test]
     fn random_game_accepted_seed_reproduces_the_safe_board() {
-        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
+        let mut game = Game::with_config(GameConfig {
+            difficulty: Difficulty::Beginner,
+            seed_policy: SeedPolicy::Random,
+            features: Features::NONE,
+            seed: rand::random(),
+        });
         let first = Position::new(0, 0);
         game.reveal(first);
         let accepted = game.seed();
         let layout = game.mines().unwrap().to_vec();
         // Replay the accepted Seed as a pinned game: it reproduces the exact
         // layout, and the same First Click stays safe there (same Board).
-        let mut replay = Game::with_seed(Difficulty::Beginner, GameMode::Classic, accepted);
+        let mut replay = Game::with_config(GameConfig {
+            difficulty: Difficulty::Beginner,
+            seed_policy: SeedPolicy::Pinned,
+            features: Features::NONE,
+            seed: accepted,
+        });
         assert_eq!(replay.mines().unwrap(), &layout[..]);
         replay.reveal(first);
         assert_ne!(replay.game_state(), GameState::Lost);
@@ -941,8 +977,18 @@ mod tests {
     #[test]
     fn same_seed_reproduces_the_same_classic_layout() {
         for difficulty in [Difficulty::Beginner, Difficulty::Expert] {
-            let a = Game::with_seed(difficulty, GameMode::Classic, 42);
-            let b = Game::with_seed(difficulty, GameMode::Classic, 42);
+            let a = Game::with_config(GameConfig {
+                difficulty,
+                seed_policy: SeedPolicy::Pinned,
+                features: Features::NONE,
+                seed: 42,
+            });
+            let b = Game::with_config(GameConfig {
+                difficulty,
+                seed_policy: SeedPolicy::Pinned,
+                features: Features::NONE,
+                seed: 42,
+            });
             assert_eq!(a.seed(), 42);
             assert_eq!(a.mines(), b.mines());
         }
@@ -950,8 +996,18 @@ mod tests {
 
     #[test]
     fn different_seeds_give_different_classic_layouts() {
-        let a = Game::with_seed(Difficulty::Beginner, GameMode::Classic, 1);
-        let b = Game::with_seed(Difficulty::Beginner, GameMode::Classic, 2);
+        let a = Game::with_config(GameConfig {
+            difficulty: Difficulty::Beginner,
+            seed_policy: SeedPolicy::Pinned,
+            features: Features::NONE,
+            seed: 1,
+        });
+        let b = Game::with_config(GameConfig {
+            difficulty: Difficulty::Beginner,
+            seed_policy: SeedPolicy::Pinned,
+            features: Features::NONE,
+            seed: 2,
+        });
         assert_ne!(a.mines(), b.mines());
     }
 
@@ -959,12 +1015,22 @@ mod tests {
     fn prank_same_seed_and_first_click_reproduce_the_layout() {
         let first_click = Position::new(0, 0);
         let a = {
-            let mut game = Game::with_seed(Difficulty::Beginner, GameMode::Prank, 42);
+            let mut game = Game::with_config(GameConfig {
+                difficulty: Difficulty::Beginner,
+                seed_policy: SeedPolicy::Pinned,
+                features: Features::prank(),
+                seed: 42,
+            });
             game.reveal(first_click);
             game
         };
         let b = {
-            let mut game = Game::with_seed(Difficulty::Beginner, GameMode::Prank, 42);
+            let mut game = Game::with_config(GameConfig {
+                difficulty: Difficulty::Beginner,
+                seed_policy: SeedPolicy::Pinned,
+                features: Features::prank(),
+                seed: 42,
+            });
             game.reveal(first_click);
             game
         };
@@ -974,7 +1040,12 @@ mod tests {
 
     #[test]
     fn prank_ready_game_has_no_mines_until_first_click() {
-        let mut game = Game::with_seed(Difficulty::Beginner, GameMode::Prank, 42);
+        let mut game = Game::with_config(GameConfig {
+            difficulty: Difficulty::Beginner,
+            seed_policy: SeedPolicy::Pinned,
+            features: Features::prank(),
+            seed: 42,
+        });
         assert_eq!(game.mines(), None);
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Lost);
@@ -985,7 +1056,7 @@ mod tests {
     fn reveal_mine_loses_and_auto_reveals_board() {
         let mut game = Game::with_mines(
             Difficulty::Beginner,
-            GameMode::Classic,
+            Features::NONE,
             &[Position::new(0, 0), Position::new(5, 5)],
         );
         game.reveal(Position::new(0, 0));
@@ -1015,11 +1086,8 @@ mod tests {
 
     #[test]
     fn reveal_shows_neighbor_count() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(2, 2)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(2, 2)]);
         game.reveal(Position::new(1, 1));
         assert_eq!(game.game_state(), GameState::Playing);
         assert_eq!(
@@ -1034,11 +1102,8 @@ mod tests {
 
     #[test]
     fn zero_cell_cascades_until_numbered_boundary() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(4, 4)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(4, 4)]);
         game.reveal(Position::new(0, 0));
         // The clicked Cell is a zero Cell.
         assert_eq!(
@@ -1069,11 +1134,8 @@ mod tests {
 
     #[test]
     fn revealing_every_non_mine_cell_wins_and_auto_flags_mines() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         let size = Difficulty::Beginner.size();
         for row in 0..size.rows {
             for col in 0..size.cols {
@@ -1096,7 +1158,7 @@ mod tests {
     fn win_keeps_player_flags_and_auto_flags_the_rest() {
         let mut game = Game::with_mines(
             Difficulty::Beginner,
-            GameMode::Classic,
+            Features::NONE,
             &[Position::new(0, 0), Position::new(1, 1)],
         );
         // Pre-flag one Mine; the other stays Hidden.
@@ -1126,11 +1188,8 @@ mod tests {
 
     #[test]
     fn ended_game_rejects_reveals() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Lost);
         // Reveals after the end change nothing.
@@ -1141,18 +1200,20 @@ mod tests {
 
     #[test]
     fn reveal_out_of_bounds_is_noop() {
-        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
+        let mut game = Game::with_config(GameConfig {
+            difficulty: Difficulty::Beginner,
+            seed_policy: SeedPolicy::Random,
+            features: Features::NONE,
+            seed: rand::random(),
+        });
         game.reveal(Position::new(99, 99));
         assert_eq!(game.game_state(), GameState::Ready);
     }
 
     #[test]
     fn flag_toggles_hidden_to_flagged_and_back() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         game.toggle_flag(Position::new(1, 1));
         assert_eq!(
             game.cell_view(Position::new(1, 1)).state,
@@ -1164,11 +1225,8 @@ mod tests {
 
     #[test]
     fn flag_on_revealed_cell_is_noop() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         game.reveal(Position::new(1, 1));
         game.toggle_flag(Position::new(1, 1));
         assert_eq!(
@@ -1179,11 +1237,8 @@ mod tests {
 
     #[test]
     fn flagged_cell_blocks_reveal() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         game.toggle_flag(Position::new(0, 0));
         game.reveal(Position::new(0, 0));
         // The Flag blocks the Reveal entirely: the game has not even started.
@@ -1201,7 +1256,12 @@ mod tests {
 
     #[test]
     fn flags_remaining_tracks_flags() {
-        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
+        let mut game = Game::with_config(GameConfig {
+            difficulty: Difficulty::Beginner,
+            seed_policy: SeedPolicy::Random,
+            features: Features::NONE,
+            seed: rand::random(),
+        });
         assert_eq!(game.flags_remaining(), 10);
         game.toggle_flag(Position::new(1, 1));
         game.toggle_flag(Position::new(2, 2));
@@ -1212,7 +1272,12 @@ mod tests {
 
     #[test]
     fn flagging_allows_more_flags_than_mines() {
-        let mut game = Game::new(Difficulty::Beginner, GameMode::Classic); // 10 mines
+        let mut game = Game::with_config(GameConfig {
+            difficulty: Difficulty::Beginner,
+            seed_policy: SeedPolicy::Random,
+            features: Features::NONE,
+            seed: rand::random(),
+        }); // 10 mines
         for row in 0..2 {
             for col in 0..5 {
                 game.toggle_flag(Position::new(row, col));
@@ -1239,11 +1304,8 @@ mod tests {
 
     #[test]
     fn chord_is_noop_when_flags_exceed_the_number() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         game.reveal(Position::new(1, 1));
         assert_eq!(
             game.cell_view(Position::new(1, 1)).content,
@@ -1269,11 +1331,8 @@ mod tests {
 
     #[test]
     fn chord_reveals_unflagged_neighbors_when_flags_match() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         game.reveal(Position::new(1, 1));
         assert_eq!(
             game.cell_view(Position::new(1, 1)).content,
@@ -1306,7 +1365,7 @@ mod tests {
         // deep, while the bottom half stays untouched.
         let mut mines: Vec<Position> = (0..9).map(|c| Position::new(4, c)).collect();
         mines.push(Position::new(8, 8));
-        let mut game = Game::with_mines(Difficulty::Beginner, GameMode::Classic, &mines);
+        let mut game = Game::with_mines(Difficulty::Beginner, Features::NONE, &mines);
         game.reveal(Position::new(3, 1));
         assert_eq!(
             game.cell_view(Position::new(3, 1)).content,
@@ -1345,7 +1404,7 @@ mod tests {
         // cascade across every other non-Mine Cell — the last Reveal wins.
         let mut game = Game::with_mines(
             Difficulty::Beginner,
-            GameMode::Classic,
+            Features::NONE,
             &[Position::new(0, 0), Position::new(0, 1)],
         );
         game.reveal(Position::new(1, 1));
@@ -1372,11 +1431,8 @@ mod tests {
 
     #[test]
     fn chord_is_noop_when_flag_count_mismatches() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         game.reveal(Position::new(1, 1));
         game.chord(Position::new(1, 1)); // zero Flags around a 1
         assert_eq!(game.cell_view(Position::new(0, 1)).state, CellState::Hidden);
@@ -1386,11 +1442,8 @@ mod tests {
 
     #[test]
     fn chord_is_noop_on_hidden_and_zero_cells() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         game.reveal(Position::new(1, 1));
         // Hidden Cell: nothing happens.
         game.chord(Position::new(2, 2));
@@ -1407,7 +1460,7 @@ mod tests {
         // so the chord Reveals the Mine at (0,2) and loses.
         let mut game = Game::with_mines(
             Difficulty::Beginner,
-            GameMode::Classic,
+            Features::NONE,
             &[Position::new(0, 0), Position::new(0, 2)],
         );
         game.reveal(Position::new(1, 1));
@@ -1428,11 +1481,8 @@ mod tests {
 
     #[test]
     fn flag_and_chord_after_end_are_noop() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Lost);
         game.toggle_flag(Position::new(1, 1));
@@ -1443,18 +1493,20 @@ mod tests {
 
     #[test]
     fn elapsed_is_zero_while_ready() {
-        let game = Game::new(Difficulty::Beginner, GameMode::Classic);
+        let game = Game::with_config(GameConfig {
+            difficulty: Difficulty::Beginner,
+            seed_policy: SeedPolicy::Random,
+            features: Features::NONE,
+            seed: rand::random(),
+        });
         assert_eq!(game.elapsed(), Duration::ZERO);
     }
 
     #[test]
     fn elapsed_runs_after_first_reveal() {
         // Reveal a numeric Cell so the game stays Playing (no cascade, no win).
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         game.reveal(Position::new(1, 1));
         assert_eq!(game.game_state(), GameState::Playing);
         std::thread::sleep(Duration::from_millis(20));
@@ -1463,11 +1515,8 @@ mod tests {
 
     #[test]
     fn elapsed_freezes_at_game_end() {
-        let mut game = Game::with_mines(
-            Difficulty::Beginner,
-            GameMode::Classic,
-            &[Position::new(0, 0)],
-        );
+        let mut game =
+            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
         game.reveal(Position::new(0, 0)); // instant Lost
         let frozen = game.elapsed();
         std::thread::sleep(Duration::from_millis(30));
@@ -1475,11 +1524,16 @@ mod tests {
     }
 
     #[test]
-    fn prank_mode_first_reveal_is_always_a_mine() {
+    fn prank_first_reveal_is_always_a_mine() {
         // Property test: for many random Prank games, the first click always
         // reveals a Mine and loses instantly (ADR-0002).
         for _ in 0..20 {
-            let mut game = Game::new(Difficulty::Beginner, GameMode::Prank);
+            let mut game = Game::with_config(GameConfig {
+                difficulty: Difficulty::Beginner,
+                seed_policy: SeedPolicy::Random,
+                features: Features::prank(),
+                seed: rand::random(),
+            });
             game.reveal(Position::new(0, 0));
             assert_eq!(game.game_state(), GameState::Lost);
             assert_eq!(game.trigger(), Some(Position::new(0, 0)));
@@ -1491,11 +1545,11 @@ mod tests {
     }
 
     #[test]
-    fn prank_mode_forces_first_click_into_the_mine_list() {
+    fn prank_forces_first_click_into_the_mine_list() {
         // Preset without the first-clicked Cell: the Cell is unioned in.
         let mut game = Game::with_mines(
             Difficulty::Beginner,
-            GameMode::Prank,
+            Features::prank(),
             &[Position::new(5, 5)],
         );
         game.reveal(Position::new(0, 0));
@@ -1514,35 +1568,12 @@ mod tests {
         // Preset already containing the first-clicked Cell: no change.
         let mut game = Game::with_mines(
             Difficulty::Beginner,
-            GameMode::Prank,
+            Features::prank(),
             &[Position::new(0, 0)],
         );
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Lost);
         assert_eq!(game.trigger(), Some(Position::new(0, 0)));
-    }
-
-    #[test]
-    fn game_mode_shims_map_to_the_new_config() {
-        // The shim constructors translate a legacy GameMode into the new
-        // Features + SeedPolicy (ADR-0010); the resulting Game stores no
-        // mode.
-        let random = Game::new(Difficulty::Beginner, GameMode::Classic);
-        assert_eq!(random.features(), Features::NONE);
-        assert_eq!(random.seed_policy(), SeedPolicy::Random);
-
-        let random_prank = Game::new(Difficulty::Beginner, GameMode::Prank);
-        assert_eq!(random_prank.features(), Features::prank());
-        assert_eq!(random_prank.seed_policy(), SeedPolicy::Random);
-
-        let pinned = Game::with_seed(Difficulty::Beginner, GameMode::Classic, 5);
-        assert_eq!(pinned.features(), Features::NONE);
-        assert_eq!(pinned.seed_policy(), SeedPolicy::Pinned);
-        assert_eq!(pinned.seed(), 5);
-
-        let pinned_prank = Game::with_seed(Difficulty::Beginner, GameMode::Prank, 5);
-        assert_eq!(pinned_prank.features(), Features::prank());
-        assert_eq!(pinned_prank.seed_policy(), SeedPolicy::Pinned);
     }
 
     #[test]

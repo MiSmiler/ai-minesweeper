@@ -11,15 +11,15 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use crate::core::{Difficulty, Game, GameMode, Seed};
+use crate::core::{Difficulty, Features, Game, Seed};
 use crate::server::AppState;
 
 /// Command-line options for the game server.
 #[derive(Parser)]
 #[command(about = "A Minesweeper web app: a Rust game server with a TypeScript frontend.")]
 struct Cli {
-    /// Prank Mode: the First Click of every game is always a Mine. The UI
-    /// never indicates the mode is active (ADR-0002).
+    /// Enable the Prank Feature: the First Click of every game is always a
+    /// Mine. The UI never indicates the Feature is active (ADR-0002).
     #[arg(long)]
     prank: bool,
 
@@ -49,16 +49,19 @@ async fn main() {
         .init();
 
     let cli = Cli::parse();
-    let mode = if cli.prank {
-        GameMode::Prank
+    let features = if cli.prank {
+        Features::prank()
     } else {
-        GameMode::Classic
+        Features::NONE
     };
 
-    let game = match cli.seed {
-        Some(seed) => Game::with_seed(Difficulty::Beginner, mode, seed),
-        None => Game::new(Difficulty::Beginner, mode),
-    };
+    // `--prank` maps to the Prank Feature; `--seed` pins the Seed (Pinned
+    // policy); absent both, a fresh Random game per play (issue #100).
+    let game = Game::with_config(server::game_config(
+        Difficulty::Beginner,
+        features,
+        cli.seed,
+    ));
     // A pinned `--seed` is the replay anchor at startup; a random game's
     // Seed is committed (and logged) only at the First Click.
     if cli.seed.is_some() {
@@ -68,7 +71,7 @@ async fn main() {
     }
     let state = Arc::new(AppState {
         game: std::sync::Mutex::new(game),
-        mode,
+        features,
         seed: cli.seed,
     });
 
@@ -87,7 +90,10 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("failed to bind");
-    let mode_str = mode.as_str();
-    info!(mode = mode_str, "Minesweeper web UI at http://{addr}");
+    info!(
+        prank = cli.prank,
+        seed = cli.seed,
+        "Minesweeper web UI at http://{addr}"
+    );
     axum::serve(listener, app).await.expect("server error");
 }
