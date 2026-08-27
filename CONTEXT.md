@@ -103,7 +103,7 @@ The standard game variant. A random game defers Mine placement to the First Clic
 _Avoid_: Normal mode, standard mode
 
 **Seed**:
-The value that pins the Mine layout. In Classic Mode a pinned `--seed` places the Mines at Game creation, so the Seed alone (with the Difficulty) reproduces the layout exactly and the First Click is unprotected; a random game re-draws the Seed at the First Click, regenerating until the clicked Cell's 3×3 is Mine-free, so the accepted Seed reproduces that safe board. In Prank Mode the First Clicked Cell is always a Mine, so the Seed pins the layout only given the First Click. The Seed is a backend detail — the player never sees it — and reproducibility is guaranteed only within the same build.
+The value that pins the Mine layout. In Classic Mode a pinned `--seed` places the Mines at Game creation, so the Seed alone (with the Difficulty) reproduces the layout exactly and the First Click is unprotected; a random game re-draws the Seed at the First Click, regenerating until the clicked Cell's 3×3 is Mine-free, so the committed Seed reproduces that safe board. Before commit a random game's Seed is only a provisional candidate, not yet the layout key. In Prank Mode the First Clicked Cell is always a Mine, so the Seed pins the layout only given the First Click. The Seed is a backend detail — the player never sees it — and reproducibility is guaranteed only within the same build.
 _Avoid_: Layout seed, RNG key
 
 **Prank Mode**:

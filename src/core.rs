@@ -10,6 +10,8 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::index;
 
+use tracing::{debug, info};
+
 /// The value fixed when a Game is created that determines the Mine layout;
 /// a backend detail the player never sees, and reproducibility is
 /// guaranteed only within the same build.
@@ -197,7 +199,10 @@ impl Game {
             elapsed_at_end: None,
         };
         if mode == GameMode::Classic && !safe {
-            game.mines = Some(Self::sample_mines(size, game.mine_count, seed, None));
+            game.commit_mines(
+                Self::sample_mines(size, game.mine_count, seed, None),
+                "at game creation",
+            );
         }
         game
     }
@@ -230,9 +235,40 @@ impl Game {
         self.difficulty
     }
 
-    /// The Seed the Mine layout derives from.
-    pub fn seed(&self) -> Seed {
+    /// The current candidate Seed (provisional until committed). Internal
+    /// logging only; not an authoritative value. A random game always holds a
+    /// candidate, so the "committed vs provisional" axis is boundary-visible
+    /// (see `committed_seed`), never a `None` on the field.
+    pub(crate) fn seed(&self) -> Seed {
         self.seed
+    }
+
+    /// The committed replay Seed, or `None` while the Mine layout isn't fixed
+    /// yet. `Some` for a pinned Classic `--seed` from creation (ADR-0004);
+    /// otherwise only once the First Click commits it (random Classic,
+    /// ADR-0009; Prank, ADR-0002). It is committed exactly when a Mine list is
+    /// set — the write-side seam is `commit_mines`. The internal field stays a
+    /// plain `Seed` because the candidate is always present — the `Option`
+    /// lives here, at this boundary, where the provisional candidate is never
+    /// exposed.
+    // `committed_seed` is the public read seam (ADR-0009). On `main` its only
+    // caller today is the AI boundary, which hasn't landed yet, so the
+    // non-test build would otherwise flag it as dead. It is the authoritative
+    // read side and must stay.
+    #[allow(dead_code)]
+    pub fn committed_seed(&self) -> Option<Seed> {
+        self.mines.is_some().then_some(self.seed)
+    }
+
+    /// Fixes the Mine layout, committing the Seed: the moment a Mine list
+    /// becomes `Some` is exactly when the Seed is committed, so this is the
+    /// single write-side seam for that event (read it back with
+    /// `committed_seed`, and it logs the commit at `info`). A random game
+    /// holds a candidate Seed until this runs, which is why the field stays a
+    /// plain `Seed` (ADR-0009).
+    fn commit_mines(&mut self, mines: Vec<Position>, at: &str) {
+        self.mines = Some(mines);
+        info!(seed = self.seed(), "seed committed {at}");
     }
 
     /// The placed Mines, if any; `None` until placed (Prank Mode's `Ready`
@@ -389,7 +425,7 @@ impl Game {
         if self.mode == GameMode::Prank && !mines.contains(&first_click) {
             mines.push(first_click);
         }
-        self.mines = Some(mines);
+        self.commit_mines(mines, "at first click");
     }
 
     /// Makes a random Classic game's First Click safe (ADR-0009): the Seed is
@@ -402,9 +438,13 @@ impl Game {
         loop {
             let mines = Self::sample_mines(self.size, self.mine_count, self.seed, None);
             if !region.iter().any(|p| mines.contains(p)) {
-                self.mines = Some(mines);
+                self.commit_mines(mines, "at first click");
                 return;
             }
+            debug!(
+                seed = self.seed,
+                "seed candidate rejected; first click not safe"
+            );
             self.seed = rand::random();
         }
     }

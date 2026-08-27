@@ -94,6 +94,17 @@ pub enum ActionKind {
     NewGame,
 }
 
+/// The outcome of applying a player action to the human game.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionOutcome {
+    /// A New Game replaced the previous one. The committed Seed is on
+    /// `game.committed_seed()` (`Some` for a pinned `--seed` at creation,
+    /// `None` for a random game until the First Click).
+    NewGame,
+    /// A Reveal / Flag / Chord mutated the existing game.
+    Applied,
+}
+
 // --- Core mapping ---
 
 fn game_state_str(state: GameState) -> &'static str {
@@ -163,14 +174,15 @@ pub fn snapshot(game: &Game) -> StateDto {
 }
 
 /// Applies an action to the game, replacing it for a new-game. Returns the
-/// Seed of a newly created game (`None` for other actions), or an error
-/// message for malformed actions (missing coordinates, bad difficulty).
+/// outcome (`NewGame` for a new-game, `Applied` for a mutation), or an error
+/// message for malformed actions (missing coordinates, bad difficulty). The
+/// committed Seed of a new game is on `game.committed_seed()`.
 pub fn apply_action(
     game: &mut Game,
     mode: GameMode,
     fixed_seed: Option<Seed>,
     action: &ActionDto,
-) -> Result<Option<Seed>, String> {
+) -> Result<ActionOutcome, String> {
     match action.kind {
         ActionKind::NewGame => {
             let difficulty = match &action.difficulty {
@@ -181,7 +193,7 @@ pub fn apply_action(
                 Some(seed) => Game::with_seed(difficulty, mode, seed),
                 None => Game::new(difficulty, mode),
             };
-            Ok(Some(game.seed()))
+            Ok(ActionOutcome::NewGame)
         }
         ActionKind::Reveal | ActionKind::Flag | ActionKind::Chord => {
             let (row, col) = match (action.row, action.col) {
@@ -195,7 +207,7 @@ pub fn apply_action(
                 ActionKind::Chord => game.chord(pos),
                 ActionKind::NewGame => unreachable!(),
             }
-            Ok(None)
+            Ok(ActionOutcome::Applied)
         }
     }
 }
@@ -212,15 +224,15 @@ pub fn parse_difficulty(s: &str) -> Result<Difficulty, String> {
     }
 }
 
-/// Logs a freshly created Game's Seed and difficulty at `info`: the Seed is
-/// the reproducibility anchor for replaying a layout with `--seed`. `source`
-/// distinguishes the initial game from player-triggered New Games.
+/// Logs a freshly created Game's difficulty at `info` with its `source`. The
+/// Seed lifecycle (a committed Seed at `info`, rejected candidates at `debug`)
+/// is logged by the engine in `core.rs`; this records only that a game was
+/// created. `source` distinguishes the initial game from player-triggered
+/// New Games.
 pub fn log_new_game(game: &Game, source: &str) {
     info!(
-        seed = game.seed(),
         difficulty = difficulty_str(game.difficulty()),
-        source,
-        "new game"
+        source, "new game"
     );
 }
 
@@ -249,24 +261,17 @@ pub async fn post_action(
         )
     })?;
     let before = game.game_state();
-    let created = apply_action(&mut game, app.mode, app.seed, &action).map_err(|e| {
+    let outcome = apply_action(&mut game, app.mode, app.seed, &action).map_err(|e| {
         // Malformed actions are client bugs; the raw payload makes them
         // diagnosable from the log alone.
         warn!(action = ?action, error = %e, "rejected action");
         (StatusCode::BAD_REQUEST, e)
     })?;
     let after = game.game_state();
-    // A pinned `--seed` is the replay anchor at creation; a random game's
-    // Seed is committed (and logged) only when the First Click leaves Ready
-    // (Classic -> Playing, Prank -> Lost).
-    if created.is_some() && app.seed.is_some() {
+    // core.rs logs the Seed lifecycle (a committed Seed at info, rejected
+    // candidates at debug); here we only record that a new game was created.
+    if matches!(outcome, ActionOutcome::NewGame) {
         log_new_game(&game, "player");
-    } else if before == GameState::Ready && after != GameState::Ready && app.seed.is_none() {
-        info!(
-            seed = game.seed(),
-            difficulty = difficulty_str(game.difficulty()),
-            "first click committed the Seed"
-        );
     }
     debug!(
         action = ?action,
@@ -512,24 +517,24 @@ mod tests {
     }
 
     #[test]
-    fn new_game_action_reports_the_created_seed() {
+    fn new_game_action_reports_a_new_game() {
         let mut game = Game::new(Difficulty::Beginner, GameMode::Classic);
-        let seed = apply_action(
+        let outcome = apply_action(
             &mut game,
             GameMode::Classic,
             Some(7),
             &action(ActionKind::NewGame, None, None, None),
         )
-        .unwrap()
-        .expect("a new game was created");
-        assert_eq!(seed, 7);
-        let created = apply_action(
+        .unwrap();
+        assert!(matches!(outcome, ActionOutcome::NewGame));
+        assert_eq!(game.committed_seed(), Some(7));
+        let outcome = apply_action(
             &mut game,
             GameMode::Classic,
             None,
             &action(ActionKind::Reveal, Some(0), Some(0), None),
         )
         .unwrap();
-        assert_eq!(created, None);
+        assert!(matches!(outcome, ActionOutcome::Applied));
     }
 }
