@@ -118,32 +118,6 @@ pub struct CellView {
     pub content: Option<CellContent>,
 }
 
-/// A shim over the new configuration (ADR-0010): maps a legacy mode value
-/// to the corresponding `Features` / `SeedPolicy`. The game model no longer
-/// stores a `GameMode`. Issue #100 migrated the server, CLI, and every test
-/// to `GameConfig`; with no caller left, this enum (and its shim
-/// constructors) are dead and removed by the contract step (issue #101).
-#[allow(dead_code)] // removed by #101; keeps the non-test build warning-free
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GameMode {
-    /// Standard rules. Maps to no Features; the SeedPolicy is chosen by the
-    /// constructor (`Game::new` → Random, `Game::with_seed` → Pinned).
-    Classic,
-    /// Prank. Maps to the Prank Feature; the First Click is always a Mine.
-    Prank,
-}
-
-impl GameMode {
-    /// The canonical wire name: `classic` / `prank`.
-    #[allow(dead_code)] // removed by #101
-    pub fn as_str(self) -> &'static str {
-        match self {
-            GameMode::Classic => "classic",
-            GameMode::Prank => "prank",
-        }
-    }
-}
-
 /// The origin of the Mine layout (ADR-0010): where the Mines come from and
 /// whether the First Click is protected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,38 +250,6 @@ pub struct Game {
 }
 
 impl Game {
-    /// Creates a game in `Ready` state with a fresh random Seed (shim,
-    /// ADR-0010). A Random (non-Prank) game defers Mine placement and
-    /// regenerates the Seed until the First Click is safe (ADR-0009); a
-    /// Prank game places its Mines at the First Click (ADR-0002). The Seed
-    /// is a provisional candidate until the First Click commits it.
-    #[allow(dead_code)] // removed by #101
-    pub fn new(difficulty: Difficulty, mode: GameMode) -> Self {
-        Self::with_config(GameConfig {
-            difficulty,
-            seed_policy: SeedPolicy::Random,
-            features: Self::mode_features(mode),
-            seed: rand::random(),
-        })
-    }
-
-    /// Creates a game in `Ready` state whose Mine layout derives from the
-    /// given Seed (shim, ADR-0010). A pinned `--seed`: the same Seed and
-    /// Difficulty reproduce the same layout. A Pinned (non-Prank) game
-    /// places its Mines at creation and leaves the First Click unprotected
-    /// (ADR-0004); a Prank game places them at the First Click (ADR-0002).
-    /// Guaranteed only within the same build (rand version, sampling
-    /// algorithm).
-    #[allow(dead_code)] // removed by #101
-    pub fn with_seed(difficulty: Difficulty, mode: GameMode, seed: Seed) -> Self {
-        Self::with_config(GameConfig {
-            difficulty,
-            seed_policy: SeedPolicy::Pinned,
-            features: Self::mode_features(mode),
-            seed,
-        })
-    }
-
     /// Creates a game from an explicit `GameConfig` (canonical constructor,
     /// ADR-0010). A Pinned (non-Prank) game places its Mines at creation; a
     /// Random game defers them to the First Click, regenerating the Seed
@@ -315,15 +257,6 @@ impl Game {
     /// forcing the clicked Cell in.
     pub fn with_config(config: GameConfig) -> Self {
         Self::build(config)
-    }
-
-    /// Maps a shim `GameMode` to the corresponding `Features` set.
-    #[allow(dead_code)] // removed by #101
-    fn mode_features(mode: GameMode) -> Features {
-        match mode {
-            GameMode::Classic => Features::NONE,
-            GameMode::Prank => Features::prank(),
-        }
     }
 
     /// Builds a game from its configuration. A Pinned (non-Prank) game
