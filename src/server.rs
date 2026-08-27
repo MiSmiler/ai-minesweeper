@@ -100,8 +100,9 @@ pub enum ActionKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionOutcome {
     /// A New Game replaced the previous one. The committed Seed is on
-    /// `game.committed_seed()` (`Some` for a pinned `--seed` at creation,
-    /// `None` for a random game until the First Click).
+    /// `game.committed_seed()` (`None` until the First Click, for every game;
+    /// a pinned `--seed` then commits to the pinned value, a random game to a
+    /// fresh draw).
     NewGame,
     /// A Reveal / Flag / Chord mutated the existing game.
     Applied,
@@ -265,7 +266,6 @@ pub async fn post_action(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::SeedPolicy;
 
     fn action(
         kind: ActionKind,
@@ -456,7 +456,10 @@ mod tests {
             &action(ActionKind::NewGame, None, None, None),
         )
         .unwrap();
-        assert_eq!(game.seed(), 42);
+        // A pinned Seed is deferred: committed only at the First Click.
+        assert_eq!(game.committed_seed(), None);
+        game.reveal(Position::new(0, 0));
+        assert_eq!(game.committed_seed(), Some(42));
         apply_action(
             &mut game,
             Features::NONE,
@@ -464,7 +467,8 @@ mod tests {
             &action(ActionKind::NewGame, None, None, Some("expert")),
         )
         .unwrap();
-        assert_eq!(game.seed(), 42);
+        game.reveal(Position::new(0, 0));
+        assert_eq!(game.committed_seed(), Some(42));
     }
 
     #[test]
@@ -478,7 +482,8 @@ mod tests {
             &action(ActionKind::NewGame, None, None, None),
         )
         .unwrap();
-        let first = game.seed();
+        game.reveal(Position::new(0, 0));
+        let first = game.committed_seed().unwrap();
         apply_action(
             &mut game,
             Features::NONE,
@@ -486,7 +491,8 @@ mod tests {
             &action(ActionKind::NewGame, None, None, None),
         )
         .unwrap();
-        assert_ne!(game.seed(), first);
+        game.reveal(Position::new(0, 0));
+        assert_ne!(game.committed_seed().unwrap(), first);
     }
 
     #[test]
@@ -501,7 +507,8 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(outcome, ActionOutcome::NewGame));
-        assert_eq!(game.committed_seed(), Some(7));
+        // A pinned Seed is deferred to the First Click.
+        assert_eq!(game.committed_seed(), None);
         let outcome = apply_action(
             &mut game,
             Features::NONE,
@@ -510,23 +517,32 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(outcome, ActionOutcome::Applied));
+        assert_eq!(game.committed_seed(), Some(7));
     }
 
     #[test]
     fn game_config_pins_seed_when_given() {
+        let config = GameConfig::new(Difficulty::Beginner, Features::NONE, Some(5));
+        assert_eq!(config.difficulty, Difficulty::Beginner);
+        assert_eq!(config.features, Features::NONE);
+        assert_eq!(config.pinned_seed, Some(5));
+    }
+
+    #[test]
+    fn game_config_drops_seed_for_prank() {
         let config = GameConfig::new(Difficulty::Beginner, Features::prank(), Some(5));
         assert_eq!(config.difficulty, Difficulty::Beginner);
-        assert_eq!(config.seed_policy, SeedPolicy::Pinned);
         assert_eq!(config.features, Features::prank());
-        assert_eq!(config.seed, 5);
+        // Prank is mutually exclusive with a pinned Seed (ADR-0010).
+        assert_eq!(config.pinned_seed, None);
     }
 
     #[test]
     fn game_config_is_random_without_fixed_seed() {
         let config = GameConfig::new(Difficulty::Expert, Features::NONE, None);
         assert_eq!(config.difficulty, Difficulty::Expert);
-        assert_eq!(config.seed_policy, SeedPolicy::Random);
         assert_eq!(config.features, Features::NONE);
+        assert_eq!(config.pinned_seed, None);
     }
 
     #[test]
@@ -541,8 +557,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(game.features(), Features::prank());
-        assert_eq!(game.seed_policy(), SeedPolicy::Pinned);
-        assert_eq!(game.seed(), 5);
+        // Prank is non-reproducible: the passed Seed is dropped, so the
+        // committed Seed is a local draw at the First Click, not 5.
+        assert_eq!(game.committed_seed(), None);
+        apply_action(
+            &mut game,
+            Features::prank(),
+            Some(5),
+            &action(ActionKind::Reveal, Some(0), Some(0), None),
+        )
+        .unwrap();
+        assert_eq!(game.game_state(), GameState::Lost);
+        assert_ne!(game.committed_seed(), Some(5));
     }
 
     #[test]
@@ -557,7 +583,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(game.features(), Features::NONE);
-        assert_eq!(game.seed_policy(), SeedPolicy::Random);
         assert_eq!(game.committed_seed(), None);
     }
 }

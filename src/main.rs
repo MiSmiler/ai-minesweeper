@@ -20,13 +20,16 @@ use crate::server::AppState;
 struct Cli {
     /// Enable the Prank Feature: the First Click of every game is always a
     /// Mine. The UI never indicates the Feature is active (ADR-0002).
-    #[arg(long)]
+    /// Mutually exclusive with `--seed`: Prank is a joke easter egg and
+    /// non-seedable.
+    #[arg(long, conflicts_with = "seed")]
     prank: bool,
 
     /// Pin one Seed for every game of this session: each Difficulty
     /// reproduces the same Mine layout. Absent, every New Game draws a
-    /// fresh random Seed, printed to the terminal.
-    #[arg(long)]
+    /// fresh random Seed, printed to the terminal. Mutually exclusive with
+    /// `--prank`.
+    #[arg(long, conflicts_with = "prank")]
     seed: Option<Seed>,
 
     /// Port to listen on.
@@ -55,16 +58,12 @@ async fn main() {
         Features::NONE
     };
 
-    // `--prank` maps to the Prank Feature; `--seed` pins the Seed (Pinned
-    // policy); absent both, a fresh Random game per play (issue #100).
+    // `--prank` maps to the Prank Feature; `--seed` pins the Seed. Both are
+    // mutually exclusive (Prank is unseedable); absent both, a fresh Random
+    // game per play (issue #100). The Seed is committed (and logged) at the
+    // First Click for every game.
     let game = Game::with_config(GameConfig::new(Difficulty::Beginner, features, cli.seed));
-    // A pinned `--seed` is the replay anchor at startup; a random game's
-    // Seed is committed (and logged) only at the First Click.
-    if cli.seed.is_some() {
-        server::log_new_game(&game, "startup");
-    } else {
-        info!("random game started; its Seed is committed at the First Click");
-    }
+    server::log_new_game(&game, "startup");
     let state = Arc::new(AppState {
         game: std::sync::Mutex::new(game),
         features,
@@ -92,4 +91,29 @@ async fn main() {
         "Minesweeper web UI at http://{addr}"
     );
     axum::serve(listener, app).await.expect("server error");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prank_and_seed_are_mutually_exclusive() {
+        assert!(Cli::try_parse_from(["minesweeper", "--prank", "--seed", "42"]).is_err());
+        assert!(Cli::try_parse_from(["minesweeper", "--seed", "42", "--prank"]).is_err());
+    }
+
+    #[test]
+    fn seed_alone_parses() {
+        let cli = Cli::try_parse_from(["minesweeper", "--seed", "42"]).unwrap();
+        assert_eq!(cli.seed, Some(42));
+        assert!(!cli.prank);
+    }
+
+    #[test]
+    fn prank_alone_parses() {
+        let cli = Cli::try_parse_from(["minesweeper", "--prank"]).unwrap();
+        assert!(cli.prank);
+        assert_eq!(cli.seed, None);
+    }
 }
