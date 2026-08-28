@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import type { Position } from "../api";
-import type { ChordPreview } from "../logic/gesture";
 import { createPreviewLayer } from "./previewHighlight";
 
 const pos = (row: number, col: number): Position => ({ row, col });
@@ -27,15 +26,21 @@ const isPreviewed = (board: HTMLElement, row: number, col: number): boolean =>
     .classList.contains("cell-preview");
 
 describe("createPreviewLayer", () => {
-  it("renders the Press Preview Cell and the Chord Preview Cells", () => {
+  it("renders the Press Preview Cell", () => {
     const board = makeBoard(3, 3);
     const layer = createPreviewLayer(board);
-    const chord: ChordPreview = {
+    layer.render({ kind: "press", pos: pos(2, 2) });
+    expect(isPreviewed(board, 2, 2)).toBe(true);
+  });
+
+  it("renders the Chord Preview Cells", () => {
+    const board = makeBoard(3, 3);
+    const layer = createPreviewLayer(board);
+    layer.render({
+      kind: "chord",
       pos: pos(1, 1),
       cells: [pos(0, 0), pos(0, 1)],
-    };
-    layer.render(chord, pos(2, 2));
-    expect(isPreviewed(board, 2, 2)).toBe(true);
+    });
     expect(isPreviewed(board, 0, 0)).toBe(true);
     expect(isPreviewed(board, 0, 1)).toBe(true);
     // The Chord target Cell itself is not part of the highlight.
@@ -45,8 +50,9 @@ describe("createPreviewLayer", () => {
   it("clears the previous highlight on the next render", () => {
     const board = makeBoard(3, 3);
     const layer = createPreviewLayer(board);
-    layer.render({ pos: pos(1, 1), cells: [pos(0, 0)] }, pos(2, 2));
-    layer.render(null, null);
+    layer.render({ kind: "press", pos: pos(2, 2) });
+    layer.render({ kind: "chord", pos: pos(1, 1), cells: [pos(0, 0)] });
+    layer.render(null);
     expect(isPreviewed(board, 0, 0)).toBe(false);
     expect(isPreviewed(board, 2, 2)).toBe(false);
   });
@@ -54,11 +60,15 @@ describe("createPreviewLayer", () => {
   it("keeps the retained Chord Preview through renders until release", () => {
     const board = makeBoard(3, 3);
     const layer = createPreviewLayer(board);
-    layer.render({ pos: pos(1, 1), cells: [pos(0, 0), pos(0, 1)] }, null);
+    layer.render({
+      kind: "chord",
+      pos: pos(1, 1),
+      cells: [pos(0, 0), pos(0, 1)],
+    });
     layer.retain();
-    // The machine cleared its Previews on release; the layer keeps them
+    // The machine cleared its Preview on release; the layer keeps them
     // until release(), so the Cells do not flash back to Hidden.
-    layer.render(null, null);
+    layer.render(null);
     expect(isPreviewed(board, 0, 0)).toBe(true);
     expect(isPreviewed(board, 0, 1)).toBe(true);
     layer.release();
@@ -69,9 +79,9 @@ describe("createPreviewLayer", () => {
   it("keeps the retained Press Preview through renders until release", () => {
     const board = makeBoard(3, 3);
     const layer = createPreviewLayer(board);
-    layer.render(null, pos(1, 1));
+    layer.render({ kind: "press", pos: pos(1, 1) });
     layer.retain();
-    layer.render(null, null);
+    layer.render(null);
     expect(isPreviewed(board, 1, 1)).toBe(true);
     layer.release();
     expect(isPreviewed(board, 1, 1)).toBe(false);
@@ -82,9 +92,9 @@ describe("createPreviewLayer", () => {
     // Cells, so release() must remove the retained classes from them.
     const board = makeBoard(3, 3);
     const layer = createPreviewLayer(board);
-    layer.render({ pos: pos(1, 1), cells: [pos(0, 0)] }, null);
+    layer.render({ kind: "chord", pos: pos(1, 1), cells: [pos(0, 0)] });
     layer.retain();
-    layer.render(null, null);
+    layer.render(null);
     layer.release();
     expect(isPreviewed(board, 0, 0)).toBe(false);
   });

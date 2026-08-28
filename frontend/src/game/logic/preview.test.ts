@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CellContent, CellState, GameSnapshot, Position } from "../api";
-import { chordPreviewCells } from "./chordPreview";
+import { chordPreview, type Preview } from "./preview";
 
 type CellSpec = { state: CellState; content: CellContent };
 
@@ -33,10 +33,19 @@ function cellKeys(cells: Position[]): string[] {
   return cells.map((p) => `${p.row},${p.col}`).sort();
 }
 
-describe("chordPreviewCells", () => {
-  it("highlights every Hidden neighbor of a Revealed numeric Cell", () => {
+/** Asserts `p` is a non-null chord Preview and returns its highlight Cells. */
+function chordCells(p: Preview | null): Position[] {
+  expect(p?.kind).toBe("chord");
+  if (p?.kind !== "chord") throw new Error("expected a chord Preview");
+  return p.cells;
+}
+
+describe("chordPreview", () => {
+  it("returns a chord Preview over every Hidden neighbor of a Revealed numeric Cell", () => {
     const state = mkState(3, 3, { "1,1": { state: "revealed", content: 1 } });
-    expect(cellKeys(chordPreviewCells(state, 1, 1))).toEqual([
+    const p = chordPreview(state, { row: 1, col: 1 });
+    expect(p?.pos).toEqual({ row: 1, col: 1 });
+    expect(cellKeys(chordCells(p))).toEqual([
       "0,0",
       "0,1",
       "0,2",
@@ -48,35 +57,32 @@ describe("chordPreviewCells", () => {
     ]);
   });
 
-  it("is empty on a corner Cell with its three neighbors Hidden", () => {
+  it("returns a chord Preview over the three Hidden neighbors of a corner Cell", () => {
     const state = mkState(3, 3, { "0,0": { state: "revealed", content: 1 } });
-    expect(cellKeys(chordPreviewCells(state, 0, 0))).toEqual([
-      "0,1",
-      "1,0",
-      "1,1",
-    ]);
+    const p = chordPreview(state, { row: 0, col: 0 });
+    expect(cellKeys(chordCells(p))).toEqual(["0,1", "1,0", "1,1"]);
   });
 
-  it("is empty when the Cell is Hidden", () => {
+  it("is null when the Cell is Hidden", () => {
     const state = mkState(2, 2, {});
-    expect(cellKeys(chordPreviewCells(state, 0, 0))).toEqual([]);
+    expect(chordPreview(state, { row: 0, col: 0 })).toBeNull();
   });
 
-  it("is empty when the Cell is a Revealed zero Cell", () => {
+  it("is null when the Cell is a Revealed zero Cell", () => {
     const state = mkState(2, 2, { "0,0": { state: "revealed", content: 0 } });
-    expect(cellKeys(chordPreviewCells(state, 0, 0))).toEqual([]);
+    expect(chordPreview(state, { row: 0, col: 0 })).toBeNull();
   });
 
-  it("is empty when the Cell is a Revealed Mine", () => {
+  it("is null when the Cell is a Revealed Mine", () => {
     const state = mkState(2, 2, {
       "0,0": { state: "revealed", content: "mine" },
     });
-    expect(cellKeys(chordPreviewCells(state, 0, 0))).toEqual([]);
+    expect(chordPreview(state, { row: 0, col: 0 })).toBeNull();
   });
 
-  it("is empty when the Cell is Flagged", () => {
+  it("is null when the Cell is Flagged", () => {
     const state = mkState(2, 2, { "0,0": { state: "flagged", content: null } });
-    expect(cellKeys(chordPreviewCells(state, 0, 0))).toEqual([]);
+    expect(chordPreview(state, { row: 0, col: 0 })).toBeNull();
   });
 
   it("excludes Flagged and already Revealed neighbors", () => {
@@ -85,7 +91,8 @@ describe("chordPreviewCells", () => {
       "0,0": { state: "flagged", content: null },
       "1,0": { state: "revealed", content: 2 },
     });
-    expect(cellKeys(chordPreviewCells(state, 1, 1))).toEqual([
+    const p = chordPreview(state, { row: 1, col: 1 });
+    expect(cellKeys(chordCells(p))).toEqual([
       "0,1",
       "0,2",
       "1,2",
@@ -103,7 +110,8 @@ describe("chordPreviewCells", () => {
       "0,0": { state: "flagged", content: null },
       "0,2": { state: "flagged", content: null },
     });
-    expect(cellKeys(chordPreviewCells(state, 1, 1))).toEqual([
+    const p = chordPreview(state, { row: 1, col: 1 });
+    expect(cellKeys(chordCells(p))).toEqual([
       "0,1",
       "1,0",
       "1,2",
@@ -113,7 +121,7 @@ describe("chordPreviewCells", () => {
     ]);
   });
 
-  it("is empty when every neighbor is Flagged", () => {
+  it("is null when every neighbor is Flagged", () => {
     const state = mkState(3, 3, {
       "1,1": { state: "revealed", content: 1 },
       "0,0": { state: "flagged", content: null },
@@ -125,6 +133,6 @@ describe("chordPreviewCells", () => {
       "2,1": { state: "flagged", content: null },
       "2,2": { state: "flagged", content: null },
     });
-    expect(cellKeys(chordPreviewCells(state, 1, 1))).toEqual([]);
+    expect(chordPreview(state, { row: 1, col: 1 })).toBeNull();
   });
 });

@@ -4,7 +4,7 @@ import {
   type GameSnapshot,
   type Position,
 } from "./api";
-import { chordPreviewCells, isRevealedNumericCell } from "./logic/chordPreview";
+import { chordPreview } from "./logic/preview";
 import { createActionController } from "./logic/controller";
 import {
   createGestureMachine,
@@ -77,14 +77,12 @@ export function createGameClient(deps: GameClientDeps): GameClient {
    * the Smiley surprised while the press is still held. */
   let boardPressed = false;
 
-  /** Builds the hit-test payload for the gesture machine: the Cell's Preview
-   * scope plus whether it is a Revealed numeric Cell (the criterion for
-   * showing the Chord Preview) and whether it is Revealed (the criterion for
-   * Arming). */
+  /** Builds the hit-test payload for the gesture machine: the Chord Preview
+   * the Cell would show (or null when it has no scope) plus whether it is
+   * Revealed (the criterion for Arming). */
   const cellHit = (state: GameSnapshot, pos: Position): CellHit => ({
     pos,
-    previewCells: chordPreviewCells(state, pos.row, pos.col),
-    isNumericCell: isRevealedNumericCell(state, pos.row, pos.col),
+    chordPreview: chordPreview(state, pos),
     isRevealed:
       state.cells[pos.row * state.cols + pos.col]?.state === "revealed",
   });
@@ -168,7 +166,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
     ) {
       previewLayer.retain();
     }
-    previewLayer.render(out.chordPreview, out.pressPreview);
+    previewLayer.render(out.preview);
     boardPressed = out.boardPressed;
     renderSmiley(state!);
     if (out.action) {

@@ -1,29 +1,26 @@
 import type { Position } from "../api";
-import type { ChordPreview } from "../logic/gesture";
+import type { Preview } from "../logic/preview";
 
-/** The preview highlight layer: renders the gesture machine's Previews onto
- * the Board and supports retaining the highlight through an action's round
- * trip (see retain/release). Pure DOM — the machine stays pure. */
+/** The preview highlight layer: renders the gesture machine's Preview onto the
+ * Board and supports retaining the highlight through an action's round trip
+ * (see retain/release). Pure DOM — the machine stays pure. */
 export interface PreviewLayer {
-  /** Renders the machine's current Previews: clears the highlight, shows
-   * the Press Preview Cell and the Chord Preview Cells, then re-shows any
-   * retained highlight (an action in flight). */
-  render(
-    chordPreview: ChordPreview | null,
-    pressPreview: Position | null,
-  ): void;
-  /** Retains the currently shown highlight so render() keeps showing it
-   * until release(). Call when a Reveal/Chord action is sent, so the Cells
-   * do not flash back to Hidden while the response is in flight. */
+  /** Renders the machine's current Preview: clears the highlight, shows the
+   * Preview's Cells, then re-shows any retained highlight (an action in
+   * flight). */
+  render(preview: Preview | null): void;
+  /** Retains the currently shown highlight so render() keeps showing it until
+   * release(). Call when a Reveal/Chord action is sent, so the Cells do not
+   * flash back to Hidden while the response is in flight. */
   retain(): void;
-  /** Drops the retained highlight and removes it from the Board. Call when
-   * the action's response re-renders (a no-op: the fresh Board has no
-   * retained classes) or when the request fails (restores the true state). */
+  /** Drops the retained highlight and removes it from the Board. Call when the
+   * action's response re-renders (a no-op: the fresh Board has no retained
+   * classes) or when the request fails (restores the true state). */
   release(): void;
 }
 
 /** A preview highlight layer over `board`. The layer owns the `.cell-preview`
- * class on the Board's Cells: render() shows the machine's current Previews,
+ * class on the Board's Cells: render() shows the machine's current Preview,
  * retain() keeps the last shown highlight alive across renders — the
  * Reveal/Chord round trip — and release() drops it.
  *
@@ -32,10 +29,8 @@ export interface PreviewLayer {
  * response can drop the newer action's retained highlight early, flashing its
  * Cells until the newer response renders. Self-correcting; accepted. */
 export function createPreviewLayer(board: HTMLElement): PreviewLayer {
-  let currentChord: ChordPreview | null = null;
-  let currentPress: Position | null = null;
-  let retainedChord: ChordPreview | null = null;
-  let retainedPress: Position | null = null;
+  let current: Preview | null = null;
+  let retained: Preview | null = null;
 
   const cell = (pos: Position): HTMLElement | null =>
     board.querySelector(`[data-row="${pos.row}"][data-col="${pos.col}"]`);
@@ -56,27 +51,32 @@ export function createPreviewLayer(board: HTMLElement): PreviewLayer {
     for (const p of cells) remove(p);
   };
 
+  /** Highlights the Cells a Preview names: the single Cell for a Press Preview,
+   * or the highlight set for a Chord Preview. A null Preview highlights nothing. */
+  const addPreview = (p: Preview | null): void => {
+    if (!p) return;
+    if (p.kind === "press") add(p.pos);
+    else addAll(p.cells);
+  };
+
   return {
-    render(chordPreview, pressPreview) {
-      currentChord = chordPreview;
-      currentPress = pressPreview;
+    render(preview) {
+      current = preview;
       board
         .querySelectorAll(".cell-preview")
         .forEach((el) => el.classList.remove("cell-preview"));
-      if (pressPreview) add(pressPreview);
-      if (chordPreview) addAll(chordPreview.cells);
-      if (retainedPress) add(retainedPress);
-      if (retainedChord) addAll(retainedChord.cells);
+      addPreview(preview);
+      addPreview(retained);
     },
     retain() {
-      retainedChord = currentChord;
-      retainedPress = currentPress;
+      retained = current;
     },
     release() {
-      if (retainedPress) remove(retainedPress);
-      if (retainedChord) removeAll(retainedChord.cells);
-      retainedChord = null;
-      retainedPress = null;
+      if (retained) {
+        if (retained.kind === "press") remove(retained.pos);
+        else removeAll(retained.cells);
+      }
+      retained = null;
     },
   };
 }

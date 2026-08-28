@@ -17,8 +17,10 @@ function run(events: GestureEvent[]): GestureOutput[] {
 }
 
 /** A hit-tested Cell for the machine. Defaults: a previewable Cell is a
- * Revealed numeric Cell; pass `isNumericCell`/`isRevealed` explicitly for
- * the in-between cases (Revealed but not numeric, hidden, off-board). */
+ * Revealed numeric Cell with a Chord Preview; pass `isNumericCell`/`isRevealed`
+ * explicitly for the in-between cases (Revealed but not numeric, hidden,
+ * off-board). The Chord Preview is null unless the Cell is a Revealed numeric
+ * Cell with Hidden neighbors. */
 const previewable = (
   row: number,
   col: number,
@@ -27,8 +29,10 @@ const previewable = (
   isRevealed = isNumericCell,
 ): CellHit => ({
   pos: pos(row, col),
-  previewCells,
-  isNumericCell,
+  chordPreview:
+    isNumericCell && previewCells.length > 0
+      ? { kind: "chord", pos: pos(row, col), cells: previewCells }
+      : null,
   isRevealed,
 });
 
@@ -52,8 +56,7 @@ describe("createGestureMachine", () => {
       expect(out.action).toEqual({ type: "flag", row: 1, col: 2 });
       expect(out.effects).toEqual(["flag"]);
       expect(out.phaseChange).toBeUndefined();
-      expect(out.pressPreview).toBeNull();
-      expect(out.chordPreview).toBeNull();
+      expect(out.preview).toBeNull();
     });
 
     it("does not send a Flag on right-down on a Revealed Cell", () => {
@@ -61,8 +64,7 @@ describe("createGestureMachine", () => {
       expect(out.action).toBeUndefined();
       expect(out.effects).toEqual([]);
       expect(out.phaseChange).toBeUndefined();
-      expect(out.pressPreview).toBeNull();
-      expect(out.chordPreview).toBeNull();
+      expect(out.preview).toBeNull();
     });
 
     it("does nothing on right-down off a Cell", () => {
@@ -100,7 +102,7 @@ describe("createGestureMachine", () => {
       expect(out.action).toBeUndefined();
       expect(out.phaseChange).toBe("pressed");
       expect(out.effects).toEqual(["press-preview-set"]);
-      expect(out.pressPreview).toEqual(pos(3, 4));
+      expect(out.preview).toEqual({ kind: "press", pos: pos(3, 4) });
     });
 
     it("reveals on left-up the Cell under the pointer", () => {
@@ -119,7 +121,7 @@ describe("createGestureMachine", () => {
         leftDown(previewable(1, 1, [])),
         pointerMove(previewable(2, 2, [])),
       ]);
-      expect(out[1].pressPreview).toEqual(pos(2, 2));
+      expect(out[1].preview).toEqual({ kind: "press", pos: pos(2, 2) });
       expect(out[1].effects).toEqual(["press-preview-moved"]);
     });
 
@@ -129,7 +131,7 @@ describe("createGestureMachine", () => {
         pointerMove(previewable(1, 1, [])),
       ]);
       expect(out[1].effects).toEqual([]);
-      expect(out[1].pressPreview).toEqual(pos(1, 1));
+      expect(out[1].preview).toEqual({ kind: "press", pos: pos(1, 1) });
     });
 
     it("clears the Press Preview on pointer-move off a Cell, releasing then does nothing", () => {
@@ -139,7 +141,7 @@ describe("createGestureMachine", () => {
         { kind: "left-up" },
       ]);
       expect(out[1].effects).toEqual(["press-preview-cleared"]);
-      expect(out[1].pressPreview).toBeNull();
+      expect(out[1].preview).toBeNull();
       expect(out[2].action).toBeUndefined();
       expect(out[2].phaseChange).toBe("released");
       expect(out[2].effects).toEqual([]);
@@ -171,8 +173,7 @@ describe("createGestureMachine", () => {
       expect(out[1].action).toBeUndefined();
       expect(out[1].phaseChange).toBe("armed");
       expect(out[1].effects).toEqual(["chord-preview-set"]);
-      expect(out[1].chordPreview).toEqual({ pos: pos(1, 1), cells });
-      expect(out[1].pressPreview).toBeNull();
+      expect(out[1].preview).toEqual({ kind: "chord", pos: pos(1, 1), cells });
     });
 
     it("arms over a Revealed non-numeric Cell with no Preview, rendering on the first move", () => {
@@ -184,7 +185,7 @@ describe("createGestureMachine", () => {
       ]);
       expect(out[1].phaseChange).toBe("armed");
       expect(out[1].effects).toEqual([]);
-      expect(out[1].chordPreview).toBeNull();
+      expect(out[1].preview).toBeNull();
       expect(out[2].effects).toEqual(["chord-preview-set"]);
       expect(out[3].action).toEqual({ type: "chord", row: 2, col: 2 });
     });
@@ -215,7 +216,7 @@ describe("createGestureMachine", () => {
         { kind: "left-up" },
       ]);
       expect(out[1].phaseChange).toBe("pressed");
-      expect(out[1].pressPreview).toEqual(pos(2, 2));
+      expect(out[1].preview).toEqual({ kind: "press", pos: pos(2, 2) });
       expect(out[2].action).toEqual({ type: "reveal", row: 2, col: 2 });
     });
   });
@@ -231,7 +232,7 @@ describe("createGestureMachine", () => {
       expect(out[0].phaseChange).toBe("pressed");
       expect(out[1].phaseChange).toBe("armed");
       expect(out[1].effects).toEqual(["chord-preview-set"]);
-      expect(out[1].chordPreview).toEqual({ pos: pos(1, 1), cells });
+      expect(out[1].preview).toEqual({ kind: "chord", pos: pos(1, 1), cells });
       expect(out[1].action).toBeUndefined();
     });
 
@@ -259,7 +260,7 @@ describe("createGestureMachine", () => {
       expect(out[2].action).toEqual({ type: "chord", row: 1, col: 1 });
       expect(out[2].phaseChange).toBe("disarmed");
       expect(out[2].effects).toEqual(["chord", "chord-preview-cleared"]);
-      expect(out[2].chordPreview).toBeNull();
+      expect(out[2].preview).toBeNull();
     });
 
     it("sends nothing on left-up while armed with no Preview shown", () => {
@@ -286,7 +287,8 @@ describe("createGestureMachine", () => {
         pointerMove(previewable(2, 2, [pos(1, 2)])),
       ]);
       expect(out[3].effects).toEqual(["chord-preview-moved"]);
-      expect(out[3].chordPreview).toEqual({
+      expect(out[3].preview).toEqual({
+        kind: "chord",
         pos: pos(2, 2),
         cells: [pos(1, 2)],
       });
@@ -299,7 +301,8 @@ describe("createGestureMachine", () => {
         leftDown(previewable(2, 2, [pos(1, 2)])),
       ]);
       expect(out[3].phaseChange).toBe("armed");
-      expect(out[3].chordPreview).toEqual({
+      expect(out[3].preview).toEqual({
+        kind: "chord",
         pos: pos(2, 2),
         cells: [pos(1, 2)],
       });
@@ -311,7 +314,8 @@ describe("createGestureMachine", () => {
         pointerMove(previewable(2, 2, [pos(1, 2)])),
       ]);
       expect(out[2].effects).toEqual(["chord-preview-moved"]);
-      expect(out[2].chordPreview).toEqual({
+      expect(out[2].preview).toEqual({
+        kind: "chord",
         pos: pos(2, 2),
         cells: [pos(1, 2)],
       });
@@ -323,7 +327,7 @@ describe("createGestureMachine", () => {
         pointerMove(previewable(3, 3, [], false, true)),
       ]);
       expect(out[2].effects).toEqual(["chord-preview-cleared"]);
-      expect(out[2].chordPreview).toBeNull();
+      expect(out[2].preview).toBeNull();
     });
 
     it("clears the Preview on pointer-move off a Cell while armed", () => {
@@ -358,7 +362,7 @@ describe("createGestureMachine", () => {
       expect(out[2].effects).toEqual(["chord-preview-cleared"]);
       // Re-entering over a previewable Cell does not restore the Preview…
       expect(out[3].effects).toEqual([]);
-      expect(out[3].chordPreview).toBeNull();
+      expect(out[3].preview).toBeNull();
       // …and releasing Left just disarms, sending no Chord.
       expect(out[4].action).toBeUndefined();
       expect(out[4].phaseChange).toBe("disarmed");
@@ -375,7 +379,7 @@ describe("createGestureMachine", () => {
       ]);
       expect(out[3].effects).toEqual([]);
       expect(out[4].effects).toEqual([]);
-      expect(out[4].chordPreview).toBeNull();
+      expect(out[4].preview).toBeNull();
     });
 
     it("latches the terminal clear even when no Preview was shown on leave", () => {
@@ -388,7 +392,7 @@ describe("createGestureMachine", () => {
       expect(out[2].effects).toEqual(["chord-preview-cleared"]);
       expect(out[3].effects).toEqual([]);
       expect(out[4].effects).toEqual([]);
-      expect(out[4].chordPreview).toBeNull();
+      expect(out[4].preview).toBeNull();
     });
 
     it("re-arms with a fresh Preview after a leave ended the gesture", () => {
@@ -402,7 +406,8 @@ describe("createGestureMachine", () => {
       expect(out[3].phaseChange).toBe("disarmed");
       expect(out[4].phaseChange).toBe("armed");
       expect(out[4].effects).toEqual(["chord-preview-set"]);
-      expect(out[4].chordPreview).toEqual({
+      expect(out[4].preview).toEqual({
+        kind: "chord",
         pos: pos(2, 2),
         cells: [pos(1, 2)],
       });
@@ -423,7 +428,7 @@ describe("createGestureMachine", () => {
       expect(out.action).toBeUndefined();
       expect(out.phaseChange).toBeUndefined();
       expect(out.effects).toEqual([]);
-      expect(out.pressPreview).toBeNull();
+      expect(out.preview).toBeNull();
     });
 
     it("ignores right-down once closed — no Flag", () => {
@@ -441,7 +446,7 @@ describe("createGestureMachine", () => {
       expect(out[0].phaseChange).toBeUndefined();
       expect(out[0].action).toBeUndefined();
       expect(out[1].phaseChange).toBeUndefined();
-      expect(out[1].chordPreview).toBeNull();
+      expect(out[1].preview).toBeNull();
       expect(out[1].effects).toEqual([]);
     });
 
@@ -467,7 +472,7 @@ describe("createGestureMachine", () => {
       const closed = machine.setEnabled(false);
       expect(closed.phaseChange).toBe("released");
       expect(closed.effects).toEqual(["press-preview-cleared"]);
-      expect(closed.pressPreview).toBeNull();
+      expect(closed.preview).toBeNull();
       const release = machine.handle({ kind: "left-up" });
       expect(release.action).toBeUndefined();
     });
@@ -479,7 +484,7 @@ describe("createGestureMachine", () => {
       const closed = machine.setEnabled(false);
       expect(closed.phaseChange).toBe("disarmed");
       expect(closed.effects).toEqual(["chord-preview-cleared"]);
-      expect(closed.chordPreview).toBeNull();
+      expect(closed.preview).toBeNull();
     });
 
     it("setEnabled(false) on an idle machine with a held Right press is a clean reset", () => {

@@ -1,23 +1,26 @@
 import { type Action, type Position } from "../api";
+import { pressPreview, type Preview } from "./preview";
 
-/** A hit-tested Cell plus the Cells its Chord Preview would highlight
- * (computed by the caller from the game state). `isNumericCell` is the
- * criterion for showing the Chord Preview (a Revealed numeric Cell);
- * `isRevealed` is the weaker criterion for Arming (any Revealed Cell). */
+/** A hit-tested Cell plus the Chord Preview it would highlight (computed by the
+ * caller from the game state). `chordPreview` is the criterion for showing the
+ * Chord Preview (a Revealed numeric Cell's Hidden neighbors, or null when it has
+ * no scope); `isRevealed` is the weaker criterion for Arming (any Revealed Cell). */
 export interface CellHit {
   pos: Position;
-  previewCells: Position[];
-  isNumericCell: boolean;
+  /** The Chord Preview over this Cell — always `kind: "chord"`, or null when the
+   * Cell is not a Revealed numeric Cell, or has no Hidden neighbor scope. Never
+   * the Press Preview (the machine builds that from `pos`). */
+  chordPreview: Preview | null;
   /** Whether the press landed on a Revealed Cell — the Arm-eligibility
-   * criterion, weaker than `isNumericCell` (any Revealed content counts). */
+   * criterion, weaker than having a Chord Preview (any Revealed content counts). */
   isRevealed: boolean;
 }
 
 /** Abstract player-input events fed to the gesture machine. The DOM layer
  * translates mouse events into these: every event carries the hit-tested
- * Cell (with its preview Cells) so the machine stays pure — the Cell's
- * `isNumericCell` flag is the criterion for showing the Chord Preview and
- * its `isRevealed` flag the criterion for Arming. */
+ * Cell (with its Chord Preview) so the machine stays pure — the Cell's
+ * `chordPreview` is the criterion for showing the Chord Preview and its
+ * `isRevealed` flag the criterion for Arming. */
 export type GestureEvent =
   | { kind: "right-down"; cell: CellHit | null }
   | { kind: "left-down"; cell: CellHit | null }
@@ -26,13 +29,6 @@ export type GestureEvent =
   | { kind: "right-up" }
   | { kind: "blur" }
   | { kind: "pointer-leave" };
-
-/** The transient highlight shown while the Chord gesture is armed: the Cell
- * the Chord would be applied to and the Cells it would Reveal. */
-export interface ChordPreview {
-  pos: Position;
-  cells: Position[];
-}
 
 /** The gesture machine's phase. `idle` — no gesture in progress (a Right
  * press may be held: its Flag was sent and the press is remembered for a
@@ -63,15 +59,32 @@ export type GestureEffect =
   | "chord-preview-moved"
   | "chord-preview-cleared";
 
+/** The Preview lifecycle effect per kind and step — the press and chord
+ * families stay split so tracing keeps the Press-vs-Chord distinction. */
+const PREVIEW_EFFECT: Record<
+  "press" | "chord",
+  Record<"set" | "moved" | "cleared", GestureEffect>
+> = {
+  press: {
+    set: "press-preview-set",
+    moved: "press-preview-moved",
+    cleared: "press-preview-cleared",
+  },
+  chord: {
+    set: "chord-preview-set",
+    moved: "chord-preview-moved",
+    cleared: "chord-preview-cleared",
+  },
+};
+
 /** The effect of a gesture event: at most one action to send to the
- * server, the Previews to render (`null` when none is shown), the phase
+ * server, the Preview to render (`null` when none is shown), the phase
  * transition this event caused (`undefined` when the phase did not
  * change), and the in-phase effects performed (empty when nothing changed
  * observably). */
 export interface GestureOutput {
   action?: Action;
-  pressPreview: Position | null;
-  chordPreview: ChordPreview | null;
+  preview: Preview | null;
   phaseChange?: GesturePhaseChange;
   effects: GestureEffect[];
   /** Whether a press is held over the Board — the caller renders the Smiley
@@ -82,9 +95,9 @@ export interface GestureOutput {
 /** The machine's full state: the gesture `phase` — the control state the
  * transition table is defined over — plus the extended state (which
  * buttons are held, where each press went down for the Arm eligibility
- * rule, whether the pointer has left the Board since Arming, the Press
- * Preview position and the Chord Preview). Data changes alone are not
- * phase changes and never produce a `phaseChange`. */
+ * rule, whether the pointer has left the Board since Arming, and the one
+ * active Preview). Data changes alone are not phase changes and never
+ * produce a `phaseChange`. */
 interface MachineState {
   phase: GesturePhase;
   rightHeld: boolean;
@@ -95,8 +108,7 @@ interface MachineState {
    * (mirroring the Press Preview's terminal clear): re-entering the Board
    * does not bring it back until the gesture re-arms. */
   pointerLeftBoard: boolean;
-  pressPreview: Position | null;
-  chordPreview: ChordPreview | null;
+  preview: Preview | null;
 }
 
 /** What an event decided: the next state to commit (absent when nothing
@@ -115,8 +127,7 @@ const initial = (): MachineState => ({
   rightOnRevealed: false,
   leftOnRevealed: false,
   pointerLeftBoard: false,
-  pressPreview: null,
-  chordPreview: null,
+  preview: null,
 });
 
 /** The gesture state machine: an explicit three-phase machine — idle,
@@ -140,60 +151,51 @@ export function createGestureMachine() {
    * phase transitions never have to carry it. */
   let enabled = true;
 
-  /** True when two Chord Previews name the same Cell and highlight set. */
-  const sameChordPreview = (
-    a: ChordPreview | null,
-    b: ChordPreview | null,
-  ): boolean => {
+  /** True when two Previews name the same kind, Cell, and (for a Chord
+   * Preview) highlight set. */
+  const samePreview = (a: Preview | null, b: Preview | null): boolean => {
     if (a === null || b === null) return a === b;
+    if (a.kind !== b.kind) return false;
     if (a.pos.row !== b.pos.row || a.pos.col !== b.pos.col) return false;
-    if (a.cells.length !== b.cells.length) return false;
-    return a.cells.every(
-      (p, i) => p.row === b.cells[i].row && p.col === b.cells[i].col,
-    );
-  };
-
-  /** The Chord Preview over `cell`, or null when it has no scope. Reports
-   * the preview lifecycle effect only when the Preview actually changed. */
-  const setChordPreview = (
-    cell: CellHit,
-  ): { chordPreview: ChordPreview | null; effect?: GestureEffect } => {
-    const next: ChordPreview | null =
-      cell.previewCells.length > 0
-        ? { pos: cell.pos, cells: cell.previewCells }
-        : null;
-    if (sameChordPreview(state.chordPreview, next)) {
-      return { chordPreview: state.chordPreview };
+    if (a.kind === "chord" && b.kind === "chord") {
+      if (a.cells.length !== b.cells.length) return false;
+      return a.cells.every(
+        (p, i) => p.row === b.cells[i].row && p.col === b.cells[i].col,
+      );
     }
-    const effect: GestureEffect =
-      state.chordPreview === null
-        ? "chord-preview-set"
-        : next === null
-          ? "chord-preview-cleared"
-          : "chord-preview-moved";
-    return { chordPreview: next, effect };
+    return true;
   };
 
-  /** Clears the Chord Preview, reporting the transition only when one was
-   * shown. */
-  const clearChordPreview = (): {
-    chordPreview: ChordPreview | null;
-    effect?: GestureEffect;
-  } => {
-    if (!state.chordPreview) return { chordPreview: null };
-    return { chordPreview: null, effect: "chord-preview-cleared" };
+  /** The one active Preview, or null when none. Reports the preview
+   * lifecycle effect only when the Preview actually changed — `set` when a
+   * new kind takes over (or one appears), `moved` when the same kind
+   * changes Cell, `cleared` when it goes away. */
+  const setPreview = (
+    next: Preview | null,
+  ): { preview: Preview | null; effect?: GestureEffect } => {
+    if (samePreview(state.preview, next)) {
+      return { preview: state.preview };
+    }
+    if (next === null) {
+      const kind = state.preview!.kind;
+      return { preview: null, effect: PREVIEW_EFFECT[kind].cleared };
+    }
+    const effect =
+      state.preview === null || state.preview.kind !== next.kind
+        ? PREVIEW_EFFECT[next.kind].set
+        : PREVIEW_EFFECT[next.kind].moved;
+    return { preview: next, effect };
   };
 
-  /** The state after the Left gesture ends: back to `idle`, both previews
-   * and the Left press data cleared, while a held Right press survives. */
+  /** The state after the Left gesture ends: back to `idle`, the Preview and
+   * the Left press data cleared, while a held Right press survives. */
   const toIdle = (): MachineState => ({
     phase: "idle",
     rightHeld: state.rightHeld,
     rightOnRevealed: state.rightOnRevealed,
     leftOnRevealed: false,
     pointerLeftBoard: false,
-    pressPreview: null,
-    chordPreview: null,
+    preview: null,
   });
 
   /** The state after a Right release: the Right press is forgotten and
@@ -209,7 +211,7 @@ export function createGestureMachine() {
    * is now ready to solve. A fresh arm also resets the pointer-left latch:
    * a new Chord gesture starts with a recoverable Preview. */
   const arm = (cell: CellHit): GestureDecision => {
-    const p = setChordPreview(cell);
+    const p = setPreview(cell.chordPreview);
     return {
       next: {
         phase: "armed",
@@ -217,8 +219,7 @@ export function createGestureMachine() {
         rightOnRevealed: true,
         leftOnRevealed: true,
         pointerLeftBoard: false,
-        pressPreview: null,
-        chordPreview: p.chordPreview,
+        preview: p.preview,
       },
       phaseChange: "armed",
       effects: p.effect ? [p.effect] : [],
@@ -252,15 +253,16 @@ export function createGestureMachine() {
         if (state.rightHeld && state.rightOnRevealed && event.cell.isRevealed) {
           return arm(event.cell);
         }
+        const p = setPreview(pressPreview(event.cell.pos));
         return {
           next: {
             ...state,
             phase: "pressing",
             leftOnRevealed: event.cell.isRevealed,
-            pressPreview: event.cell.pos,
+            preview: p.preview,
           },
           phaseChange: "pressed",
-          effects: ["press-preview-set"],
+          effects: p.effect ? [p.effect] : [],
         };
       }
       case "right-up":
@@ -273,7 +275,7 @@ export function createGestureMachine() {
   const decidePressing = (event: GestureEvent): GestureDecision => {
     switch (event.kind) {
       case "left-up": {
-        const pos = state.pressPreview;
+        const pos = state.preview?.pos;
         const action: Action | undefined = pos
           ? { type: "reveal", row: pos.row, col: pos.col }
           : undefined;
@@ -299,37 +301,36 @@ export function createGestureMachine() {
       case "right-up":
         return { next: releaseRight() };
       case "pointer-move": {
-        if (!state.pressPreview) return {};
+        if (!state.preview) return {};
         if (!event.cell) {
+          const p = setPreview(null);
           return {
             next: {
               ...state,
-              pressPreview: null,
+              preview: p.preview,
               leftOnRevealed: false,
             },
-            effects: ["press-preview-cleared"],
+            effects: p.effect ? [p.effect] : [],
           };
         }
-        if (
-          event.cell.pos.row === state.pressPreview.row &&
-          event.cell.pos.col === state.pressPreview.col
-        ) {
-          return {};
-        }
+        const next = pressPreview(event.cell.pos);
+        if (samePreview(state.preview, next)) return {};
+        const p = setPreview(next);
         return {
-          next: { ...state, pressPreview: event.cell.pos },
-          effects: ["press-preview-moved"],
+          next: { ...state, preview: p.preview },
+          effects: p.effect ? [p.effect] : [],
         };
       }
       case "pointer-leave": {
-        if (!state.pressPreview) return {};
+        if (!state.preview) return {};
+        const p = setPreview(null);
         return {
           next: {
             ...state,
-            pressPreview: null,
+            preview: p.preview,
             leftOnRevealed: false,
           },
-          effects: ["press-preview-cleared"],
+          effects: p.effect ? [p.effect] : [],
         };
       }
       case "blur": {
@@ -348,7 +349,7 @@ export function createGestureMachine() {
   const decideArmed = (event: GestureEvent): GestureDecision => {
     switch (event.kind) {
       case "left-up": {
-        const pos = state.chordPreview?.pos;
+        const pos = state.preview?.pos;
         const action: Action | undefined = pos
           ? { type: "chord", row: pos.row, col: pos.col }
           : undefined;
@@ -374,25 +375,22 @@ export function createGestureMachine() {
         // terminally cleared (like the Press Preview) — re-entering the
         // Board does not restore it until the gesture re-arms (ADR-0008).
         if (state.pointerLeftBoard) return {};
-        const p =
-          !event.cell || !event.cell.isNumericCell
-            ? clearChordPreview()
-            : setChordPreview(event.cell);
-        if (p.chordPreview === state.chordPreview) return {};
+        const p = setPreview(!event.cell ? null : event.cell.chordPreview);
+        if (p.preview === state.preview) return {};
         return {
-          next: { ...state, chordPreview: p.chordPreview },
+          next: { ...state, preview: p.preview },
           effects: p.effect ? [p.effect] : [],
         };
       }
       case "pointer-leave": {
-        const p = clearChordPreview();
+        const p = setPreview(null);
         // The latch is set even when no Preview was shown, so re-entering
         // over a previewable Cell cannot restore it.
         return {
           next: {
             ...state,
             pointerLeftBoard: true,
-            chordPreview: p.chordPreview,
+            preview: p.preview,
           },
           effects: p.effect ? [p.effect] : [],
         };
@@ -411,7 +409,7 @@ export function createGestureMachine() {
   };
 
   /** Resets the machine to idle, reporting what the gesture was doing: the
-   * phase change it was in and the Previews it clears. Shared by blur (the
+   * phase change it was in and the Preview it clears. Shared by blur (the
    * window losing focus cancels the gesture) and setEnabled(false) (the
    * game ending mid-gesture cancels it, issue #50). The next state is
    * always `initial()`, so it is returned directly — never optional. */
@@ -421,8 +419,7 @@ export function createGestureMachine() {
     effects: GestureEffect[];
   } => {
     const effects: GestureEffect[] = [];
-    if (state.pressPreview) effects.push("press-preview-cleared");
-    if (state.chordPreview) effects.push("chord-preview-cleared");
+    if (state.preview) effects.push(`${state.preview.kind}-preview-cleared`);
     return {
       state: initial(),
       phaseChange:
@@ -451,8 +448,7 @@ export function createGestureMachine() {
 
   /** The machine's current renderable output when nothing changed. */
   const currentOutput = (): GestureOutput => ({
-    pressPreview: state.pressPreview,
-    chordPreview: state.chordPreview,
+    preview: state.preview,
     effects: [],
     boardPressed: state.phase !== "idle" || state.rightHeld,
   });
@@ -465,16 +461,15 @@ export function createGestureMachine() {
       if (d.next) state = d.next;
       return {
         action: d.action,
-        pressPreview: state.pressPreview,
-        chordPreview: state.chordPreview,
+        preview: state.preview,
         phaseChange: d.phaseChange,
         effects: d.effects ?? [],
         boardPressed: state.phase !== "idle" || state.rightHeld,
       };
     },
     /** Closes or reopens the machine. Disabling cancels any in-progress
-     * gesture (reported like a blur: the phase it was in, plus the Previews
-     * it clears) and makes every event ignored; enabling restores handling.
+     * gesture (reported like a blur: the phase it was in, plus the Preview it
+     * clears) and makes every event ignored; enabling restores handling.
      * The caller drives the gate from the game state on every response so it
      * cannot drift — idempotent when unchanged (issue #50). */
     setEnabled(value: boolean): GestureOutput {
@@ -487,8 +482,7 @@ export function createGestureMachine() {
       state = reset.state;
       enabled = false;
       return {
-        pressPreview: null,
-        chordPreview: null,
+        preview: null,
         phaseChange: reset.phaseChange,
         effects: reset.effects ?? [],
         boardPressed: false,
