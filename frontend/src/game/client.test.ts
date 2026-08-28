@@ -196,6 +196,9 @@ describe("createGameClient", () => {
     });
   });
 
+  /** The latest-action gate (was createActionController): its behavior is
+   * covered here at the client level — a superseding action's response
+   * renders, the superseded one's drops. */
   describe("stale responses", () => {
     it("renders only the latest action's response", async () => {
       const reveal = deferred<GameSnapshot>();
@@ -237,6 +240,55 @@ describe("createGameClient", () => {
       await flush();
       expect(cell(0, 0)!.textContent).toBe("🚩");
       expect(cell(1, 1)!.classList.contains("cell-revealed")).toBe(false);
+    });
+
+    it("renders each non-superseded action's response in order", async () => {
+      const first = deferred<GameSnapshot>();
+      const second = deferred<GameSnapshot>();
+      let call = 0;
+      const post = vi.fn(() => (call++ === 0 ? first.promise : second.promise));
+      const { client } = makeClient({ post });
+      await client.init();
+
+      // First action: Reveal (0,0), left in flight.
+      client.handleInput({ kind: "left-down", pos: pos(0, 0) });
+      client.handleInput({ kind: "left-up" });
+
+      // Its response lands while it is still the latest, so it renders.
+      first.resolve(
+        makeGameSnapshot({
+          cells: [
+            view("revealed", 1),
+            view("hidden"),
+            view("hidden"),
+            view("hidden"),
+          ],
+        }),
+      );
+      await flush();
+      expect(cell(0, 0)!.classList.contains("cell-revealed")).toBe(true);
+
+      // Second action: Flag (1,1) — off the Cell the Reveal just opened, so
+      // it stays Hidden and still sends a Flag.
+      client.handleInput({ kind: "right-down", pos: pos(1, 1) });
+
+      // Its response lands next, still the latest, so it too renders.
+      second.resolve(
+        makeGameSnapshot({
+          flags_remaining: 0,
+          cells: [
+            view("revealed", 1),
+            view("hidden"),
+            view("hidden"),
+            view("flagged"),
+          ],
+        }),
+      );
+      await flush();
+      // Both responses rendered in order: the Reveal survives, the Flag lands.
+      expect(cell(0, 0)!.classList.contains("cell-revealed")).toBe(true);
+      expect(cell(1, 1)!.textContent).toBe("🚩");
+      expect(counter().textContent).toBe("000");
     });
   });
 });

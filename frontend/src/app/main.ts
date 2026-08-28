@@ -22,10 +22,10 @@ const topBarEls: TopBarEls = {
   difficultyRow: document.querySelector(".difficulty-row")!,
 };
 
-/** The client module: owns the cached snapshot, the gesture machine, the action
- * controller, the previews, the Smiley Button, and all rendering. This file
- * is a thin DOM adapter — it translates mouse events into abstract input and
- * delegates the rest. */
+/** The client module: owns the cached snapshot, the gesture machine, the
+ * latest-action gate, the previews, the Smiley Button, and all rendering.
+ * This file is a thin DOM adapter — it translates mouse events into abstract
+ * input and delegates the rest. */
 const client = createGameClient({
   boardEl,
   topBarEls,

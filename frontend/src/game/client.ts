@@ -5,7 +5,6 @@ import {
   type Position,
 } from "./api";
 import { chordPreview } from "./logic/preview";
-import { createActionController } from "./logic/controller";
 import {
   createGestureMachine,
   type CellHit,
@@ -47,7 +46,7 @@ export interface GameClientDeps {
 }
 
 /** The client module: the frontend's view of the game. It owns the cached
- * snapshot, the gesture machine, the action controller, the preview highlight
+ * snapshot, the gesture machine, the latest-action gate, the preview highlight
  * layer, and the Smiley Button, and renders everything — input arrives as
  * abstract events and the module decides what to send and what to show. */
 export interface GameClient {
@@ -68,10 +67,20 @@ export function createGameClient(deps: GameClientDeps): GameClient {
   const { boardEl, topBarEls, post, fetchSnapshot } = deps;
 
   const gesture = createGestureMachine();
-  const controller = createActionController(post);
   const previewRenderer = createPreviewRenderer(boardEl);
 
   let snapshot: GameSnapshot | null = null;
+
+  /** Applies an Action through `post`, dropping the stale response of a
+   * superseded one: the latest call wins, so a slow earlier response can
+   * never render a stale snapshot. */
+  let seq = 0;
+  const applyLatest = async (action: Action): Promise<GameSnapshot | null> => {
+    const id = ++seq;
+    const next = await post(action);
+    return id === seq ? next : null;
+  };
+
   /** Whether a press is held over the Board, as reported by the last gesture
    * dispatch — kept so an action response re-rendering the top bar can keep
    * the Smiley surprised while the press is still held. */
@@ -95,13 +104,13 @@ export function createGameClient(deps: GameClientDeps): GameClient {
       : smileyFace(snapshot);
   };
 
-  /** Applies an action through the controller and renders the fresh snapshot.
-   * Only the latest action's result is ever rendered — stale responses are
-   * dropped by the controller. When the response ends the game, cancels any
+  /** Applies an action through the latest-action gate and renders the fresh
+   * snapshot. Only the latest action's result is ever rendered — stale
+   * responses are dropped. When the response ends the game, cancels any
    * in-progress gesture so no press-preview-set or Chord Preview survives onto the
    * Won/Lost board. */
   const applyAndRender = async (action: Action): Promise<void> => {
-    const next = await controller.apply(action);
+    const next = await applyLatest(action);
     if (next) {
       snapshot = next;
       // The machine's gate mirrors the game state: a Won/Lost response
