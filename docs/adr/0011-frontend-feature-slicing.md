@@ -29,7 +29,7 @@ We chose feature-slice-plus-layers because it keeps the per-layer readability of
 Consequences and boundaries:
 
 - **Issue #109 scope is "move files, change no logic."** The directory tree is a relocation; module behavior, tests, and interfaces are untouched.
-- `hitTest.ts` mixes pure geometry (`offsetToIndex`, `BoardGeometry`) and DOM measurement (`measureBoard`, `cellAtPoint`). It is **not split in this issue** and lands in `game/render/`; the split is tracked separately in issue #110.
+- `hitTest.ts` mixes pure geometry (`offsetToIndex`, `BoardGeometry`) and DOM measurement (`measureBoard`, `cellAtPoint`). It is intentionally left as one unit, so it lands in `game/render/`; the split was considered and decided against.
 - Cross-slice imports use relative paths; no path aliases (the tree is small, and aliases add indirection without a payoff).
 - Tests stay co-located with their source (`.test.ts` beside the module), matching the pre-existing convention.
 - `style.css` and `vite-env.d.ts` stay at `src/` root: they are not modules and are not grouping objects.
