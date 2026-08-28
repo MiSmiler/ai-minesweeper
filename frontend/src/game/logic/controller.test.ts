@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Action, GameSnapshot } from "./api";
+import type { Action, GameSnapshot } from "../api";
 import { createActionController } from "./controller";
-import { gameState } from "./testUtils";
+import { gameState } from "../../infra/testUtils";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

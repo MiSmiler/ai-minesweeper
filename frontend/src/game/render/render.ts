@@ -1,4 +1,4 @@
-import type { CellView, GameSnapshot } from "./api";
+import type { CellView, GameSnapshot } from "../api";
 
 /** The Smiley Button's emoji faces, keyed by use. The state-driven face comes
  * from renderTopBar; the surprised face is set directly while pressing. */

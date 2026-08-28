@@ -3,12 +3,16 @@ import {
   postAction,
   type GameSnapshot,
   type Position,
-} from "./api";
-import { createGameClient } from "./client";
-import { cellAtPoint, measureBoard, type BoardGeometry } from "./hitTest";
-import { log } from "./log";
-import type { TopBarEls } from "./render";
-import "./style.css";
+} from "../game/api";
+import { createGameClient } from "../game/client";
+import {
+  cellAtPoint,
+  measureBoard,
+  type BoardGeometry,
+} from "../game/render/hitTest";
+import { log } from "../infra/log";
+import type { TopBarEls } from "../game/render/render";
+import "../style.css";
 
 const boardEl = document.getElementById("board")!;
 const topBarEls: TopBarEls = {

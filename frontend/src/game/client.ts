@@ -4,16 +4,16 @@ import {
   type GameSnapshot,
   type Position,
 } from "./api";
-import { chordPreviewCells, isRevealedNumericCell } from "./chordPreview";
-import { createActionController } from "./controller";
+import { chordPreviewCells, isRevealedNumericCell } from "./logic/chordPreview";
+import { createActionController } from "./logic/controller";
 import {
   createGestureMachine,
   type CellHit,
   type GestureEvent,
   type GestureOutput,
-} from "./gesture";
-import { log } from "./log";
-import { createPreviewLayer } from "./previewHighlight";
+} from "./logic/gesture";
+import { log } from "../infra/log";
+import { createPreviewLayer } from "./render/previewHighlight";
 import {
   formatTimer,
   renderBoard,
@@ -21,7 +21,7 @@ import {
   SmileyFace,
   smileyFace,
   type TopBarEls,
-} from "./render";
+} from "./render/render";
 
 /** Abstract player input for the client module: the DOM adapter translates
  * mouse events into these — a kind plus the Cell under the pointer (or none

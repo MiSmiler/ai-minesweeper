@@ -1,4 +1,4 @@
-import type { GameSnapshot, Position } from "./api";
+import type { GameSnapshot, Position } from "../api";
 
 /** Row-major offsets of the 8 neighboring Cells. */
 const NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [

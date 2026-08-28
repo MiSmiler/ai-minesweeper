@@ -1,4 +1,4 @@
-import type { Action, GameSnapshot } from "./api";
+import type { Action, GameSnapshot } from "../api";
 
 /** Applies Actions to the server, dropping out-of-order responses: only the
  * latest action's result is kept, so a slow earlier response can never show

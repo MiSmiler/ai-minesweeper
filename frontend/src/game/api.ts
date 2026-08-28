@@ -1,6 +1,6 @@
 // Wire types mirroring the server DTOs (src/server/wire.rs).
 
-import { log } from "./log";
+import { log } from "../infra/log";
 
 export type GameStateName = "ready" | "playing" | "won" | "lost";
 

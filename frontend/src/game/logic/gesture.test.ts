@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Position } from "./api";
+import type { Position } from "../api";
 import {
   createGestureMachine,
   type CellHit,

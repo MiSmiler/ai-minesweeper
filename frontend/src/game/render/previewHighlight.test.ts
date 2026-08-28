@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import type { Position } from "./api";
-import type { ChordPreview } from "./gesture";
+import type { Position } from "../api";
+import type { ChordPreview } from "../logic/gesture";
 import { createPreviewLayer } from "./previewHighlight";
 
 const pos = (row: number, col: number): Position => ({ row, col });

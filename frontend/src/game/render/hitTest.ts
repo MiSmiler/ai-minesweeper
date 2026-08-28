@@ -1,4 +1,4 @@
-import type { Position } from "./api";
+import type { Position } from "../api";
 
 /** The Board's hit-testing geometry: the Cell pitch (Cell size + hairline
  * gap) and Cell counts per axis, measured from the rendered grid. The Board

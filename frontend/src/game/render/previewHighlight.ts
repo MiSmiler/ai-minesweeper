@@ -1,5 +1,5 @@
-import type { Position } from "./api";
-import type { ChordPreview } from "./gesture";
+import type { Position } from "../api";
+import type { ChordPreview } from "../logic/gesture";
 
 /** The preview highlight layer: renders the gesture machine's Previews onto
  * the Board and supports retaining the highlight through an action's round

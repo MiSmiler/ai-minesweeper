@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import type { CellView, GameSnapshot } from "./api";
+import type { CellView, GameSnapshot } from "../api";
 import {
   formatCounter,
   formatTimer,
@@ -8,7 +8,7 @@ import {
   renderTopBar,
   type TopBarEls,
 } from "./render";
-import { gameState } from "./testUtils";
+import { gameState } from "../../infra/testUtils";
 
 const cell = (
   state: CellView["state"],

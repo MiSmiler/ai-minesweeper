@@ -1,4 +1,4 @@
-import { type Action, type Position } from "./api";
+import { type Action, type Position } from "../api";
 
 /** A hit-tested Cell plus the Cells its Chord Preview would highlight
  * (computed by the caller from the game state). `isNumericCell` is the

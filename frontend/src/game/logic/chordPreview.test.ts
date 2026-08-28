@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CellContent, CellState, GameSnapshot, Position } from "./api";
+import type { CellContent, CellState, GameSnapshot, Position } from "../api";
 import { chordPreviewCells } from "./chordPreview";
 
 type CellSpec = { state: CellState; content: CellContent };
