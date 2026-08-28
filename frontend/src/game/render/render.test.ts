@@ -8,7 +8,7 @@ import {
   renderTopBar,
   type TopBarEls,
 } from "./render";
-import { gameState } from "../../infra/testUtils";
+import { makeGameSnapshot } from "../../infra/testUtils";
 
 const cell = (
   state: CellView["state"],
@@ -19,10 +19,10 @@ const cell = (
 });
 
 /** Renders a board into a fresh container and returns its .cell elements. */
-function renderCells(state: GameSnapshot): HTMLElement[] {
+function renderCells(snapshot: GameSnapshot): HTMLElement[] {
   const container = document.createElement("div");
   document.body.appendChild(container);
-  renderBoard(state, container);
+  renderBoard(snapshot, container);
   return Array.from(container.querySelectorAll<HTMLElement>(".cell"));
 }
 
@@ -68,7 +68,7 @@ describe("formatCounter", () => {
 describe("renderBoard", () => {
   it("renders one Cell per cell, in row-major order, addressed by row/col", () => {
     const cells = renderCells(
-      gameState({
+      makeGameSnapshot({
         rows: 2,
         cols: 2,
         cells: [
@@ -90,33 +90,41 @@ describe("renderBoard", () => {
 
   it("sizes the Board to its column count", () => {
     const container = document.createElement("div");
-    renderBoard(gameState({ rows: 3, cols: 4, cells: [] }), container);
+    renderBoard(makeGameSnapshot({ rows: 3, cols: 4, cells: [] }), container);
     const board = container.firstElementChild as HTMLElement;
     expect(board.style.gridTemplateColumns).toBe("repeat(4, var(--cell-size))");
   });
 
   it("leaves a Hidden Cell empty", () => {
-    const [el] = renderCells(gameState({ cells: [cell("hidden", null)] }));
+    const [el] = renderCells(
+      makeGameSnapshot({ cells: [cell("hidden", null)] }),
+    );
     expect(el.textContent).toBe("");
     expect(el.classList.contains("cell-flagged")).toBe(false);
     expect(el.classList.contains("cell-revealed")).toBe(false);
   });
 
   it("renders a Flagged Cell with the flag marker", () => {
-    const [el] = renderCells(gameState({ cells: [cell("flagged", null)] }));
+    const [el] = renderCells(
+      makeGameSnapshot({ cells: [cell("flagged", null)] }),
+    );
     expect(el.textContent).toBe("🚩");
     expect(el.classList.contains("cell-flagged")).toBe(true);
   });
 
   it("renders a Revealed numeric Cell with its number and n-class", () => {
-    const [el] = renderCells(gameState({ cells: [cell("revealed", 3)] }));
+    const [el] = renderCells(
+      makeGameSnapshot({ cells: [cell("revealed", 3)] }),
+    );
     expect(el.textContent).toBe("3");
     expect(el.classList.contains("cell-revealed")).toBe(true);
     expect(el.classList.contains("n3")).toBe(true);
   });
 
   it("renders a Revealed zero Cell empty, without an n-class", () => {
-    const [el] = renderCells(gameState({ cells: [cell("revealed", 0)] }));
+    const [el] = renderCells(
+      makeGameSnapshot({ cells: [cell("revealed", 0)] }),
+    );
     expect(el.textContent).toBe("");
     expect(el.classList.contains("cell-revealed")).toBe(true);
     expect(el.classList.contains("n0")).toBe(false);
@@ -124,7 +132,7 @@ describe("renderBoard", () => {
 
   it("renders a Revealed Mine with the mine class, and highlights the Trigger Mine", () => {
     const els = renderCells(
-      gameState({
+      makeGameSnapshot({
         rows: 1,
         cols: 2,
         trigger: { row: 0, col: 1 },
@@ -149,45 +157,45 @@ describe("renderTopBar", () => {
 
   it("renders Flags Remaining as a three-digit counter", () => {
     const bar = els();
-    renderTopBar(gameState({ flags_remaining: 5 }), bar);
+    renderTopBar(makeGameSnapshot({ flags_remaining: 5 }), bar);
     expect(bar.counter.textContent).toBe("005");
   });
 
   it("renders negative Flags Remaining with a minus sign", () => {
     const bar = els();
-    renderTopBar(gameState({ flags_remaining: -2 }), bar);
+    renderTopBar(makeGameSnapshot({ flags_remaining: -2 }), bar);
     expect(bar.counter.textContent).toBe("-2");
   });
 
   it("renders the Timer as three-digit seconds", () => {
     const bar = els();
-    renderTopBar(gameState({ elapsed_secs: 65 }), bar);
+    renderTopBar(makeGameSnapshot({ elapsed_secs: 65 }), bar);
     expect(bar.timer.textContent).toBe("065");
   });
 
   it("shows the neutral smiley while Ready or Playing", () => {
     const bar = els();
-    renderTopBar(gameState({ game_state: "playing" }), bar);
+    renderTopBar(makeGameSnapshot({ game_state: "playing" }), bar);
     expect(bar.smiley.textContent).toBe("🙂");
-    renderTopBar(gameState({ game_state: "ready" }), bar);
+    renderTopBar(makeGameSnapshot({ game_state: "ready" }), bar);
     expect(bar.smiley.textContent).toBe("🙂");
   });
 
   it("shows the sunglasses smiley on a Won game", () => {
     const bar = els();
-    renderTopBar(gameState({ game_state: "won" }), bar);
+    renderTopBar(makeGameSnapshot({ game_state: "won" }), bar);
     expect(bar.smiley.textContent).toBe("😎");
   });
 
   it("shows the crying smiley on a Lost game", () => {
     const bar = els();
-    renderTopBar(gameState({ game_state: "lost" }), bar);
+    renderTopBar(makeGameSnapshot({ game_state: "lost" }), bar);
     expect(bar.smiley.textContent).toBe("😭");
   });
 
   it("highlights the active difficulty button", () => {
     const bar = els();
-    renderTopBar(gameState({ difficulty: "intermediate" }), bar);
+    renderTopBar(makeGameSnapshot({ difficulty: "intermediate" }), bar);
     const buttons =
       bar.difficultyRow.querySelectorAll<HTMLElement>("[data-difficulty]");
     const active = Array.from(buttons).filter((b) =>

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Action, GameSnapshot } from "../api";
 import { createActionController } from "./controller";
-import { gameState } from "../../infra/testUtils";
+import { makeGameSnapshot } from "../../infra/testUtils";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -16,22 +16,26 @@ const flag: Action = { type: "flag", row: 1, col: 1 };
 
 describe("createActionController", () => {
   it("applies an action through post and resolves with the fresh state", async () => {
-    const post = vi.fn().mockResolvedValue(gameState({ elapsed_secs: 5 }));
+    const post = vi
+      .fn()
+      .mockResolvedValue(makeGameSnapshot({ elapsed_secs: 5 }));
     const controller = createActionController(post);
     await expect(controller.apply(reveal)).resolves.toEqual(
-      gameState({ elapsed_secs: 5 }),
+      makeGameSnapshot({ elapsed_secs: 5 }),
     );
     expect(post).toHaveBeenCalledWith(reveal);
   });
 
   it("resolves the state of every non-superseded action in order", async () => {
-    const post = vi.fn().mockResolvedValue(gameState({ elapsed_secs: 7 }));
+    const post = vi
+      .fn()
+      .mockResolvedValue(makeGameSnapshot({ elapsed_secs: 7 }));
     const controller = createActionController(post);
     await expect(controller.apply(reveal)).resolves.toEqual(
-      gameState({ elapsed_secs: 7 }),
+      makeGameSnapshot({ elapsed_secs: 7 }),
     );
     await expect(controller.apply(flag)).resolves.toEqual(
-      gameState({ elapsed_secs: 7 }),
+      makeGameSnapshot({ elapsed_secs: 7 }),
     );
   });
 
@@ -45,12 +49,12 @@ describe("createActionController", () => {
     const pendingFirst = controller.apply(reveal);
     const pendingSecond = controller.apply(flag);
     // The newer action resolves first; the stale one resolves later.
-    second.resolve(gameState({ elapsed_secs: 2 }));
-    first.resolve(gameState({ elapsed_secs: 1 }));
+    second.resolve(makeGameSnapshot({ elapsed_secs: 2 }));
+    first.resolve(makeGameSnapshot({ elapsed_secs: 1 }));
 
     await expect(pendingFirst).resolves.toBeNull();
     await expect(pendingSecond).resolves.toEqual(
-      gameState({ elapsed_secs: 2 }),
+      makeGameSnapshot({ elapsed_secs: 2 }),
     );
   });
 });

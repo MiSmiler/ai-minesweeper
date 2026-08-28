@@ -28,20 +28,20 @@ export function pressPreview(pos: Position): Preview {
 /** The Chord Preview over the Cell at (row, col), or null when it has no scope
  * (not a Revealed numeric Cell, or every neighbor is Flagged/Revealed). */
 export function chordPreview(
-  state: GameSnapshot,
+  snapshot: GameSnapshot,
   pos: Position,
 ): Preview | null {
-  if (!isRevealedNumericCell(state, pos.row, pos.col)) return null;
-  const cells = chordPreviewCells(state, pos.row, pos.col);
+  if (!isRevealedNumericCell(snapshot, pos.row, pos.col)) return null;
+  const cells = chordPreviewCells(snapshot, pos.row, pos.col);
   return cells.length ? { kind: "chord", pos, cells } : null;
 }
 
 function isRevealedNumericCell(
-  state: GameSnapshot,
+  snapshot: GameSnapshot,
   row: number,
   col: number,
 ): boolean {
-  const cell = state.cells[row * state.cols + col];
+  const cell = snapshot.cells[row * snapshot.cols + col];
   return (
     cell?.state === "revealed" &&
     typeof cell.content === "number" &&
@@ -55,21 +55,21 @@ function isRevealedNumericCell(
  * the preview still shows its scope). Empty unless the Cell is a Revealed
  * numeric Cell. */
 function chordPreviewCells(
-  state: GameSnapshot,
+  snapshot: GameSnapshot,
   row: number,
   col: number,
 ): Position[] {
-  if (!isRevealedNumericCell(state, row, col)) {
+  if (!isRevealedNumericCell(snapshot, row, col)) {
     return [];
   }
   const out: Position[] = [];
   for (const [dr, dc] of NEIGHBOR_OFFSETS) {
     const r = row + dr;
     const c = col + dc;
-    if (r < 0 || r >= state.rows || c < 0 || c >= state.cols) {
+    if (r < 0 || r >= snapshot.rows || c < 0 || c >= snapshot.cols) {
       continue;
     }
-    if (state.cells[r * state.cols + c].state === "hidden") {
+    if (snapshot.cells[r * snapshot.cols + c].state === "hidden") {
       out.push({ row: r, col: c });
     }
   }

@@ -26,7 +26,7 @@ import {
 /** Abstract player input for the client module: the DOM adapter translates
  * mouse events into these — a kind plus the Cell under the pointer (or none
  * off-Board). The module builds the gesture machine's hit payload from its
- * cached state. */
+ * cached snapshot. */
 export type ClientInput =
   | { kind: "right-down"; pos: Position | null }
   | { kind: "left-down"; pos: Position | null }
@@ -37,21 +37,21 @@ export type ClientInput =
   | { kind: "pointer-leave" };
 
 /** The dependencies the client module needs at creation: the elements it
- * renders into and the state/action functions it sends through — the real
+ * renders into and the snapshot/action functions it sends through — the real
  * HTTP adapters in the browser, mocks in tests. */
 export interface GameClientDeps {
   boardEl: HTMLElement;
   topBarEls: TopBarEls;
   post: (action: Action) => Promise<GameSnapshot>;
-  fetchState: () => Promise<GameSnapshot>;
+  fetchSnapshot: () => Promise<GameSnapshot>;
 }
 
 /** The client module: the frontend's view of the game. It owns the cached
- * state, the gesture machine, the action controller, the preview highlight
+ * snapshot, the gesture machine, the action controller, the preview highlight
  * layer, and the Smiley Button, and renders everything — input arrives as
  * abstract events and the module decides what to send and what to show. */
 export interface GameClient {
-  /** Fetches and renders the initial state. Rejects on failure. */
+  /** Fetches and renders the initial snapshot. Rejects on failure. */
   init(): Promise<void>;
   /** Feeds an abstract input event through the gesture machine, renders the
    * resulting Previews and Smiley, and sends any action it decides on. */
@@ -65,13 +65,13 @@ export interface GameClient {
 }
 
 export function createGameClient(deps: GameClientDeps): GameClient {
-  const { boardEl, topBarEls, post, fetchState } = deps;
+  const { boardEl, topBarEls, post, fetchSnapshot } = deps;
 
   const gesture = createGestureMachine();
   const controller = createActionController(post);
   const previewLayer = createPreviewLayer(boardEl);
 
-  let state: GameSnapshot | null = null;
+  let snapshot: GameSnapshot | null = null;
   /** Whether a press is held over the Board, as reported by the last gesture
    * dispatch — kept so an action response re-rendering the top bar can keep
    * the Smiley surprised while the press is still held. */
@@ -80,22 +80,22 @@ export function createGameClient(deps: GameClientDeps): GameClient {
   /** Builds the hit-test payload for the gesture machine: the Chord Preview
    * the Cell would show (or null when it has no scope) plus whether it is
    * Revealed (the criterion for Arming). */
-  const cellHit = (state: GameSnapshot, pos: Position): CellHit => ({
+  const cellHit = (snapshot: GameSnapshot, pos: Position): CellHit => ({
     pos,
-    chordPreview: chordPreview(state, pos),
+    chordPreview: chordPreview(snapshot, pos),
     isRevealed:
-      state.cells[pos.row * state.cols + pos.col]?.state === "revealed",
+      snapshot.cells[pos.row * snapshot.cols + pos.col]?.state === "revealed",
   });
 
   /** Renders the Smiley Button's face: surprised while a press is held over
    * the Board, otherwise the state-driven face. */
-  const renderSmiley = (state: GameSnapshot): void => {
+  const renderSmiley = (snapshot: GameSnapshot): void => {
     topBarEls.smiley.textContent = boardPressed
       ? SmileyFace.surprised
-      : smileyFace(state);
+      : smileyFace(snapshot);
   };
 
-  /** Applies an action through the controller and renders the fresh state.
+  /** Applies an action through the controller and renders the fresh snapshot.
    * Only the latest action's result is ever rendered — stale responses are
    * dropped by the controller. When the response ends the game, cancels any
    * in-progress gesture so no press-preview-set or Chord Preview survives onto the
@@ -103,7 +103,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
   const applyAndRender = async (action: Action): Promise<void> => {
     const next = await controller.apply(action);
     if (next) {
-      state = next;
+      snapshot = next;
       // The machine's gate mirrors the game state: a Won/Lost response
       // closes it (cancelling any in-progress gesture so no press-preview-set or
       // Chord Preview survives onto the Won/Lost board, issue #50); any
@@ -112,11 +112,11 @@ export function createGameClient(deps: GameClientDeps): GameClient {
       const gated = gesture.setEnabled(!isGameEnded(next.game_state));
       traceGesture(gated, "game-ended");
       boardPressed = gated.boardPressed;
-      renderBoard(state, boardEl);
-      renderTopBar(state, topBarEls);
+      renderBoard(snapshot, boardEl);
+      renderTopBar(snapshot, topBarEls);
       // Re-assert the gesture-driven face: a response re-rendering the top
       // bar must not wipe the surprise while a press is still held.
-      renderSmiley(state);
+      renderSmiley(snapshot);
     }
   };
 
@@ -154,8 +154,8 @@ export function createGameClient(deps: GameClientDeps): GameClient {
    * changes and in-phase effects are traced at `debug` so gesture problems
    * are diagnosable from the console alone (the machine itself stays pure). */
   const dispatchGesture = (event: GestureEvent): void => {
-    // The listeners are registered only after the initial state load, so
-    // `state` is always present when a gesture is dispatched.
+    // The listeners are registered only after the initial snapshot load, so
+    // `snapshot` is always present when a gesture is dispatched.
     const out = gesture.handle(event);
     traceGesture(out, event.kind);
     // A Reveal/Chord keeps its highlight until the response re-renders the
@@ -168,23 +168,23 @@ export function createGameClient(deps: GameClientDeps): GameClient {
     }
     previewLayer.render(out.preview);
     boardPressed = out.boardPressed;
-    renderSmiley(state!);
+    renderSmiley(snapshot!);
     if (out.action) {
       sendAction(out.action);
     }
   };
 
   /** Translates an abstract input event into a gesture-machine event,
-   * building the hit payload from the cached state. */
+   * building the hit payload from the cached snapshot. */
   const handleInput = (event: ClientInput): void => {
-    if (state === null) return;
+    if (snapshot === null) return;
     switch (event.kind) {
       case "right-down":
       case "left-down":
       case "pointer-move": {
         dispatchGesture({
           kind: event.kind,
-          cell: event.pos ? cellHit(state, event.pos) : null,
+          cell: event.pos ? cellHit(snapshot, event.pos) : null,
         });
         return;
       }
@@ -206,7 +206,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
 
   const pollTimer = async (): Promise<void> => {
     try {
-      const next = await fetchState();
+      const next = await fetchSnapshot();
       topBarEls.timer.textContent = formatTimer(next.elapsed_secs);
     } catch {
       // Transient network errors are ignored; the next poll retries.
@@ -214,9 +214,9 @@ export function createGameClient(deps: GameClientDeps): GameClient {
   };
 
   const init = async (): Promise<void> => {
-    state = await fetchState();
-    renderBoard(state, boardEl);
-    renderTopBar(state, topBarEls);
+    snapshot = await fetchSnapshot();
+    renderBoard(snapshot, boardEl);
+    renderTopBar(snapshot, topBarEls);
   };
 
   return { init, handleInput, newGame, pollTimer };

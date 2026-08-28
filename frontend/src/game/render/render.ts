@@ -9,16 +9,19 @@ export const SmileyFace = {
   lost: "😭",
 } as const;
 
-/** Renders the board grid from the server state. Pure function of state. */
-export function renderBoard(state: GameSnapshot, container: HTMLElement): void {
+/** Renders the board grid from the server snapshot. Pure function of snapshot. */
+export function renderBoard(
+  snapshot: GameSnapshot,
+  container: HTMLElement,
+): void {
   const board = document.createElement("div");
   board.className = "board";
-  board.style.gridTemplateColumns = `repeat(${state.cols}, var(--cell-size))`;
+  board.style.gridTemplateColumns = `repeat(${snapshot.cols}, var(--cell-size))`;
 
-  for (let i = 0; i < state.cells.length; i++) {
-    const cell = state.cells[i];
-    const row = Math.floor(i / state.cols);
-    const col = i % state.cols;
+  for (let i = 0; i < snapshot.cells.length; i++) {
+    const cell = snapshot.cells[i];
+    const row = Math.floor(i / snapshot.cols);
+    const col = i % snapshot.cols;
     const el = document.createElement("div");
     el.className = "cell";
     el.dataset.row = String(row);
@@ -32,9 +35,9 @@ export function renderBoard(state: GameSnapshot, container: HTMLElement): void {
       if (cell.content === "mine") {
         el.classList.add("cell-mine");
         if (
-          state.trigger &&
-          state.trigger.row === row &&
-          state.trigger.col === col
+          snapshot.trigger &&
+          snapshot.trigger.row === row &&
+          snapshot.trigger.col === col
         ) {
           el.classList.add("cell-trigger");
         }
@@ -51,9 +54,9 @@ export function renderBoard(state: GameSnapshot, container: HTMLElement): void {
 /** The Smiley Button's state-driven face for a game state — the surprised
  * face while pressing is rendered by the caller from the gesture machine's
  * output (issue #50). */
-export function smileyFace(state: GameSnapshot): SmileyFaceValue {
-  if (state.game_state === "won") return SmileyFace.won;
-  if (state.game_state === "lost") return SmileyFace.lost;
+export function smileyFace(snapshot: GameSnapshot): SmileyFaceValue {
+  if (snapshot.game_state === "won") return SmileyFace.won;
+  if (snapshot.game_state === "lost") return SmileyFace.lost;
   return SmileyFace.neutral;
 }
 
@@ -69,11 +72,11 @@ export interface TopBarEls {
   difficultyRow: HTMLElement;
 }
 
-/** Renders the top bar (flag counter, smiley button, timer) from state into
+/** Renders the top bar (flag counter, smiley button, timer) from snapshot into
  * the given elements, highlighting the active difficulty button in the row. */
-export function renderTopBar(state: GameSnapshot, els: TopBarEls): void {
-  els.counter.textContent = formatCounter(state.flags_remaining);
-  els.smiley.textContent = smileyFace(state);
+export function renderTopBar(snapshot: GameSnapshot, els: TopBarEls): void {
+  els.counter.textContent = formatCounter(snapshot.flags_remaining);
+  els.smiley.textContent = smileyFace(snapshot);
 
   // Highlight the active difficulty button.
   els.difficultyRow
@@ -81,11 +84,11 @@ export function renderTopBar(state: GameSnapshot, els: TopBarEls): void {
     .forEach((btn) => {
       btn.classList.toggle(
         "active",
-        btn.dataset.difficulty === state.difficulty,
+        btn.dataset.difficulty === snapshot.difficulty,
       );
     });
 
-  els.timer.textContent = formatTimer(state.elapsed_secs);
+  els.timer.textContent = formatTimer(snapshot.elapsed_secs);
 }
 
 /** Formats elapsed seconds as a three-digit display, capped at 999 like the

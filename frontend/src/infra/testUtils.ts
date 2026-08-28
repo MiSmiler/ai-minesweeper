@@ -1,7 +1,9 @@
 import type { CellView, GameSnapshot } from "../game/api";
 
 /** Builds a minimal 2×2 playing GameSnapshot for tests; override any field. */
-export function gameState(over: Partial<GameSnapshot> = {}): GameSnapshot {
+export function makeGameSnapshot(
+  over: Partial<GameSnapshot> = {},
+): GameSnapshot {
   const cells: CellView[] = [];
   for (let i = 0; i < 4; i++) {
     cells.push({ state: "hidden", content: null });

@@ -45,8 +45,8 @@ export type Action =
   | { type: "chord"; row: number; col: number }
   | { type: "new-game"; difficulty?: Difficulty };
 
-/** Fetches the current game state. */
-export async function fetchState(): Promise<GameSnapshot> {
+/** Fetches the current snapshot. */
+export async function fetchSnapshot(): Promise<GameSnapshot> {
   const res = await fetch("/state");
   if (!res.ok) {
     log.error(`GET /state failed: ${res.status}`);
@@ -55,7 +55,7 @@ export async function fetchState(): Promise<GameSnapshot> {
   return (await res.json()) as GameSnapshot;
 }
 
-/** Sends an action and returns the new state. */
+/** Sends an action and returns the new snapshot. */
 export async function postAction(action: Action): Promise<GameSnapshot> {
   const res = await fetch("/action", {
     method: "POST",

@@ -1,5 +1,5 @@
 import {
-  fetchState,
+  fetchSnapshot,
   postAction,
   type GameSnapshot,
   type Position,
@@ -22,7 +22,7 @@ const topBarEls: TopBarEls = {
   difficultyRow: document.querySelector(".difficulty-row")!,
 };
 
-/** The client module: owns the cached state, the gesture machine, the action
+/** The client module: owns the cached snapshot, the gesture machine, the action
  * controller, the previews, the Smiley Button, and all rendering. This file
  * is a thin DOM adapter — it translates mouse events into abstract input and
  * delegates the rest. */
@@ -30,7 +30,7 @@ const client = createGameClient({
   boardEl,
   topBarEls,
   post: postAction,
-  fetchState,
+  fetchSnapshot,
 });
 
 /** Tracks the last hit-tested Cell so pointer-move events are only
@@ -56,7 +56,7 @@ function boardGeometry(): BoardGeometry | null {
 
 /** The Cell under the pointer, or null when the Board has no measured
  * geometry (defensive — the listeners are registered only after the initial
- * state load, so this should not happen in practice). */
+ * snapshot load, so this should not happen in practice). */
 function posAt(ev: MouseEvent | PointerEvent): Position | null {
   const geometry = boardGeometry();
   return geometry

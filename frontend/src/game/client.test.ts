@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { Action, CellView, GameSnapshot, Position } from "./api";
 import { createGameClient } from "./client";
 import type { TopBarEls } from "./render/render";
-import { gameState } from "../infra/testUtils";
+import { makeGameSnapshot } from "../infra/testUtils";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -53,24 +53,24 @@ const cell = (row: number, col: number): HTMLElement | null =>
 
 const pos = (row: number, col: number): Position => ({ row, col });
 
-/** A client over the jsdom document with the given post/fetchState mocks. */
+/** A client over the jsdom document with the given post/fetchSnapshot mocks. */
 function makeClient(
   over: {
     post?: Mock<(action: Action) => Promise<GameSnapshot>>;
-    fetchState?: Mock<() => Promise<GameSnapshot>>;
+    fetchSnapshot?: Mock<() => Promise<GameSnapshot>>;
   } = {},
 ) {
   const post: Mock<(action: Action) => Promise<GameSnapshot>> =
-    over.post ?? vi.fn().mockResolvedValue(gameState());
-  const fetchState: Mock<() => Promise<GameSnapshot>> =
-    over.fetchState ?? vi.fn().mockResolvedValue(gameState());
+    over.post ?? vi.fn().mockResolvedValue(makeGameSnapshot());
+  const fetchSnapshot: Mock<() => Promise<GameSnapshot>> =
+    over.fetchSnapshot ?? vi.fn().mockResolvedValue(makeGameSnapshot());
   const client = createGameClient({
     boardEl: boardEl(),
     topBarEls: topBarEls(),
     post,
-    fetchState,
+    fetchSnapshot,
   });
-  return { client, post, fetchState };
+  return { client, post, fetchSnapshot };
 }
 
 describe("createGameClient", () => {
@@ -96,7 +96,7 @@ describe("createGameClient", () => {
       // The response is pending: the press highlight is retained.
       expect(cell(0, 0)!.classList.contains("cell-preview")).toBe(true);
 
-      d.resolve(gameState());
+      d.resolve(makeGameSnapshot());
       await flush();
       // The fresh board has no retained highlight.
       expect(cell(0, 0)!.classList.contains("cell-preview")).toBe(false);
@@ -116,7 +116,7 @@ describe("createGameClient", () => {
       expect(smiley().textContent).toBe("😮");
 
       // The response ends the game while the press is held.
-      d.resolve(gameState({ game_state: "lost" }));
+      d.resolve(makeGameSnapshot({ game_state: "lost" }));
       await flush();
 
       // The gesture is cancelled: no surprise on the Lost board, and the
@@ -134,7 +134,7 @@ describe("createGameClient", () => {
 
       client.handleInput({ kind: "left-down", pos: pos(0, 0) });
       client.handleInput({ kind: "left-up" });
-      d.resolve(gameState({ game_state: "won" }));
+      d.resolve(makeGameSnapshot({ game_state: "won" }));
       await flush();
 
       // The ended Board is inert: a press produces no preview, no surprise,
@@ -180,11 +180,11 @@ describe("createGameClient", () => {
 
   describe("timer poll", () => {
     it("updates only the Timer from the poll", async () => {
-      const fetchState = vi
+      const fetchSnapshot = vi
         .fn()
-        .mockResolvedValueOnce(gameState({ elapsed_secs: 0 }))
-        .mockResolvedValueOnce(gameState({ elapsed_secs: 65 }));
-      const { client } = makeClient({ fetchState });
+        .mockResolvedValueOnce(makeGameSnapshot({ elapsed_secs: 0 }))
+        .mockResolvedValueOnce(makeGameSnapshot({ elapsed_secs: 65 }));
+      const { client } = makeClient({ fetchSnapshot });
       await client.init();
       expect(timer().textContent).toBe("000");
 
@@ -212,7 +212,7 @@ describe("createGameClient", () => {
       // The older action's response resolves first but is stale: the Flag
       // was sent later, so the Reveal never renders.
       reveal.resolve(
-        gameState({
+        makeGameSnapshot({
           cells: [
             view("hidden"),
             view("hidden"),
@@ -225,7 +225,7 @@ describe("createGameClient", () => {
       expect(cell(1, 1)!.classList.contains("cell-revealed")).toBe(false);
 
       flag.resolve(
-        gameState({
+        makeGameSnapshot({
           cells: [
             view("flagged"),
             view("hidden"),

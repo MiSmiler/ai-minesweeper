@@ -5,7 +5,7 @@ import { chordPreview, type Preview } from "./preview";
 type CellSpec = { state: CellState; content: CellContent };
 
 /** Builds a GameSnapshot from a sparse map of cell specs; default is Hidden. */
-function mkState(
+function mkSnapshot(
   rows: number,
   cols: number,
   cells: Record<string, CellSpec>,
@@ -42,8 +42,10 @@ function chordCells(p: Preview | null): Position[] {
 
 describe("chordPreview", () => {
   it("returns a chord Preview over every Hidden neighbor of a Revealed numeric Cell", () => {
-    const state = mkState(3, 3, { "1,1": { state: "revealed", content: 1 } });
-    const p = chordPreview(state, { row: 1, col: 1 });
+    const snapshot = mkSnapshot(3, 3, {
+      "1,1": { state: "revealed", content: 1 },
+    });
+    const p = chordPreview(snapshot, { row: 1, col: 1 });
     expect(p?.pos).toEqual({ row: 1, col: 1 });
     expect(cellKeys(chordCells(p))).toEqual([
       "0,0",
@@ -58,40 +60,46 @@ describe("chordPreview", () => {
   });
 
   it("returns a chord Preview over the three Hidden neighbors of a corner Cell", () => {
-    const state = mkState(3, 3, { "0,0": { state: "revealed", content: 1 } });
-    const p = chordPreview(state, { row: 0, col: 0 });
+    const snapshot = mkSnapshot(3, 3, {
+      "0,0": { state: "revealed", content: 1 },
+    });
+    const p = chordPreview(snapshot, { row: 0, col: 0 });
     expect(cellKeys(chordCells(p))).toEqual(["0,1", "1,0", "1,1"]);
   });
 
   it("is null when the Cell is Hidden", () => {
-    const state = mkState(2, 2, {});
-    expect(chordPreview(state, { row: 0, col: 0 })).toBeNull();
+    const snapshot = mkSnapshot(2, 2, {});
+    expect(chordPreview(snapshot, { row: 0, col: 0 })).toBeNull();
   });
 
   it("is null when the Cell is a Revealed zero Cell", () => {
-    const state = mkState(2, 2, { "0,0": { state: "revealed", content: 0 } });
-    expect(chordPreview(state, { row: 0, col: 0 })).toBeNull();
+    const snapshot = mkSnapshot(2, 2, {
+      "0,0": { state: "revealed", content: 0 },
+    });
+    expect(chordPreview(snapshot, { row: 0, col: 0 })).toBeNull();
   });
 
   it("is null when the Cell is a Revealed Mine", () => {
-    const state = mkState(2, 2, {
+    const snapshot = mkSnapshot(2, 2, {
       "0,0": { state: "revealed", content: "mine" },
     });
-    expect(chordPreview(state, { row: 0, col: 0 })).toBeNull();
+    expect(chordPreview(snapshot, { row: 0, col: 0 })).toBeNull();
   });
 
   it("is null when the Cell is Flagged", () => {
-    const state = mkState(2, 2, { "0,0": { state: "flagged", content: null } });
-    expect(chordPreview(state, { row: 0, col: 0 })).toBeNull();
+    const snapshot = mkSnapshot(2, 2, {
+      "0,0": { state: "flagged", content: null },
+    });
+    expect(chordPreview(snapshot, { row: 0, col: 0 })).toBeNull();
   });
 
   it("excludes Flagged and already Revealed neighbors", () => {
-    const state = mkState(3, 3, {
+    const snapshot = mkSnapshot(3, 3, {
       "1,1": { state: "revealed", content: 3 },
       "0,0": { state: "flagged", content: null },
       "1,0": { state: "revealed", content: 2 },
     });
-    const p = chordPreview(state, { row: 1, col: 1 });
+    const p = chordPreview(snapshot, { row: 1, col: 1 });
     expect(cellKeys(chordCells(p))).toEqual([
       "0,1",
       "0,2",
@@ -105,12 +113,12 @@ describe("chordPreview", () => {
   it("highlights Hidden neighbors even when the Flag count mismatches (classic behaviour)", () => {
     // A 1 with two Flags: the Chord would be a no-op, but the preview
     // still shows the Hidden neighbors.
-    const state = mkState(3, 3, {
+    const snapshot = mkSnapshot(3, 3, {
       "1,1": { state: "revealed", content: 1 },
       "0,0": { state: "flagged", content: null },
       "0,2": { state: "flagged", content: null },
     });
-    const p = chordPreview(state, { row: 1, col: 1 });
+    const p = chordPreview(snapshot, { row: 1, col: 1 });
     expect(cellKeys(chordCells(p))).toEqual([
       "0,1",
       "1,0",
@@ -122,7 +130,7 @@ describe("chordPreview", () => {
   });
 
   it("is null when every neighbor is Flagged", () => {
-    const state = mkState(3, 3, {
+    const snapshot = mkSnapshot(3, 3, {
       "1,1": { state: "revealed", content: 1 },
       "0,0": { state: "flagged", content: null },
       "0,1": { state: "flagged", content: null },
@@ -133,6 +141,6 @@ describe("chordPreview", () => {
       "2,1": { state: "flagged", content: null },
       "2,2": { state: "flagged", content: null },
     });
-    expect(chordPreview(state, { row: 1, col: 1 })).toBeNull();
+    expect(chordPreview(snapshot, { row: 1, col: 1 })).toBeNull();
   });
 });
