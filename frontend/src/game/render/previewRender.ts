@@ -4,7 +4,7 @@ import type { Preview } from "../logic/preview";
 /** The preview highlight layer: renders the gesture machine's Preview onto the
  * Board and supports retaining the highlight through an action's round trip
  * (see retain/release). Pure DOM — the machine stays pure. */
-export interface PreviewLayer {
+export interface PreviewRenderer {
   /** Renders the machine's current Preview: clears the highlight, shows the
    * Preview's Cells, then re-shows any retained highlight (an action in
    * flight). */
@@ -28,7 +28,7 @@ export interface PreviewLayer {
  * request round trip (sub-round-trip double-clicking), the older action's
  * response can drop the newer action's retained highlight early, flashing its
  * Cells until the newer response renders. Self-correcting; accepted. */
-export function createPreviewLayer(board: HTMLElement): PreviewLayer {
+export function createPreviewRenderer(board: HTMLElement): PreviewRenderer {
   let current: Preview | null = null;
   let retained: Preview | null = null;
 

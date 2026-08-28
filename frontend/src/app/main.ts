@@ -11,7 +11,7 @@ import {
   type BoardGeometry,
 } from "../game/render/hitTest";
 import { log } from "../infra/log";
-import type { TopBarEls } from "../game/render/render";
+import type { TopBarEls } from "../game/render/snapshotRender";
 import "../style.css";
 
 const boardEl = document.getElementById("board")!;

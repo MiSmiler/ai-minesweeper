@@ -7,7 +7,7 @@ import {
   renderBoard,
   renderTopBar,
   type TopBarEls,
-} from "./render";
+} from "./snapshotRender";
 import { makeGameSnapshot } from "../../infra/testUtils";
 
 const cell = (

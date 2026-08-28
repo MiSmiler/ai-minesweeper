@@ -13,7 +13,7 @@ import {
   type GestureOutput,
 } from "./logic/gesture";
 import { log } from "../infra/log";
-import { createPreviewLayer } from "./render/previewHighlight";
+import { createPreviewRenderer } from "./render/previewRender";
 import {
   formatTimer,
   renderBoard,
@@ -21,7 +21,7 @@ import {
   SmileyFace,
   smileyFace,
   type TopBarEls,
-} from "./render/render";
+} from "./render/snapshotRender";
 
 /** Abstract player input for the client module: the DOM adapter translates
  * mouse events into these — a kind plus the Cell under the pointer (or none
@@ -69,7 +69,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
 
   const gesture = createGestureMachine();
   const controller = createActionController(post);
-  const previewLayer = createPreviewLayer(boardEl);
+  const previewRenderer = createPreviewRenderer(boardEl);
 
   let snapshot: GameSnapshot | null = null;
   /** Whether a press is held over the Board, as reported by the last gesture
@@ -129,7 +129,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
         const message = err instanceof Error ? err.message : err;
         log.error(`Action ${action.type} failed: ${message}`);
       })
-      .finally(() => previewLayer.release());
+      .finally(() => previewRenderer.release());
   };
 
   /** Traces a gesture output's phase change and in-phase effects at
@@ -164,9 +164,9 @@ export function createGameClient(deps: GameClientDeps): GameClient {
       out.action &&
       (out.action.type === "reveal" || out.action.type === "chord")
     ) {
-      previewLayer.retain();
+      previewRenderer.retain();
     }
-    previewLayer.render(out.preview);
+    previewRenderer.render(out.preview);
     boardPressed = out.boardPressed;
     renderSmiley(snapshot!);
     if (out.action) {
