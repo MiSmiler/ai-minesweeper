@@ -4,13 +4,13 @@ import {
   type GameSnapshot,
   type Position,
 } from "./api";
-import { chordPreview } from "./logic/preview";
+import { chordPreview } from "./interaction/preview";
 import {
   createGestureMachine,
   type CellHit,
   type GestureEvent,
   type GestureOutput,
-} from "./logic/gesture";
+} from "./interaction/gesture";
 import { log } from "../infra/log";
 import { createPreviewRenderer } from "./render/previewRender";
 import {

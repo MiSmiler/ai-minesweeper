@@ -1,5 +1,5 @@
 import type { Position } from "../api";
-import type { Preview } from "../logic/preview";
+import type { Preview } from "../interaction/preview";
 
 /** The preview highlight layer: renders the gesture machine's Preview onto the
  * Board and supports retaining the highlight through an action's round trip
