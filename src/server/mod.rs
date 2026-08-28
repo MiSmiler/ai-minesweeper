@@ -1,94 +1,27 @@
-//! HTTP server layer: the game state API and the wire DTOs.
+//! HTTP server layer: the game state API.
 //!
 //! A thin adapter over the core interface (ADR-0003). `core.rs` stays a pure
 //! logic module with no serde or server dependencies; this module owns the
-//! JSON wire format and maps core types to DTOs.
+//! axum handlers and maps core types to the wire DTOs in [`wire`].
+
+pub mod wire;
 
 use std::sync::{Arc, Mutex};
 
 use axum::Json;
+use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
-use serde::{Deserialize, Serialize};
+use axum::routing::{get, post};
 use tracing::{debug, info, warn};
 
-use crate::core::{CellContent, Difficulty, Game, GameState, Position};
+use crate::core::{Difficulty, Game, GameState, Position};
 
-#[cfg(test)]
-use crate::core::{Features, GameConfig};
-
-// --- Wire DTOs ---
-
-/// The full game state the client renders from.
-#[derive(Serialize)]
-pub struct StateDto {
-    pub game_state: &'static str,
-    pub difficulty: &'static str,
-    pub rows: usize,
-    pub cols: usize,
-    pub flags_remaining: i32,
-    pub elapsed_secs: u64,
-    /// The Trigger Mine of a Lost game; `None` otherwise.
-    pub trigger: Option<PositionDto>,
-    /// One entry per Cell, row-major.
-    pub cells: Vec<CellDto>,
-}
-
-#[derive(Serialize, Debug, PartialEq, Eq)]
-pub struct PositionDto {
-    pub row: usize,
-    pub col: usize,
-}
-
-#[derive(Serialize)]
-pub struct CellDto {
-    pub state: &'static str,
-    /// `Some` only for Revealed Cells: `"mine"` or the neighbor count.
-    pub content: Option<ContentDto>,
-}
-
-/// Untagged on the wire: the string `"mine"` or a plain number.
-#[derive(Debug, PartialEq, Eq)]
-pub enum ContentDto {
-    Mine,
-    Number(u8),
-}
-
-impl Serialize for ContentDto {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            ContentDto::Mine => serializer.serialize_str("mine"),
-            ContentDto::Number(n) => serializer.serialize_u8(*n),
-        }
-    }
-}
-
-/// A player action from the client.
-#[derive(Debug, Deserialize)]
-pub struct ActionDto {
-    #[serde(rename = "type")]
-    pub kind: ActionKind,
-    pub row: Option<usize>,
-    pub col: Option<usize>,
-    /// `new-game` only; absent keeps the current difficulty.
-    pub difficulty: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ActionKind {
-    Reveal,
-    Flag,
-    Chord,
-    NewGame,
-}
+use self::wire::{ActionDto, ActionKind, GameSnapshot};
 
 /// The outcome of applying a player action to the human game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ActionOutcome {
+pub(crate) enum ActionOutcome {
     /// A New Game replaced the previous one. The committed Seed is on
     /// `game.committed_seed()` (`None` until the First Click, for every game;
     /// a pinned `--seed` then commits to the pinned value, a random game to a
@@ -98,47 +31,13 @@ pub enum ActionOutcome {
     Applied,
 }
 
-// --- Core mapping ---
-
-/// Builds the wire snapshot of a game. Pure function of the `Game`, so
-/// handlers and tests share it.
-pub fn snapshot(game: &Game) -> StateDto {
-    let size = game.size();
-    let mut cells = Vec::with_capacity(size.rows * size.cols);
-    for row in 0..size.rows {
-        for col in 0..size.cols {
-            let pos = Position::new(row, col);
-            let view = game.cell_view(pos);
-            let content = view.content.map(|c| match c {
-                CellContent::Number(n) => ContentDto::Number(n),
-                CellContent::Mine => ContentDto::Mine,
-            });
-            cells.push(CellDto {
-                state: view.state.as_str(),
-                content,
-            });
-        }
-    }
-    // trigger is Some iff the game is Lost: `lose()` sets both together and
-    // is the only writer of either (pinned by the assert below).
-    debug_assert_eq!(
-        game.trigger().is_some(),
-        game.game_state() == GameState::Lost
-    );
-    let trigger = game.trigger().map(|pos| PositionDto {
-        row: pos.row,
-        col: pos.col,
-    });
-    StateDto {
-        game_state: game.game_state().as_str(),
-        difficulty: game.difficulty().as_str(),
-        rows: size.rows,
-        cols: size.cols,
-        flags_remaining: game.flags_remaining(),
-        elapsed_secs: game.elapsed().as_secs(),
-        trigger,
-        cells,
-    }
+/// Assembles the API routes onto a `Router`, given the shared game state. The
+/// static `/frontend/dist` fallback is attached by `main.rs`.
+pub fn routes(state: Arc<Mutex<Game>>) -> Router {
+    Router::new()
+        .route("/state", get(get_state))
+        .route("/action", post(post_action))
+        .with_state(state)
 }
 
 /// Applies an action to the game, replacing it for a new-game. Returns the
@@ -146,11 +45,11 @@ pub fn snapshot(game: &Game) -> StateDto {
 /// message for malformed actions (missing coordinates, bad difficulty). A new
 /// game reuses the Game's own config via `Game::new_game`, switching only the
 /// Difficulty; the committed Seed of a new game is on `game.committed_seed()`.
-pub fn apply_action(game: &mut Game, action: &ActionDto) -> Result<ActionOutcome, String> {
+pub(crate) fn apply_action(game: &mut Game, action: &ActionDto) -> Result<ActionOutcome, String> {
     match action.kind {
         ActionKind::NewGame => {
             let difficulty = match &action.difficulty {
-                Some(raw) => Some(parse_difficulty(raw)?),
+                Some(raw) => Some(Difficulty::parse(raw)?),
                 None => None, // None = new_game keeps the current Difficulty
             };
             game.new_game(difficulty);
@@ -173,18 +72,6 @@ pub fn apply_action(game: &mut Game, action: &ActionDto) -> Result<ActionOutcome
     }
 }
 
-/// Parses a difficulty name, also accepting the classic 1/2/3 numbers.
-pub fn parse_difficulty(s: &str) -> Result<Difficulty, String> {
-    match s.to_ascii_lowercase().as_str() {
-        "beginner" | "1" => Ok(Difficulty::Beginner),
-        "intermediate" | "2" => Ok(Difficulty::Intermediate),
-        "expert" | "3" => Ok(Difficulty::Expert),
-        other => Err(format!(
-            "invalid difficulty '{other}': expected beginner|intermediate|expert or 1|2|3"
-        )),
-    }
-}
-
 /// Logs a freshly created Game's difficulty at `info` with its `source`. The
 /// Seed lifecycle (a committed Seed at `info`, rejected candidates at `debug`)
 /// is logged by the engine in `core.rs`; this records only that a game was
@@ -196,22 +83,22 @@ pub fn log_new_game(game: &Game, source: &str) {
 
 // --- Handlers ---
 
-pub async fn get_state(
+pub(crate) async fn get_state(
     State(game): State<Arc<Mutex<Game>>>,
-) -> Result<Json<StateDto>, (StatusCode, String)> {
+) -> Result<Json<GameSnapshot>, (StatusCode, String)> {
     let game = game.lock().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             "game state poisoned".to_string(),
         )
     })?;
-    Ok(Json(snapshot(&game)))
+    Ok(Json(GameSnapshot::from_game(&game)))
 }
 
-pub async fn post_action(
+pub(crate) async fn post_action(
     State(game): State<Arc<Mutex<Game>>>,
     Json(action): Json<ActionDto>,
-) -> Result<Json<StateDto>, (StatusCode, String)> {
+) -> Result<Json<GameSnapshot>, (StatusCode, String)> {
     let mut game = game.lock().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -245,12 +132,14 @@ pub async fn post_action(
             "game over"
         );
     }
-    Ok(Json(snapshot(&game)))
+    Ok(Json(GameSnapshot::from_game(&game)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::{Difficulty, Features, Game, GameConfig, GameState, Position};
+    use crate::server::wire::{ActionDto, ActionKind, GameSnapshot, PositionDto};
 
     fn action(
         kind: ActionKind,
@@ -264,25 +153,6 @@ mod tests {
             col,
             difficulty: difficulty.map(str::to_owned),
         }
-    }
-
-    #[test]
-    fn snapshot_reflects_a_fresh_game() {
-        let game = Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None));
-        let dto = snapshot(&game);
-        assert_eq!(dto.game_state, "ready");
-        assert_eq!(dto.difficulty, "beginner");
-        assert_eq!(dto.rows, 9);
-        assert_eq!(dto.cols, 9);
-        assert_eq!(dto.flags_remaining, 10);
-        assert_eq!(dto.elapsed_secs, 0);
-        assert_eq!(dto.trigger, None);
-        assert_eq!(dto.cells.len(), 81);
-        assert!(
-            dto.cells
-                .iter()
-                .all(|c| c.state == "hidden" && c.content.is_none())
-        );
     }
 
     #[test]
@@ -356,59 +226,10 @@ mod tests {
             &action(ActionKind::Reveal, Some(0), Some(0), None),
         )
         .unwrap();
-        let dto = snapshot(&game);
+        let dto = GameSnapshot::from_game(&game);
         assert_eq!(dto.game_state, "lost");
         assert_eq!(dto.trigger, Some(PositionDto { row: 0, col: 0 }));
         // The wire only ever shows a Lost game — the Prank Feature is invisible on it (ADR-0002).
-    }
-
-    #[test]
-    fn snapshot_maps_mine_and_number_content() {
-        let mut game =
-            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
-        game.reveal(Position::new(0, 0));
-        let dto = snapshot(&game);
-        assert_eq!(dto.game_state, "lost");
-        assert_eq!(dto.trigger, Some(PositionDto { row: 0, col: 0 }));
-        assert_eq!(dto.cells[0].state, "revealed");
-        assert_eq!(dto.cells[0].content, Some(ContentDto::Mine));
-
-        let mut game =
-            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
-        game.reveal(Position::new(1, 1)); // one neighbor Mine
-        let dto = snapshot(&game);
-        let idx = dto.cols + 1;
-        assert_eq!(dto.cells[idx].state, "revealed");
-        assert_eq!(dto.cells[idx].content, Some(ContentDto::Number(1)));
-    }
-
-    #[test]
-    fn won_snapshot_flags_all_mines() {
-        let mut game =
-            Game::with_mines(Difficulty::Beginner, Features::NONE, &[Position::new(0, 0)]);
-        let size = Difficulty::Beginner.size();
-        for row in 0..size.rows {
-            for col in 0..size.cols {
-                if Position::new(row, col) != Position::new(0, 0) {
-                    game.reveal(Position::new(row, col));
-                }
-            }
-        }
-        let dto = snapshot(&game);
-        assert_eq!(dto.game_state, "won");
-        assert_eq!(dto.flags_remaining, 0);
-        // The lone Mine is serialized as a Flag on the Won board.
-        assert_eq!(dto.cells[0].state, "flagged");
-        assert_eq!(dto.cells[0].content, None);
-    }
-
-    #[test]
-    fn content_serializes_to_the_wire_shape() {
-        assert_eq!(
-            serde_json::to_string(&ContentDto::Mine).unwrap(),
-            "\"mine\""
-        );
-        assert_eq!(serde_json::to_string(&ContentDto::Number(3)).unwrap(), "3");
     }
 
     #[test]
@@ -463,31 +284,6 @@ mod tests {
         .unwrap();
         assert!(matches!(outcome, ActionOutcome::Applied));
         assert_eq!(game.committed_seed(), Some(7));
-    }
-
-    #[test]
-    fn game_config_pins_seed_when_given() {
-        let config = GameConfig::new(Difficulty::Beginner, Features::NONE, Some(5));
-        assert_eq!(config.difficulty, Difficulty::Beginner);
-        assert_eq!(config.features, Features::NONE);
-        assert_eq!(config.pinned_seed, Some(5));
-    }
-
-    #[test]
-    fn game_config_drops_seed_for_prank() {
-        let config = GameConfig::new(Difficulty::Beginner, Features::prank(), Some(5));
-        assert_eq!(config.difficulty, Difficulty::Beginner);
-        assert_eq!(config.features, Features::prank());
-        // Prank is mutually exclusive with a pinned Seed (ADR-0010).
-        assert_eq!(config.pinned_seed, None);
-    }
-
-    #[test]
-    fn game_config_is_random_without_fixed_seed() {
-        let config = GameConfig::new(Difficulty::Expert, Features::NONE, None);
-        assert_eq!(config.difficulty, Difficulty::Expert);
-        assert_eq!(config.features, Features::NONE);
-        assert_eq!(config.pinned_seed, None);
     }
 
     #[test]

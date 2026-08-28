@@ -68,6 +68,18 @@ impl Difficulty {
             Difficulty::Expert => "expert",
         }
     }
+
+    /// Parses a difficulty name, also accepting the classic 1/2/3 numbers.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s.to_ascii_lowercase().as_str() {
+            "beginner" | "1" => Ok(Difficulty::Beginner),
+            "intermediate" | "2" => Ok(Difficulty::Intermediate),
+            "expert" | "3" => Ok(Difficulty::Expert),
+            other => Err(format!(
+                "invalid difficulty '{other}': expected beginner|intermediate|expert or 1|2|3"
+            )),
+        }
+    }
 }
 
 /// A Cell's coordinates on the Board, in (row, col) order.

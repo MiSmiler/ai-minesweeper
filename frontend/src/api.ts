@@ -1,4 +1,4 @@
-// Wire types mirroring the server DTOs (src/server.rs).
+// Wire types mirroring the server DTOs (src/server/wire.rs).
 
 import { log } from "./log";
 
@@ -25,8 +25,8 @@ export interface CellView {
   content: CellContent;
 }
 
-/** The full wire snapshot of the game, mirroring the server's StateDto
- * (src/server.rs): the frontend's view of the whole game. Not the Rust-side
+/** The full wire snapshot of the game, mirroring the server's GameSnapshot
+ * (src/server/wire.rs): the frontend's view of the whole game. Not the Rust-side
  * GameState phase enum — that phase is the `game_state` field below. */
 export interface GameSnapshot {
   game_state: GameStateName;

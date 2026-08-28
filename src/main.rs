@@ -4,8 +4,6 @@ mod server;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 
-use axum::Router;
-use axum::routing::{get, post};
 use clap::Parser;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
@@ -72,13 +70,9 @@ async fn main() {
 
     // The built frontend (frontend/dist) is served at the root; unknown
     // paths fall back to index.html so client-side routing never 404s.
-    let app = Router::new()
-        .route("/state", get(server::get_state))
-        .route("/action", post(server::post_action))
-        .fallback_service(
-            ServeDir::new("frontend/dist").fallback(ServeFile::new("frontend/dist/index.html")),
-        )
-        .with_state(state);
+    let router = server::routes(state).fallback_service(
+        ServeDir::new("frontend/dist").fallback(ServeFile::new("frontend/dist/index.html")),
+    );
 
     let ip: IpAddr = cli.host.parse().expect("invalid host address");
     let addr = SocketAddr::new(ip, cli.port);
@@ -90,7 +84,7 @@ async fn main() {
         seed = cli.seed,
         "Minesweeper web UI at http://{addr}"
     );
-    axum::serve(listener, app).await.expect("server error");
+    axum::serve(listener, router).await.expect("server error");
 }
 
 #[cfg(test)]
