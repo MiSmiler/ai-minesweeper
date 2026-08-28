@@ -10,6 +10,13 @@
 
 When investigating a problem (debugging, diagnosing an error, exploring the codebase), **report findings first and wait for confirmation** before making any changes. Do not jump from investigation directly into editing.
 
+### Interface design alignment
+
+Before implementing any feature or fix — any change to `src/` or `frontend/`
+that writes code — **align the interface design with the user**: lay out the
+interfaces and the shape of the change, and wait for confirmation before
+touching a file. The implementation is not underway until the design is agreed.
+
 ### After a coding round
 
 A round of code changes (feature, fix, or a batch of edits) is not done until the formatting and tests for the sides of the stack it touched pass:
