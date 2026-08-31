@@ -125,3 +125,7 @@ _Avoid_: Options, flags, settings
 **Prank**:
 A Feature that makes the First Click always a Mine, ending the game immediately in `Lost` — the game is unwinnable by design. It is mutually exclusive with a pinned Seed (Prank is unseedable and non-reproducible), so it never coexists with a `--seed`. Enabled by the `--prank` launch parameter; the UI never indicates it is active.
 _Avoid_: Prank mode, trick mode, joke mode, jinx mode
+
+**PlayMode**:
+The perspective a single Game is shown from, independent of the rule set and of which Features are on: `SinglePlay` — the player plays unaided; `AiHelpMePlay` — the player plays while DeepSeek watches and suggests. The set is open and may grow (e.g. `AiPlay`, `AiPlayWithMe`); a Game has exactly one PlayMode at a time.
+_Avoid_: PlaySurface, view, perspective (when meaning the mode)
