@@ -83,13 +83,20 @@ pub enum ProviderEvent {
     Done,                       // 终止、正常收尾（[DONE]）
 }
 
-/// 前置失败（未流任何内容之前）—— 映射到 #97 分桶。
+/// 前置失败（未流任何内容之前）—— 映射到 #97 的 bucket。
 pub enum ProviderError {
     Status { code: u16, body: String },   // 400/401/402/422 → 配置错误
     RateLimited,                          // 429 → 上游瞬时
-    Upstream,                             // 500/503 → 上游瞬时
+    ServerError,                          // 500/503 → 上游瞬时（server 端错误）
     Network,
     Timeout,
+}
+/// 「前置失败」的两个 bucket（#97 ①）。`Serialize` 因为 S5 `AiErrorBody.kind` 直接复用它（序列化为 "config"/"upstream"）。
+#[derive(serde::Serialize)]
+pub enum ProviderErrorKind { Config, Upstream }
+impl ProviderError {
+    /// 谁丢的错最懂分类：400/401/402/422 归 `Config`，其余（429/5xx/网络/超时）归 `Upstream`。
+    pub fn kind(&self) -> ProviderErrorKind;
 }
 
 /// 上游生成是否已被取消（用户中断 / 超时 / 上游错误），由调用侧 `select!` 驱动。
@@ -126,9 +133,8 @@ impl Provider for DeepSeek {
 ```
 
 - 依赖新增：`futures`（Stream）、`tokio-util`（CancellationToken）、`reqwest`（deepseek 实现）。
-- **待确认**：`ProviderError` 要不要细分成「配置类」/「上游类」两个更上层的 kind，以便 server 直接映射
-  `AiErrorKind`？目前用 `Status{code}` 的 code 分支判断，你若倾向显式 kind，我可加一个
-  `ProviderError::kind() -> ProviderErrorKind`。
+- **已确认**：`ProviderError` 加显式 `kind()`（`ProviderErrorKind::{Config,Upstream}`），server 直接
+  `e.kind()` 直接作为 `AiErrorBody.kind`，不再靠 `Status{code}` 的 code 分支判断。
 
 ### S3 `ai::agent` —— `Tool` / `Session` / `Agent`（run_loop）
 
@@ -227,7 +233,7 @@ pub enum GuideEvent {
 /// 终止原因（#97）。wire / 前端镜像此值。
 pub enum InterruptReason { UserInterrupt, RateLimit, Timeout, UpstreamError, Unknown }
 
-/// 前置失败 → 分桶（#97 ①），走 HTTP 状态码 + 结构化错误体。
+/// 前置失败 → bucket（#97 ①），走 HTTP 状态码 + 结构化错误体。
 pub enum SuggestError { PreFlight(ProviderError) }
 
 /// 请求：前端只发 format / model（+ 图像形式的 image）。文本形式的棋盘由后端读自己的 Game。
@@ -280,13 +286,13 @@ pub enum AiStreamEvent {
 }
 // 注：[DONE] 是 SSE 流的收官标记；`Terminated` 是「未收 [DONE]」时的显式终止。
 
-/// 前置失败的错误体（HTTP 状态码 + 结构化 body → #97 ① alert 分桶）。
+/// 前置失败的错误体（HTTP 状态码 + 结构化 body → #97 ① alert bucket）。
+/// `kind` 复用 S2 `ProviderErrorKind`（带 `Serialize`，序列化为 "config"/"upstream"）。
 pub struct AiErrorBody {
-    pub kind: AiErrorKind,     // config | upstream
+    pub kind: ProviderErrorKind,   // config | upstream
     pub code: u16,
     pub message: String,
 }
-pub enum AiErrorKind { Config, Upstream }
 
 /// 路由处理逻辑（与现在测 apply_action 同思路，可独立测）。
 pub(crate) fn handle_guide(...) -> impl IntoResponse;   // SSE
@@ -466,4 +472,4 @@ export async function captureBoardImage(
 4. **分析 `id` 归属**：S5 的 `/ai/guide/:id/interrupt` 的 `<id>`，前端生成 vs 后端分配？
 5. **S5 `AiStreamEvent` 形状**：带 `kind` 的联合（`reasoning/content/done/terminated`）是否就是你要的 wire 形状？
 6. **S3 vs S4**：`complete_once`（聚合）与 `suggest`（流式）并存——OK？
-7. **S2 `ProviderError`**：是否加显式的 `kind()`（config/upstream）以便 S5 直接映射 `AiErrorKind`？
+7. **S2 `ProviderError`**：已定——加显式 `kind()`（`ProviderErrorKind::{Config,Upstream}`），S5 `AiErrorBody.kind` 直接复用 `ProviderErrorKind`（删除了 `AiErrorKind`）。
