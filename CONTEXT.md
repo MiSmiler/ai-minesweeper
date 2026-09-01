@@ -127,5 +127,9 @@ A Feature that makes the First Click always a Mine, ending the game immediately 
 _Avoid_: Prank mode, trick mode, joke mode, jinx mode
 
 **PlayMode**:
-The perspective a single Game is shown from, independent of the rule set and of which Features are on: `SinglePlay` — the player plays unaided; `AiHelpMePlay` — the player plays while DeepSeek watches and suggests. The set is open and may grow (e.g. `AiPlay`, `AiPlayWithMe`); a Game has exactly one PlayMode at a time.
+The perspective a single Game is shown from, independent of the rule set and of which Features are on: `SinglePlay` — the player plays unaided; `AiGuide` — the player plays while a DeepSeek Guide suggests the next move. The set is open and may grow (e.g. `AiPlay`, `AiPlayWithMe`); a Game has exactly one PlayMode at a time.
 _Avoid_: PlaySurface, view, perspective (when meaning the mode)
+
+**Guide**:
+The AI in the `AiGuide` PlayMode, a one-shot advisor that observes only the player-visible board, reasons over it, and suggests a single next move (the `suggest` method); the player executes. Distinct from autonomous `AiPlay` and co-op `AiPlayWithMe`. The board it sees is player-visible state only — never the Mine layout — and the backend still runs one `Game` at a time.
+_Avoid_: assistant, helper, copilot

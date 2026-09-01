@@ -1,4 +1,4 @@
-# Spec: AI 看我玩（`AiHelpMePlay`）辅助模式 — 实施规格
+# Spec: AI 看我玩（`AiGuide`）引导模式 — 实施规格
 
 > 本文件是由 issue **#91**（map）及其 9 个已闭合子 ticket（#92 #93 #94 #95 #96 #97 #104 #111）
 > 综合而成的**实施规格草稿**。它把各子 ticket 的结论固化为一个可由 agent 执行的 spec。
@@ -33,7 +33,7 @@
 
 ## Solution
 
-给扫雷接入一个 `PlayMode` = `AiHelpMePlay`（「AI 看我玩」，即 assist 模式）。
+给扫雷接入一个 `PlayMode` = `AiGuide`（「AI 看我玩」，即 guide 模式）。
 
 - 玩家照常在这个模式的棋盘上玩（完全复刻单机操作），游戏区是 `SinglePlay` 的**完整照搬**
   （不是同一块 `.board` 换皮，而是本模式自己的 DOM + 自己的 game client）。
@@ -42,7 +42,7 @@
   `SUGGEST {"row":N,"col":M}` 行，正常字体、不折叠）。坐标 0-based，人读文本、靠 `#111` 行列号定位格子。
 - 点「分析」：把当前局**玩家可见状态**（`snapshot` 语义）按选中的形式序列化，Rust 后端代理转发给
   DeepSeek（OpenAI 兼容 `POST /chat/completions`），SSE 流式返回推理 + 建议。
-- 顶栏 **mode-switcher**：`SinglePlay` ↔ `AiHelpMePlay` 互斥；**切换即弃局开新局**，无「换个模式接着同一局」。
+- 顶栏 **mode-switcher**：`SinglePlay` ↔ `AiGuide` 互斥；**切换即弃局开新局**，无「换个模式接着同一局」。
 - 保留原「我玩」（`SinglePlay`）模式不变。
 
 失败处理（贴合 #97，**无「降级」分析路径**，只有「失败处理+报错」）：
@@ -52,7 +52,7 @@
 - **流中断**（已流、未收到 `[DONE]`）→ 保留已出字 + 末尾红字「已中断:<reason>」，**不弹窗**。
 - 终止状态统一由后端 SSE 的**终止 event**裁决（reason kind：
   `user_interrupt` / `rate_limit` / `timeout` / `upstream_error` / `unknown`）。
-- **用户中断通道**：前端保持 SSE 不 abort，发 `POST /ai/assist/<id>/interrupt`，后端用
+- **用户中断通道**：前端保持 SSE 不 abort，发 `POST /ai/guide/<id>/interrupt`，后端用
   `CancellationToken` cancel 上游生成，并在**同一 SSE** 发 `{reason:"user_interrupt"}` 终止 event。
 - 失败**不影响场上的 Game**，不自动重试、无「重试」按钮；再点「分析」= 开一轮新分析（发当前棋盘，
   不缓存失败快照）。
@@ -65,14 +65,14 @@
 
 ### 进入与模式
 
-1. 作为玩家，我想在顶栏的 mode-switcher 里看到 `SinglePlay` 和 `AiHelpMePlay` 两个模式，并随时切换，这样我可以自由进出「AI 看我玩」。
-2. 作为玩家，我想在切到 `AiHelpMePlay` 时拿到一个全新（跟刚从 `SinglePlay` 切过来时一样的初始）棋盘，这样 AI 的「看你玩」是从一盘新局开始。
-3. 作为玩家，我想在从 `AiHelpMePlay` 切回 `SinglePlay` 时开一盘新局（而不是把 assist 那局带回去），这样两个模式不会共享同一局、不会串状态。
+1. 作为玩家，我想在顶栏的 mode-switcher 里看到 `SinglePlay` 和 `AiGuide` 两个模式，并随时切换，这样我可以自由进出「AI 看我玩」。
+2. 作为玩家，我想在切到 `AiGuide` 时拿到一个全新（跟刚从 `SinglePlay` 切过来时一样的初始）棋盘，这样 AI 的「看你玩」是从一盘新局开始。
+3. 作为玩家，我想在从 `AiGuide` 切回 `SinglePlay` 时开一盘新局（而不是把 guide 那局带回去），这样两个模式不会共享同一局、不会串状态。
 4. 作为玩家，我想在切换模式时**明确知道当前局会被放弃**（切走即弃、切回重置），这样我不会误以为可以「换个模式接着玩同一局」。
 
-### 在 assist 棋盘上玩
+### 在 guide 棋盘上玩
 
-5. 作为玩家，我想在 `AiHelpMePlay` 的游戏区里**照常**用鼠标 Reveal / Flag / Chord（和 `SinglePlay` 完全一样），这样 AI 看的是我真实的操作。
+5. 作为玩家，我想在 `AiGuide` 的游戏区里**照常**用鼠标 Reveal / Flag / Chord（和 `SinglePlay` 完全一样），这样 AI 看的是我真实的操作。
 6. 作为玩家，我想让这个游戏区有自己独立的 game client（不是复用 `SinglePlay` 的同一个实例），这样两个模式互不干扰。
 7. 作为玩家，我不想让 AI 的任何一个操作/失败影响我棋盘上的操作，这样「AI 看我玩」永远只是陪练，不夺走我的键盘。
 
@@ -88,7 +88,7 @@
 
 ### 坐标定位（行列号）
 
-15. 作为玩家，我想在 assist 棋盘**外圈**看到 0-based 的行列号轴标（`boardAxis`/`axisLabel`），这样我能把 `SUGGEST {"row":N,"col":M}` 对到格子。
+15. 作为玩家，我想在 guide 棋盘**外圈**看到 0-based 的行列号轴标（`boardAxis`/`axisLabel`），这样我能把 `SUGGEST {"row":N,"col":M}` 对到格子。
 16. 作为玩家，我想用 checkbox「**行列号**」开关这个轴标，且默认**关**、切走模式即丢、切回重置、不持久化，这样我需要时才开。
 17. 作为玩家，我想让这个轴标**纯视觉**——不动当前局、不清历史、不发不同输入、不弹窗，这样它只帮我读坐标、不改变任何玩法。
 18. 作为玩家，我想让轴标是 `.board` 外的**绝对定位 overlay**、`pointer-events:none`，这样它不挡点击、也**不进入 `.board` 截图**。
@@ -125,7 +125,7 @@
 37. 作为玩家，我想让 AI 的**任何失败都不影响我棋盘上的这局**，这样分析挂了，我的棋还能继续下。
 38. 作为玩家，我想让失败**不自动重试、也没有「重试」按钮**，这样我不会反复被同一份失败快照折腾。
 39. 作为玩家，我想在失败后再点「分析」能**开一轮新分析**（发当前棋盘、不缓存失败快照），这样我能对最新的局面再问一次。
-40. 作为玩家，我想让**用户中断**走 `POST /ai/assist/<id>/interrupt`（前端保持 SSE 不 abort），这样能干净地停掉上游生成。
+40. 作为玩家，我想让**用户中断**走 `POST /ai/guide/<id>/interrupt`（前端保持 SSE 不 abort），这样能干净地停掉上游生成。
 
 ### 后端与保密（#92、#104）
 
@@ -155,14 +155,14 @@
 
 ### 1. PlayMode（前端组装层）— ADR-0012
 
-- 概念定型为 **`PlayMode`**（open enum）：`SinglePlay` / `AiHelpMePlay`（未来 `AiPlay` / `AiPlayWithMe`）。
+- 概念定型为 **`PlayMode`**（open enum）：`SinglePlay` / `AiGuide`（未来 `AiPlay` / `AiPlayWithMe`）。
   它属**前端组装层**，与核心层的 `Feature`/`Features`（影响玩法的 opt-in）**解耦**。
 - 一个 `Game` 在同一时刻只有**一个** `PlayMode`。两模式**互斥**；切换即放弃当前局并开新局
   （后端仍是单 `Game`）；没有「换个模式接着同一局」。
 - 每个 `PlayMode` 是 `app/` 里一个独立组合，各自套用一个独立 game slice（`createGameClient`），
-  assist 还套用一个 `ai/` slice；切换 = 拆掉重建该组合。
+  guide 还套用一个 `ai/` slice；切换 = 拆掉重建该组合。
 - 顶栏一个 **mode-switcher bar**。`.top-bar` 更名 `.game-top-bar`（避免与 mode-switcher 混淆的命名，属组装层）。
-- `AiHelpMePlay` 组合分**三区**：
+- `AiGuide` 组合分**三区**：
   - **左上游戏区**：`SinglePlay` 的完整照搬（独立 DOM + 独立 game client）。
   - **左下仪表盘**：「分析」按钮（含「中断」）、「输入格式」下拉、**行列号** checkbox、**历史**列表。
   - **右侧对话**：思考区（`reasoning_content`）+ 正文区（`content`）。
@@ -177,8 +177,8 @@
 - `ai` 内分 `agent`（引擎：`Agent`、`Tool`、`Session`、`run_loop`）→ `provider`（`Provider` seam + `deepseek` 实现）。
   `agent → provider` 是唯一内部依赖，`provider` 不依赖任何内部模块。
   **`Provider` seam 存在是因为未来不止 DeepSeek 一个 provider**。
-- 一次性顾问 = **`ai_adapter::suggest()`**：single-turn、只读，注入棋盘、返回一份分析 + 一个建议。
-  **不叫 `assist`**（assist 只是 issue 讨论里的工作术语，非代码/文档符号）。
+- 一次性顾问 = **`ai_adapter::Guide::suggest()`**：single-turn、只读，注入棋盘、返回一份分析 + 一个建议。
+  这里 `Guide` 是**正名**（模式 `AiGuide` 里的 AI 角色）；`assist` 只是 issue 讨论里的工作术语，非代码/文档符号。
 - 未来持久循环模式 = `ai_play`（跑工具循环、读写 `Game`），名称暂定，本 map **不实现**。
 - 工具绑定是参数而非写死单一游戏：`ai_adapter::tools` 从传入的 `GameHandle` 构建 `ai::Tool`s。
   今天各模式共享后端单 `Game`（`Arc<Mutex<Game>>`）、切模式触发新局；未来 `AiPlayWithMe` 需要两个
@@ -208,7 +208,7 @@
 
 ### 5. AI 输出契约（#95）
 
-- assist 的交付物 = **可读分析 + 坐标**，目的在验证 AI 对棋盘的分析能力。
+- guide 的交付物 = **可读分析 + 坐标**，目的在验证 AI 对棋盘的分析能力。
 - **不做前端解析/高亮**：`SUGGEST {"row":N,"col":M}` 机器标记行**保留但无人消费**，人直接读文本
   （含末尾 `SUGGEST` 行）定位格子。
 - 建议**单个坐标**；未来可扩展多个。坐标 **0-based**；「人照做」定位以 **#111**（行列标号）为前提。
@@ -217,11 +217,11 @@
 
 ### 6. 行列号辅助标记（#111）
 
-- `AiHelpMePlay` 棋盘**外圈** 0-based row/col 轴标（`boardAxis`/`axisLabel`），`.board` 外**绝对定位
+- `AiGuide` 棋盘**外圈** 0-based row/col 轴标（`boardAxis`/`axisLabel`），`.board` 外**绝对定位
   overlay**、`pointer-events:none`、**不进 `.board` 截图**、对 4 种 AI 输入形式**零影响**（正交）。
 - **不预留 gutter**（负偏移占天然留白，被裁再补 padding）。
 - checkbox「行列号」随仪表盘落位；**纯视觉**——不动当前局、不清历史、不发不同输入、不弹窗。
-- **默认关**、assist 组件内状态（切走即丢、切回重置、不持久化）。
+- **默认关**、guide 组件内状态（切走即丢、切回重置、不持久化）。
 - 术语**不入** `CONTEXT.md`、**不立 ADR**（纯前端小组件）。
 
 ### 7. DeepSeek API（#92）
@@ -253,14 +253,14 @@
   - **②流中断**（已流、未收 `[DONE]`）= 保留已出字 + 末尾红字「已中断:<reason>」，**不弹窗**。
 - **终止状态统一由后端发 SSE 终止 event 裁决**，reason kind：
   `user_interrupt` / `rate_limit` / `timeout` / `upstream_error` / `unknown`。
-- **用户中断通道**：前端保持 SSE **不 abort**，发 `POST /ai/assist/<id>/interrupt`；后端 cancel 上游生成
+- **用户中断通道**：前端保持 SSE **不 abort**，发 `POST /ai/guide/<id>/interrupt`；后端 cancel 上游生成
   （`CancellationToken`，生成侧 `select!`）并在同一 SSE 发 `{reason:"user_interrupt"}` 终止 event，
   前端据 event 渲染红字。`rate_limit` / `timeout` / `upstream_error` 同理。
 
 ### 10. API 契约 / wire 概览
 
-- `POST /ai/assist/:id`：开始一轮分析，返回 SSE 流（`content` + `reasoning_content` + 终止 event）。
-- `POST /ai/assist/:id/interrupt`：取消上游生成，驱动同一 SSE 的 `{reason:"user_interrupt"}` 终止 event。
+- `POST /ai/guide/:id`：开始一轮分析，返回 SSE 流（`content` + `reasoning_content` + 终止 event）。
+- `POST /ai/guide/:id/interrupt`：取消上游生成，驱动同一 SSE 的 `{reason:"user_interrupt"}` 终止 event。
 - 请求体：所选 **presentation form** + **model**（+ 图像形式附带 `image` base64）。
   **文本形式（A/B/C）的棋盘由后端读自己的 `Game` 渲染**（单 `Game` 权威），前端**不**回传棋盘数据；
   图像形式（D）由前端 `html-to-image` 截 `.board` 并回传 `image`。请与 `docs/seams.md` S4 核对。
@@ -269,7 +269,7 @@
 ### 11. 前端 `ai/` slice（#96 补全）
 
 - `frontend/src/ai/` slice（ADR-0011 已预留）：AI 对话、分析状态机、双流渲染、行列号组件、`html-to-image` 截图。
-- `app/` 组装：mode-switcher + 各 `PlayMode` 组合；assist 组合拿 `ai/` slice + `game/` slice 拼。
+- `app/` 组装：mode-switcher + 各 `PlayMode` 组合；guide 组合拿 `ai/` slice + `game/` slice 拼。
 
 ---
 
@@ -308,12 +308,12 @@
    `rate_limit`/`timeout`/`upstream_error`）。与 `server/mod.rs` 现在测 `apply_action` 同思路——在路由
    处理逻辑 seam 处测，不追求真实 HTTP 集成。
 
-5. **前端组合 seam：`app/` 中 assist 组合的 deps 注入**（拟建，类比 `createGameClient`）。
-   给 assist 组合注入 **mock `ai` api adapter** + **mock `game` client**，驱动可观察 UI 行为：
+5. **前端组合 seam：`app/` 中 guide 组合的 deps 注入**（拟建，类比 `createGameClient`）。
+   给 guide 组合注入 **mock `ai` api adapter** + **mock `game` client**，驱动可观察 UI 行为：
    mode 切换弃局开新局、双流渲染、输入格式变更→确认+清历史、中断→红字、行列号开关。
 
 **哪些模块会被测**：`ai`（agent/run_loop/session + provider seam）、`ai_adapter`（序列化/prompt/`suggest`）、
-`server`（`/ai/...` 处理）、前端 `ai/` slice 组件、`app/` 的 assist 组合。
+`server`（`/ai/...` 处理）、前端 `ai/` slice 组件、`app/` 的 guide 组合。
 
 **什么是一个好测试**：只断言**外部可观察行为**（给定一个 `Game` 的玩家可见状态 → 得到的 prompt/payload
 正确、`SUGGEST` 契约正确；给定 mock provider → 分析、`[DONE]`、终止 event 正确；给定前端 mock deps →
@@ -354,8 +354,8 @@
   序列化时原样输出即可，不必 clamp。
 - **真实 DeepSeek 验证留实现期**：本 spec 的样例/契约来自手造目标输出（#94 原型「样例输出」），
   非真实模型返回。实现后需用真实 vision/文本模型各跑一次验证。
-- **命名**：不要用 `assist` 作为代码/文档符号（那是 issue 工作术语）；代码用 `AiHelpMePlay` / `suggest` /
-  `ai` / `ai_adapter`。也不要新增 `Preview` 之外的高亮术语（#95 明确不解析、不高亮）。
+- **命名**：模式名词用 `Guide`（AI 角色），`PlayMode` 变体用 `AiGuide`，接口用 `Guide::suggest()`；
+  模块用 `ai` / `ai_adapter`（`assist` 只是 issue 工作术语，已弃用）。也不要新增 `Preview` 之外的高亮术语（#95 明确不解析、不高亮）。
 - **图片留底**：`base64_img` 写盘用 `YYYYMMDD_<seed>_<seq>.png`；`<exe_dir>` 是进程可执行目录，
   注意可写性（失败不阻断发送）。
 - **线程/并发**：后端单 `Game` 由 `Arc<Mutex<Game>>` 共享；`/ai/...` 只读棋盘（建议模式不写 `Game`），
