@@ -84,20 +84,18 @@ pub enum ProviderEvent {
 }
 
 /// 前置失败（未流任何内容之前）—— 映射到 #97 的 bucket。
-pub enum ProviderError {
-    Status { code: u16, body: String },   // 400/401/402/422 → 配置错误
-    RateLimited,                          // 429 → 上游瞬时
-    ServerError,                          // 500/503 → 上游瞬时（server 端错误）
-    Network,
-    Timeout,
+/// 通用错误载体，**不写死错误类型枚举**（同 `Model` 是字符串的教训）：具体错误码及含义由 provider
+/// （deepseek）给出，抽象层只关心跨 provider 的 `kind` + 原始码/描述。`code` 开集，新增错误码不改此类型。
+/// 它本身也是发送给前端的 wire 错误体（序列化 { kind, code, message }）。
+#[derive(serde::Serialize)]
+pub struct ProviderError {
+    pub kind: ProviderErrorKind,   // Config | Upstream（序列化为 "config"/"upstream"）
+    pub code: Option<u16>,         // provider 原生的 HTTP 错误码；无则 None（序列化为 null）
+    pub message: String,           // 可读描述（DeepSeek 错误 body）
 }
-/// 「前置失败」的两个 bucket（#97 ①）。`Serialize` 因为 S5 `AiErrorBody.kind` 直接复用它（序列化为 "config"/"upstream"）。
+/// 「前置失败」的两个 bucket（#97 ①）。`ProviderError`（wire 错误体）序列化时用它（"config"/"upstream"）。
 #[derive(serde::Serialize)]
 pub enum ProviderErrorKind { Config, Upstream }
-impl ProviderError {
-    /// 谁丢的错最懂分类：400/401/402/422 归 `Config`，其余（429/5xx/网络/超时）归 `Upstream`。
-    pub fn kind(&self) -> ProviderErrorKind;
-}
 
 /// 上游生成是否已被取消（用户中断 / 超时 / 上游错误），由调用侧 `select!` 驱动。
 // 类型由 tokio-util 提供；此处引用。
@@ -126,15 +124,19 @@ impl DeepSeek {
     pub async fn list_models(&self) -> Result<Vec<String>, ProviderError>;
     /// 校验模型名是否属于本 provider；不属于则 Err（供 `--model` 前置校验）。
     pub fn validate_model(&self, model: &str) -> Result<(), ProviderError>;
+    /// 把 DeepSeek 的 HTTP 错误响应解析成 `ProviderError`——错误码及含义归本 mod：
+    /// 400 格式 / 401 认证失败 / 402 余额不足 / 422 参数错误 → `Config`；429 / 500 / 503 → `Upstream`。
+    pub fn parse_http_error(code: u16, message: String) -> ProviderError;
 }
 impl Provider for DeepSeek {
     // model 字符串直接作为 API 的 model 参数；无 enum、无我们维护的字符串映射表。
+    // 连接失败/超时（无 HTTP 码）→ 直接构造 ProviderError{ kind: Upstream, code: None, message }。
 }
 ```
 
 - 依赖新增：`futures`（Stream）、`tokio-util`（CancellationToken）、`reqwest`（deepseek 实现）。
-- **已确认**：`ProviderError` 加显式 `kind()`（`ProviderErrorKind::{Config,Upstream}`），server 直接
-  `e.kind()` 直接作为 `AiErrorBody.kind`，不再靠 `Status{code}` 的 code 分支判断。
+- **已确认**：`ProviderError` 是通用载体（`kind` 字段，非 `kind()` 方法）；`ProviderErrorKind::{Config,Upstream}`
+  由 `deepseek::parse_http_error` 判定，`server` 直接序列化 `ProviderError`，不再靠 code 分支。
 
 ### S3 `ai::agent` —— `Tool` / `Session` / `Agent`（run_loop）
 
@@ -286,13 +288,8 @@ pub enum AiStreamEvent {
 }
 // 注：[DONE] 是 SSE 流的收官标记；`Terminated` 是「未收 [DONE]」时的显式终止。
 
-/// 前置失败的错误体（HTTP 状态码 + 结构化 body → #97 ① alert bucket）。
-/// `kind` 复用 S2 `ProviderErrorKind`（带 `Serialize`，序列化为 "config"/"upstream"）。
-pub struct AiErrorBody {
-    pub kind: ProviderErrorKind,   // config | upstream
-    pub code: u16,
-    pub message: String,
-}
+/// 前置失败的错误体 = `ai::provider::ProviderError`（带 `Serialize`，序列化为 { kind, code, message }）。
+/// 不再单独定义 wire 错误体；`server` 直接把 `ProviderError` 序列化返回给前端。
 
 /// 路由处理逻辑（与现在测 apply_action 同思路，可独立测）。
 pub(crate) fn handle_guide(...) -> impl IntoResponse;   // SSE
@@ -353,7 +350,7 @@ export type AiEvent =
   | { kind: "done" }
   | { kind: "terminated"; reason: InterruptReason };
 
-export type PreFlightError = { kind: "config" | "upstream"; code: number; message: string };
+export type PreFlightError = { kind: "config" | "upstream"; code: number | null; message: string };
 
 export interface GuideRequest { format: BoardFormat; model: string; image?: string; }
 
@@ -448,7 +445,7 @@ export async function captureBoardImage(
 | S2 | `ai::provider::Provider` | **主 seam** | `stream_chat`, `ChatRequest`, `ProviderEvent`, `ProviderError` |
 | S3 | `ai::agent` | 定义 | `Tool`, `Session`, `Agent::{complete_once,run_loop}` |
 | S4 | `ai_adapter` | 绑定 | `BoardView`, `system_prompt`, `render_text/image`, `Guide::suggest`, `GuideEvent`, `InterruptReason`, `GuideRequest` |
-| S5 | `server` 传输 | 薄传输 | `ai_routes`, `AiStreamEvent`, `AiErrorBody` |
+| S5 | `server` 传输 | 薄传输 | `ai_routes`, `AiStreamEvent`, `ProviderError`（错误体） |
 | S6 | `app/` 组装 | 组合 | `mountMode`, `renderModeSwitcher`, `composeGuideMode` |
 | S7 | `ai/api.ts` | wire | `AiApi`, `AiEvent`, `GuideRequest` |
 | S8 | `ai/stateMachine.ts` | 状态机 | `AnalysisMachine`, `AnalysisState` |
@@ -472,4 +469,5 @@ export async function captureBoardImage(
 4. **分析 `id` 归属**：S5 的 `/ai/guide/:id/interrupt` 的 `<id>`，前端生成 vs 后端分配？
 5. **S5 `AiStreamEvent` 形状**：带 `kind` 的联合（`reasoning/content/done/terminated`）是否就是你要的 wire 形状？
 6. **S3 vs S4**：`complete_once`（聚合）与 `suggest`（流式）并存——OK？
-7. **S2 `ProviderError`**：已定——加显式 `kind()`（`ProviderErrorKind::{Config,Upstream}`），S5 `AiErrorBody.kind` 直接复用 `ProviderErrorKind`（删除了 `AiErrorKind`）。
+7. **S2 `ProviderError`**：已定——`ProviderError` 为通用载体（`kind` / `code: Option<u16>` / `message`）且 `serde::Serialize`，
+  直接作为发送前端的 wire 错误体（删除了 `AiErrorBody` 和 `AiErrorKind`）；`ProviderErrorKind::{Config,Upstream}` 由 `deepseek::parse_http_error` 判定。
