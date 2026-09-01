@@ -337,7 +337,9 @@
 - **「我玩」复用分析层**：`SinglePlay` 不接入分析/呈现层，两边不合并。
 - **`AiPlay` / `AiPlayWithMe` / `ai_play` 持久循环**：本 map 只实现一次性 `suggest`（无工具循环）。
 - **`ai` 抽成独立 crate**：AI 边界仍在演进，且 `ai` 与 `core` 解耦，未来抽 crate 是机械动作，现在不抽。
-- **多 provider**：只做 DeepSeek；`Provider` seam 为未来留口，但不实现其他 provider。
+- **多 provider / CLI 选择**：只做 DeepSeek，且本 map **hardcode 用 DeepSeek**（`main` 直接 `DeepSeek::new` 注入 key）；
+  `Provider` seam + `Box<dyn Provider>` 为未来留口。`--provider` / `--model` CLI 暂不实现（将来在 `main` 的选择处扩展，
+  `ai_adapter`/`Guide` 零改动）；模型名按字符串透传、不写死 enum。
 - **`tools`/`tool_use` 在顾问模式的实际调用**：顾问是 single-turn、只读、无工具；`tool_use` 支持仅为未来 `AiPlay` 准备。
 
 ---
