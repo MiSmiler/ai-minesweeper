@@ -271,6 +271,16 @@
 - `frontend/src/ai/` slice（ADR-0011 已预留）：AI 对话、分析状态机、双流渲染、行列号组件、`html-to-image` 截图。
 - `app/` 组装：mode-switcher + 各 `PlayMode` 组合；guide 组合拿 `ai/` slice + `game/` slice 拼。
 
+### 12. dev 手工测试 CLI —— `--test-ai-chat`（新需求）
+
+- **用途**：开发阶段快速验证 DeepSeek（`Provider`）通路能否真正跑通——读 `DEEPSEEK_API_KEY`、发一条对话、打印完整回复。不属于产品功能路径，是 `main` 的 dev 工具分支。
+- **入口**：CLI 参数 `--test-ai-chat <str>`，`<str>` 是发给 AI 的对话内容（一条 User message）。
+- **互斥**：只能**单独**指定，与其它所有参数冲突（clap `conflicts_with_all`）。
+- **main 早分支**：命中即进入「测试 AI」路径——不建 `Game`、不启动 server、不进正常流程；无 `DEEPSEEK_API_KEY` 时明确报错（AI 未配置）。
+- **实现**：复用 `Agent::complete_once`（S3：单轮、聚合、非流式），**不新增 `Provider` 非流式接口**。构造一个 `Agent`（DeepSeek + 默认 model 字符串）+ `Session`（push 一条 User message），`complete_once` 后打印 `reply.content`（及 `reasoning`）。
+- **输出**：完整回复打到 stdout，不要求流式（CLI 端本来就是聚合）。
+- **model**：默认字符串（如 `deepseek-v4-flash`），与产品路径一致、按字符串透传。
+
 ---
 
 ## Testing Decisions

@@ -158,6 +158,7 @@ impl Agent {
     pub fn new(provider: Box<dyn Provider>, model: String) -> Self;
     pub fn add_tool(&mut self, tool: Arc<dyn Tool>);          // 预留给 AiPlay
     /// 单轮完成（无工具循环）—— 顾问路径。
+    /// 也是 dev 手工测试 `--test-ai-chat` 的入口（聚合、非流式；无需 `Provider` 新增接口）。
     pub async fn complete_once(
         &self, session: &Session, cancel: CancellationToken,
     ) -> Result<AgentReply, AgentError>;
