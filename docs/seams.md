@@ -49,7 +49,7 @@ AI「大脑」的单点。`ai_adapter::Guide::suggest` 与未来 `ai_play` 都�
 
 **实现注记**：本 spec 阶段 `main` 先 **hardcode `DeepSeek`**（`DeepSeek::new(config, default_model)`），**不**实现
 `--provider`/`--model` CLI 选择——那只是为将来留口。但构造点收在 `main`、上层只见 `Box<dyn Provider>`，将来
-要加 CLI 时只需在 `main` 的 provider 选择处扩展（用 `--model` 值 `set_model` 或改构造），`ai_adapter`/`Guide`/S3`Agent` 零改动。
+要加 CLI 时只需在 `main` 的 provider 选择处扩展（用 `--model` 值构造/选择 `Agent` 的初始 model），`ai_adapter`/`Guide`/`ai::protocol` 零改动。
 `main` 启动时可**可选预热**模型列表（`let _ = deepseek.list_models().await;`，失败忽略、不阻断启动）。
 
 ```rust
@@ -57,7 +57,8 @@ AI「大脑」的单点。`ai_adapter::Guide::suggest` 与未来 `ai_play` 都�
 use serde::Serialize;
 
 /// 模型名就是 provider 特有的「名字」字符串——不写死 enum。是否属于该 provider 由 provider 端校验；
-/// 支持列表经 `GET /models`。注意：model 的**当前值**存在 `DeepSeek`（见 provider/deepseek.rs），不在协议层。
+/// 支持列表经 `GET /models`。model 是 `ChatRequest` 的**必填字段**，由 `Agent` 用自记录的 `current_model` 填入；
+/// `DeepSeek` 本身只读、不自持 model。
 
 /// 对话消息（按 role 区分字段集合）。`serde(tag="role")` 直接序列化成 wire 形状。
 /// 4 个变体覆盖 system / user / assistant / tool。
@@ -94,6 +95,7 @@ pub struct ToolDecl {
 
 pub struct ChatRequest {
     pub messages: Vec<Message>,
+    pub model: String,          // 必填：当前 model；由 Agent 填 current_model（provider 端直接用它）
     pub stream: bool,           // 顾问恒 true（SSE）
     pub tools: Vec<ToolDecl>,   // 顾问空集
 }
@@ -131,7 +133,8 @@ use tokio_util::sync::CancellationToken;
 pub type ProviderStream = Pin<Box<dyn Stream<Item = ProviderEvent> + Send>>;
 
 pub trait Provider: Send + Sync {
-    /// 前置失败返回 `Err`（映射 #97 ①）；否则返回 delta 流，末尾是 `Done`。
+    /// 前置失败返回 `Err`（映射 #97 ①）：provider 端先 `validate_model(req.model)`（model 不属于它 → `Config`）。
+    /// 通过后返回 delta 流，末尾是 `Done`。
     /// 生成期间可通过 `cancel` 取消（用户中断 #97）——取消表现为流提前 error/结束，
     /// 由 `ai_adapter::Guide::suggest` 映射为 `Terminated(user_interrupt)`。
     async fn stream_chat(
@@ -146,15 +149,14 @@ pub struct DeepSeek {
     api_key: String,
     base_url: String,
     client: reqwest::Client,
-    model: String,                          // 模型名；构造时定死（换 model = Agent 重建 provider）
     /// lazy 缓存 `GET /models` 结果：首次用到才拉，失败可重试，一次填充、多次复用。
     models: tokio::sync::OnceCell<Vec<String>>,
 }
 pub struct DeepSeekConfig { pub api_key: String, pub base_url: String }
 impl DeepSeek {
     /// 读 env `DEEPSEEK_API_KEY` 构造；无 key 时说明 AI 不启用。纯构造，不发网络请求。
-    pub fn new(config: DeepSeekConfig, model: String) -> Self;
-    pub fn model(&self) -> &str;
+    /// provider 只读、不自持 model；model 随 `ChatRequest.model`（Agent 填）。
+    pub fn new(config: DeepSeekConfig) -> Self;
     /// `GET /models` 查询本 provider 支持的模型（可选 capability：校验模型名 / 填充选择器）。
     /// lazy：首次调用经 `OnceCell::get_or_try_init` 拉取并缓存；失败不缓存、下次重试。
     pub async fn list_models(&self) -> Result<Vec<String>, ProviderError>;
@@ -165,7 +167,8 @@ impl DeepSeek {
     pub fn parse_http_error(code: u16, message: String) -> ProviderError;
 }
 impl Provider for DeepSeek {
-    // 发请求时用自持的 model（构造时定死）；无 enum、无我们维护的映射表。
+    // 入口先 `validate_model(&req.model)`：model 不在本 provider 列表 → `Err(Config)`（首次经 list_models 拉取/缓存）。
+    // 校验通过后发请求，用 `req.model`（Agent 填入的 current_model）；无 enum、无我们维护的映射表。
     // 连接失败/超时（无 HTTP 码）→ 直接构造 ProviderError{ kind: Upstream, code: None, message }。
 }
 ```
@@ -209,18 +212,36 @@ pub enum AgentEvent {
 
 pub enum AgentError {
     Provider(ProviderError),
+    NoProvider,     // stream 时 current_provider 为空 / 容器无此 provider（未 set_model 或切错名）
     Cancelled,
 }
 
-pub struct Agent { /* provider, make_provider, Arc<Vec<Tool>> */ }
+/// 按名字注册多个 provider 的容器（保序）。provider 只读；多 provider 为将来留口，本 map 只用 DeepSeek。
+pub struct ProviderSet { providers: Vec<(String, Box<dyn Provider>)> }
+impl ProviderSet {
+    pub fn new() -> Self;
+    pub fn insert(&mut self, name: impl Into<String>, provider: Box<dyn Provider>);
+    pub fn get(&self, name: &str) -> Option<&dyn Provider>;
+    pub fn names(&self) -> Vec<&str>;
+}
+
+pub struct Agent {
+    providers: ProviderSet,
+    current_provider: String,   // 当前用哪个 provider（名字串，"deepseek"）
+    current_model: String,      // 当前用哪个 model（属 current_provider）
+    tools: Arc<Vec<Tool>>,
+}
 impl Agent {
-    pub fn new(provider: Box<dyn Provider>,
-               make_provider: Arc<dyn Fn(&str) -> Box<dyn Provider> + Send + Sync>) -> Self;
-    /// 切换模型 = **重建 provider**（新 model，复用 config/client，由 make_provider 构造）。format D/vision 用。
-    pub fn set_model(&mut self, model: String) { self.provider = (self.make_provider)(&model); }
+    /// 只收 provider 容器；current 初始为空，随后由调用者 `set_model` 定（V2）。
+    pub fn new(providers: ProviderSet) -> Self;
+    /// 设当前选择：Some(p) = 切到 provider p 并设 current_model；None = 只设 current_model（沿用当前 provider）。
+    pub fn set_model(&mut self, model: String, provider: Option<&str>);
+    pub fn current_provider(&self) -> &str;
+    pub fn current_model(&self) -> &str;
     pub fn add_tool(&mut self, tool: Arc<dyn Tool>);          // 预留给 AiPlay
-    /// 流式：把 session 发出去，边收边转 `AgentEvent`（隔离 `ProviderEvent`）。
-    /// 生成期间可由 `cancel` 中断（#97）；前置失败 → Err(Provider)。
+    /// 流式：把 session 发出去（`ChatRequest.model` 填 `current_model`），边收边转 `AgentEvent`（隔离 `ProviderEvent`）。
+    /// 内部 `providers.get(&self.current_provider)` 查不到 → `Err(NoProvider)`；其余前置失败 → `Err(Provider)`。
+    /// 生成期间可由 `cancel` 中断（#97）。
     pub async fn stream(
         &self, session: &Session, cancel: CancellationToken,
     ) -> Result<impl Stream<Item = AgentEvent>, AgentError>;
@@ -301,7 +322,7 @@ pub struct GuideRequest {
 /// 多模态（vision）模型名——format D（Image）时切换（`agent.set_model(VISION_MODEL)`）。#92
 const VISION_MODEL: &str = "deepseek-v4-flash-vision-exp";
 
-/// 多线程共享：`Arc<Mutex<Agent>>`——`&self` 方法内 `lock()` 拿到 `&mut Agent` 就能 `set_model`（重建 provider）。
+/// 多线程共享：`Arc<Mutex<Agent>>`——`&self` 方法内 `lock()` 拿到 `&mut Agent` 就能 `set_model`（只改 model 记录）。
 pub struct Guide { agent: Arc<Mutex<Agent>> }
 impl Guide {
     /// 用共享 Agent（DeepSeek 或 mock 构造）构造 Guide。
@@ -311,8 +332,8 @@ impl Guide {
         &self, game: &Game, req: GuideRequest, cancel: CancellationToken,
     ) -> Result<impl Stream<Item = GuideEvent>, SuggestError>;
     // 内部：let mut agent = self.agent.lock().unwrap();
-    //       req.format == Image → agent.set_model(VISION_MODEL)（此刻重建 provider；#92）
-    //       render 棋盘 → Session(Message::System/User) → agent.stream()
+    //       req.format == Image → agent.set_model(VISION_MODEL, None)（只改 model，provider 沿用当前；#92）
+    //       render 棋盘 → Session(Message::System/User) → agent.stream()（agent 自动填 current_model）
     //       把 AgentEvent 映射成 GuideEvent（Done→Done、Cancelled→Terminated(reason)），
     //       把 AgentError 映射成 SuggestError。
     // 注：lock() 借 `&mut Agent` 调 set_model；stream 是 `&self`，同 guard 下可续用。

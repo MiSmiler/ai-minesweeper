@@ -278,9 +278,9 @@
 - **入口**：CLI 参数 `--test-ai-chat <str>`，`<str>` 是发给 AI 的对话内容（一条 User message）。
 - **互斥**：只能**单独**指定，与其它所有参数冲突（clap `conflicts_with_all`）。
 - **main 早分支**：命中即进入「测试 AI」路径——不建 `Game`、不启动 server、不进正常流程；无 `DEEPSEEK_API_KEY` 时明确报错（AI 未配置）。
-- **实现**：复用 `Agent::complete_once`（S3：单轮、聚合、非流式），**不新增 `Provider` 非流式接口**。构造 `DeepSeek`（config + 默认 model）→ `Agent` + `Session`（push 一条 `Message::User`），`complete_once` 返回 `Message::Assistant`，打印其 `.content`（及 `.reasoning_content`）。
+- **实现**：复用 `Agent::complete_once`（S3：单轮、聚合、非流式），**不新增 `Provider` 非流式接口**。`DeepSeek::new(config)` 放入 `ProviderSet` → `Agent::new(set)` → `agent.set_model(default_model, Some("deepseek"))` + `Session`（push 一条 `Message::User`），`complete_once` 返回 `Message::Assistant`，打印其 `.content`（及 `.reasoning_content`）。
 - **输出**：完整回复打到 stdout，不要求流式（CLI 端本来就是聚合）。
-- **model**：默认字符串（如 `deepseek-v4-flash`），作为构造 `DeepSeek` 的默认 model（模型统一由 `DeepSeek` 持有，不再透传校验）。
+- **model**：默认字符串（如 `deepseek-v4-flash`），构造后经 `agent.set_model(default_model, Some("deepseek"))` 定（模型由 `Agent` 的 `current_model` 记录、发请求时填进 `ChatRequest.model`；`DeepSeek` 只读、不带 model）。
 
 ---
 
@@ -348,9 +348,9 @@
 - **「我玩」复用分析层**：`SinglePlay` 不接入分析/呈现层，两边不合并。
 - **`AiPlay` / `AiPlayWithMe` / `ai_play` 持久循环**：本 map 只实现一次性 `suggest`（无工具循环）。
 - **`ai` 抽成独立 crate**：AI 边界仍在演进，且 `ai` 与 `core` 解耦，未来抽 crate 是机械动作，现在不抽。
-- **多 provider / CLI 选择**：只做 DeepSeek，且本 map **hardcode 用 DeepSeek**（`main` 直接 `DeepSeek::new(config, default_model)`）；
+- **多 provider / CLI 选择**：只做 DeepSeek，且本 map **hardcode 用 DeepSeek**（`main` 直接 `DeepSeek::new(config)` 放入 `ProviderSet` → `Agent::new(set)` → `set_model(default_model, Some("deepseek"))`）；
   `Provider` seam + `Box<dyn Provider>` 为未来留口。`--provider` / `--model` CLI 暂不实现（将来在 `main` 的选择处扩展，
-  `ai_adapter`/`Guide` 零改动）；模型名是字符串（不写死 enum），由 `DeepSeek` 持有。
+  `ai_adapter`/`Guide` 零改动）；模型名是字符串（不写死 enum），由 `Agent` 记录、随 `ChatRequest.model` 传递。
 - **`tools`/`tool_use` 在顾问模式的实际调用**：顾问是 single-turn、只读、无工具；`tool_use` 支持仅为未来 `AiPlay` 准备。
 
 ---
