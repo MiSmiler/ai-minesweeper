@@ -56,13 +56,32 @@ use futures::Stream;
 /// `--model` 直接把字符串照搬传入 provider；是否属于该 provider 由 provider 端（DeepSeek）校验。
 /// DeepSeek 支持列表可经 `GET /models` 查询（可选 capability：校验模型名 / 填充选择器下拉）。
 
-pub enum MessageRole { System, User, Assistant }
+/// 对话消息（按 role 区分字段集合）。`serde(tag="role")` 直接序列化成 wire 形状。
+/// 4 个变体覆盖 system / user / assistant / tool。
+#[derive(serde::Serialize)]
+#[serde(tag = "role", rename_all = "lowercase")]
+pub enum Message {
+    System { content: String },
+    /// 可多模态（文本/图）。
+    User { content: Vec<ContentPart> },
+    Assistant {
+        content: String,
+        #[serde(skip_serializing_if = "Option::is_none")] reasoning_content: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")] tool_calls: Option<Vec<ToolCall>>,
+    },
+    Tool { tool_call_id: String, content: String },
+}
+#[derive(serde::Serialize)]
 pub enum ContentPart {
     Text(String),
-    /// data URL / base64 的 PNG；仅 vision-exp，单图 ≤384 token（#92）。<=128k no
+    /// data URL / base64 的 PNG；仅 vision-exp，单图 ≤384 token（#92）。wire 多模态形状（`{type,text}` /
+    /// `{type,image_url,image_url:{url}}`）与内部表示不同，实现期用 serde 标注/转换。
     ImageUrl(String),
 }
-pub struct Message { pub role: MessageRole, pub content: Vec<ContentPart> }
+/// model 请求调用某工具（function calling）。与 `ToolSpec` 是**相反方向**：`ToolSpec` 是「声明」
+/// （喂给 model 的 tools 数组），`ToolCall` 是「model 请求调用」（assistant.tool_calls 的一项），
+/// 按 `name` 衔接 `Tool`。
+pub struct ToolCall { pub id: String, pub name: String, pub arguments: serde_json::Value }
 
 /// 工具（未来 AiPlay 用；顾问模式传空集）
 pub struct ToolSpec {
@@ -152,7 +171,7 @@ ADR-0013 的 `agent → provider`。顾问用 `complete_once`（单轮、无工�
 
 ```rust
 // ai::agent
-use crate::provider::{Message, Provider};
+use crate::provider::{Message, Provider, ToolCall, ToolSpec};
 
 /// 一个工具（未来 AiPlay；顾问空集）。
 #[async_trait::async_trait]
@@ -164,7 +183,7 @@ pub trait Tool: Send + Sync {
 /// 一轮对话的增量历史（只追加）。
 pub struct Session { /* Vec<Message> */ }
 impl Session {
-    pub fn new(system: Message) -> Self;          // role: System
+    pub fn new(system: Message) -> Self;          // Message::System（system prompt）
     pub fn push(&mut self, msg: Message);
     pub fn messages(&self) -> &[Message];
 }
@@ -175,26 +194,25 @@ impl Agent {
     pub fn add_tool(&mut self, tool: Arc<dyn Tool>);          // 预留给 AiPlay
     /// 单轮完成（无工具循环）—— 顾问路径。
     /// 也是 dev 手工测试 `--test-ai-chat` 的入口（聚合、非流式；无需 `Provider` 新增接口）。
+    /// 返回 `Message::Assistant`（`tool_calls: None` = 最终完整答复）。
     pub async fn complete_once(
         &self, session: &Session, cancel: CancellationToken,
-    ) -> Result<AgentReply, AgentError>;
+    ) -> Result<Message, AgentError>;
     /// 持久工具循环 —— 未来 AiPlay；本 map 不用。
+    /// 循环内先后 push `Message::Assistant`（带 `tool_calls`）、`Message::Tool`（结果回填），
+    /// 最终同样返回 `Message::Assistant`（`tool_calls: None`）。
     pub async fn run_loop(
         &self, session: &Session, cancel: CancellationToken,
-    ) -> Result<AgentReply, AgentError>;
+    ) -> Result<Message, AgentError>;
 }
 
-pub struct AgentReply {
-    pub content: String,
-    pub reasoning: Vec<String>,     // reasoning_content 各 delta
-}
 pub enum AgentError {
     Provider(ProviderError),
     Cancelled,
 }
 ```
 
-- **待确认**：`complete_once` 返回的是**整个** `AgentReply`（消费完整流），而要流式给前端，`ai_adapter::Guide::suggest` 会直接消费 `Provider` 的流并转发，而非走 `complete_once`。两者并存是否 OK？
+- **待确认**：`complete_once` 返回聚合结果的 `Message::Assistant`（消费完整流），而要流式给前端，`ai_adapter::Guide::suggest` 会直接消费 `Provider` 的流并转发，而非走 `complete_once`。两者并存是否 OK？
   （即：`complete_once` 是「聚合结果」的工具/后端测 seam；`suggest` 是「流式」的对外 seam。可在 S4 里让 `suggest` 复用 `complete_once` 的内部，但对外仍流式。）
 
 ### S4 `ai_adapter` —— `BoardFormat` / `BoardView` / `system_prompt` / `render_*` / `Guide::suggest`

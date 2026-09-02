@@ -277,7 +277,7 @@
 - **入口**：CLI 参数 `--test-ai-chat <str>`，`<str>` 是发给 AI 的对话内容（一条 User message）。
 - **互斥**：只能**单独**指定，与其它所有参数冲突（clap `conflicts_with_all`）。
 - **main 早分支**：命中即进入「测试 AI」路径——不建 `Game`、不启动 server、不进正常流程；无 `DEEPSEEK_API_KEY` 时明确报错（AI 未配置）。
-- **实现**：复用 `Agent::complete_once`（S3：单轮、聚合、非流式），**不新增 `Provider` 非流式接口**。构造一个 `Agent`（DeepSeek + 默认 model 字符串）+ `Session`（push 一条 User message），`complete_once` 后打印 `reply.content`（及 `reasoning`）。
+- **实现**：复用 `Agent::complete_once`（S3：单轮、聚合、非流式），**不新增 `Provider` 非流式接口**。构造一个 `Agent`（DeepSeek + 默认 model 字符串）+ `Session`（push 一条 `Message::User`），`complete_once` 返回 `Message::Assistant`，打印其 `.content`（及 `.reasoning_content`）。
 - **输出**：完整回复打到 stdout，不要求流式（CLI 端本来就是聚合）。
 - **model**：默认字符串（如 `deepseek-v4-flash`），与产品路径一致、按字符串透传。
 
