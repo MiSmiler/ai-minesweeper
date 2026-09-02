@@ -320,7 +320,9 @@ pub struct GuideRequest {
 
 /// 一次性顾问：注入棋盘、走一轮、流式返回，末尾给中断 event。
 /// 前置失败 → Err(PreFlight)；否则返回事件流（delta…+ Done | Interrupt）。
-/// 多模态（vision）模型名——format D（Image）时切换（`agent.set_model(VISION_MODEL)`）。#92
+/// 默认 model（非图像形式）；suggest 每次按 format 显式设，避免跨请求状态遗留。#92/#95
+const DEFAULT_MODEL: &str = "deepseek-v4-flash";
+/// 多模态（vision）model——format D（Image）时切换（`set_model(VISION_MODEL)`）。#92
 const VISION_MODEL: &str = "deepseek-v4-flash-vision-exp";
 
 /// 多线程共享：`Arc<Mutex<Agent>>`——`&self` 方法内 `lock()` 拿到 `&mut Agent` 就能 `set_model`（只改 model 记录）。
@@ -333,7 +335,8 @@ impl Guide {
         &self, game: &Game, req: GuideRequest, cancel: CancellationToken,
     ) -> Result<impl Stream<Item = GuideEvent>, SuggestError>;
     // 内部：let mut agent = self.agent.lock().unwrap();
-    //       req.format == Image → agent.set_model(VISION_MODEL, None)（只改 model，provider 沿用当前；#92）
+    //       req.format == Image → agent.set_model(VISION_MODEL, None)
+    //       否则               → agent.set_model(DEFAULT_MODEL, None)  // 每次按 format 显式设，避免跨请求遗留
     //       build 棋盘消息 → Session(Message::System/User) → agent.stream()（agent 自动填 current_model）
     //       把 AgentEvent 映射成 GuideEvent（Done→Done、Interrupted→Interrupt(reason)），
     //       把 AgentError 映射成 SuggestError。

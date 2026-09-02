@@ -203,8 +203,8 @@
     prompt 强调「每个 emoji=一格」。emoji 多码点**只影响**「反查网格的程序」，demo 不做反查 → 不构成障碍。
   - **C 完整坐标**：每格写成 `[row][col]:x`，每格自报坐标，无需数行列。
   - **D 图像**：`html-to-image` 对 `.board` 截图（PNG base64）→ 后端 → vision-exp `image_url`。
-    图像独立验证视觉理解，**不设文字退化兜底**。后端收到 format D 时把当前模型切换为 vision-exp
-    （`deepseek-v4-flash-vision-exp`），其余格式用默认模型。
+    图像独立验证视觉理解，**不设文字退化兜底**。后端每次按 format 显式设 model：format D → vision-exp
+    （`deepseek-v4-flash-vision-exp`），其余格式回默认 model（`deepseek-v4-flash`）。
 - 真实 DeepSeek 验证留实现期。推荐例见 `docs/board-format-prototype.md`（含自洽棋盘样例与目标 `SUGGEST` 输出）。
 
 ### 5. AI 输出契约（#95）
