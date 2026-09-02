@@ -191,7 +191,7 @@ use futures::Stream;
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
     fn decl(&self) -> ToolDecl;
-    async fn call(&self, args: serde_json::Value) -> Result<serde_json::Value, String>;
+    async fn call(&self, args: serde_json::Value) -> Result<String, String>;  // 结果即 `Message::Tool.content` 文本
 }
 
 /// 一轮对话的增量历史（只追加）。
