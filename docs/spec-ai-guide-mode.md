@@ -264,7 +264,7 @@
 - `POST /ai/guide/:id/interrupt`：取消上游生成，驱动同一 SSE 的 `{reason:"user_interrupt"}` 中断 event。
 - 请求体：所选 **presentation form**（+ 图像形式附带 `image_data_url`：前端 `html-to-image` 的 PNG data URL，含 base64）。
   **文本形式（A/B/C）的棋盘由后端读自己的 `Game` 渲染**（单 `Game` 权威），前端**不**回传棋盘数据；
-  图像形式（D）由前端 `html-to-image` 截 `.board` 并回传 `image_data_url`。请与 `docs/seams.md` S4 核对。
+  图像形式（D）由前端 `html-to-image` 截 `.board` 并回传 `image_data_url`。请与 `docs/seams.md` S5 核对。
 - 响应流在 `[DONE]` 处收尾；未收 `[DONE]` 即断 = 流中断（#97 ②）。
 
 ### 11. 前端 `ai/` slice（#96 补全）
@@ -278,7 +278,7 @@
 - **入口**：CLI 参数 `--test-ai-chat <str>`，`<str>` 是发给 AI 的对话内容（一条 User message）。
 - **互斥**：只能**单独**指定，与其它所有参数冲突（clap `conflicts_with_all`）。
 - **main 早分支**：命中即进入「测试 AI」路径——不建 `Game`、不启动 server、不进正常流程；无 `DEEPSEEK_API_KEY` 时明确报错（AI 未配置）。
-- **实现**：复用 `Agent::complete_once`（S3：单轮、聚合、非流式），**不新增 `Provider` 非流式接口**。`DeepSeek::new(config)` 放入 `ProviderSet` → `Agent::new(set)` → `agent.set_model(default_model, Some("deepseek"))` + `Session`（push 一条 `Message::User`），`complete_once` 返回 `Message::Assistant`，打印其 `.content`（及 `.reasoning_content`）。
+- **实现**：复用 `Agent::complete_once`（S4：单轮、聚合、非流式），**不新增 `Provider` 非流式接口**。`DeepSeek::new(config)` 放入 `ProviderSet` → `Agent::new(set)` → `agent.set_model(default_model, Some("deepseek"))` + `Session`（push 一条 `Message::User`），`complete_once` 返回 `Message::Assistant`，打印其 `.content`（及 `.reasoning_content`）。
 - **输出**：完整回复打到 stdout，不要求流式（CLI 端本来就是聚合）。
 - **model**：默认字符串（如 `deepseek-v4-flash`），构造后经 `agent.set_model(default_model, Some("deepseek"))` 定（模型由 `Agent` 的 `current_model` 记录、发请求时填进 `ChatRequest.model`；`DeepSeek` 只读、不带 model）。
 
@@ -293,7 +293,7 @@
 > 纯逻辑（gesture/preview/hitTest/snapshotRender）各自独立测。
 > 本 spec 遵循同一精神：**只测外部可观察行为，不测内部实现细节**，用 mock 替换外部依赖。
 
-**Seam 清单与各 seam 的 pub 接口形状（S1–S11）见 [`docs/seams.md`](seams.md)**——本小节只概览每侧的主 seam，具体类型/签名以及每处 `待确认` 分叉点都以该文件为准。
+**Seam 清单与各 seam 的 pub 接口形状（S1–S12）见 [`docs/seams.md`](seams.md)**——本小节只概览每侧的主 seam，具体类型/签名以及每处 `待确认` 分叉点都以该文件为准。
 
 **拟用 seams（完整清单见 `docs/seams.md`，此处为概览）**：
 

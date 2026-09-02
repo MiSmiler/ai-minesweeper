@@ -11,6 +11,26 @@
 - 前端 `app/`（组装）+ `game/` slice + `ai/` slice —— 见 **ADR-0011**（slice 内再分层）。
 - **隐私硬约束**：发给 AI 的 payload 只含玩家可见状态，**绝不泄露 Mine 布局**。
 
+### 目标目录树（后端 `src/` 与前端 `frontend/src/`；项内注明「已有/新增」）
+
+```
+后端 src/（目录 mod，不拆 crate）：
+- core/        已有（Game 等，纯逻辑，无 serde/server 依赖）
+- server/      已有（路由/wire）；ai_routes 为新增（/ai/... 薄传输）
+- ai/          新增（与 core 解耦的通用 runtime）
+  - protocol/  新增（共享协议/值类型：Message/ContentBlock/ToolCall/ToolDecl/ChatRequest/ProviderEvent/ProviderError）
+  - provider/  新增（访问机制：Provider trait + deepseek.rs）
+  - agent/     新增（Agent/Session/Tool：run_loop）
+- ai_adapter/  新增（扫雷绑定：BoardFormat/BoardView/system_prompt/Guide）
+- main.rs      组合根（读 DEEPSEEK_API_KEY、构造 ProviderSet/Agent、挂 /ai/...）
+
+前端 frontend/src/：
+- app/    已有（main/切 mode）；guide 组合为新增
+- game/   已有（api/client/render/interaction）
+- ai/     新增（api.ts/stateMachine.ts/conversation.ts/axis.ts/screenshot.ts）
+- infra/  已有（log/testUtils）
+```
+
 ---
 
 ## 后端 seams
@@ -35,17 +55,12 @@ impl Game {
 - **已确认**：不给 `core::Game` 加新的 `snapshot()` / 其它可见方法——`cell_view` + `flags_remaining`
   + `difficulty().mine_count()` 已够拼出 #94 头部与棋盘。
 
-### S2（主 seam）—— `ai::protocol`（共享协议值） + `ai::provider`（`Provider` trait + `deepseek`）
+### S2 `ai::protocol` —— 共享协议/值类型
 
-AI「大脑」的单点。`ai_adapter::Guide::suggest` 与未来 `ai_play` 都经它；测它时注入 mock `Provider`。
+与供应商**解耦**的共享契约/词表，**无 IO、无 HTTP**；`provider`/`agent`/`ai_adapter`/`server` 都引用。
+`ai_adapter::Guide::suggest` 与未来 `ai_play` 都经它——它只承载值类型，作为 AI 层**共用契约**独立列出。
 
-**文件划分（目录 mod，非平铺）**：
-- `src/ai/protocol/` —— **共享协议/值类型**（与供应商解耦）：`Message`/`ContentBlock`/`ToolCall`/`ToolDecl`/
-  `ChatRequest`/`ProviderEvent`/`ProviderError`。`provider`/`agent`/`ai_adapter`/`server` 都引用。
-- `src/ai/provider/` —— **访问供应商的机制**：`Provider` trait（`stream_chat`）+ `deepseek.rs`（`DeepSeek`
-  实现，持 `api_key`/`base_url`/`client`/`model`）。二者**都**对外 `pub`（`pub mod deepseek`）：`main` 作为
-  组合根读 `DEEPSEEK_API_KEY`、选 provider、注入 key 与默认 model；`ai_adapter`/`Guide` 只面向 `Agent`、
-  不再直连 `Provider`。抽象 seam 不反向依赖 `deepseek`。
+文件：`src/ai/protocol/`（目录 mod，`mod.rs`）。
 
 **实现注记**：本 spec 阶段 `main` 先 **hardcode `DeepSeek`**（`DeepSeek::new(config, default_model)`），**不**实现
 `--provider`/`--model` CLI 选择——那只是为将来留口。但构造点收在 `main`、上层只见 `Box<dyn Provider>`，将来
@@ -122,6 +137,12 @@ pub struct ProviderError {
 pub enum ProviderErrorKind { Config, Upstream }
 ```
 
+### S3 `ai::provider` —— `Provider` trait + `deepseek`
+
+访问供应商的机制（依赖 `ai::protocol` 的 `ChatRequest`/`ProviderEvent`/`ProviderError`）。`agent` 是唯一内部消费者，
+测它时注入 mock `Provider`；`main` 作为组合根读 `DEEPSEEK_API_KEY`、构造 `DeepSeek`。`Provider`/`deepseek` 均对外
+`pub`（`pub mod deepseek`）；抽象 seam 不反向依赖 `deepseek`。
+
 ```rust
 // ai::provider/mod.rs —— 访问供应商的机制：Provider trait + ProviderStream
 use crate::protocol::{ChatRequest, ProviderEvent, ProviderError};
@@ -177,7 +198,7 @@ impl Provider for DeepSeek {
 - **已确认**：`ProviderError` 是通用载体（`kind` 字段，非 `kind()` 方法）；`ProviderErrorKind::{Config,Upstream}`
   由 `deepseek::parse_http_error` 判定，`server` 直接序列化 `ProviderError`，不再靠 code 分支。
 
-### S3 `ai::agent` —— `Tool` / `Session` / `Agent`（run_loop）
+### S4 `ai::agent` —— `Tool` / `Session` / `Agent`（run_loop）
 
 ADR-0013 的 `agent → provider`。顾问用 `complete_once`（单轮、无工具）；`run_loop`/`Tool` 为未来 `AiPlay` 预留，但**接口一并定义**（按你的决定）。
 
@@ -262,7 +283,7 @@ impl Agent {
 
 - **已确认**：`Agent` 同时提供 `stream`（流式）与 `complete_once`（聚合，复用 `stream` 内部）。`suggest` 走 `stream`（流式给前端），`--test-ai-chat` 走 `complete_once`（聚合）。两条路并存、职责清晰。
 
-### S4 `ai_adapter` —— `BoardFormat` / `BoardView` / `system_prompt` / `render_*` / `Guide::suggest`
+### S5 `ai_adapter` —— `BoardFormat` / `BoardView` / `system_prompt` / `build_*` / `Guide::suggest`
 
 扫雷绑定：把 `core::Game` 的**可见**侧渲染成 #94 4 形式 + 拼 system prompt；`Guide::suggest` 是用户「点问 AI」的入口。
 
@@ -361,7 +382,7 @@ pub fn tools(handle: &GameHandle) -> Vec<Arc<dyn Tool>>;
   - `model` 暴露：**定案**——前端不带，后端 `DeepSeek` 默认（`GuideRequest.model` 删；`#96` 未提模型选择器）。
     `--model` CLI **不在本 map 实现**（留口：将来在 `main` 选择处扩展；`ai_adapter`/`Guide` 零改动）。
 
-### S5 `server` —— `/ai/...` 传输 seam
+### S6 `server` —— `/ai/...` 传输 seam
 
 薄传输层：把 `ai_adapter::Guide::suggest` 的事件流 SSH 转发给前端，并处理中断/终止。
 
@@ -391,13 +412,13 @@ pub(crate) fn handle_interrupt(...) -> impl IntoResponse;
   id（如 `crypto.randomUUID()`），因为「中断」由前端发起、且前端持有该分析会话；`id` 随 SSE 建立即锁定。
   **若你倾向后端分配（在 SSE 首帧下发 id），请指出。**
 - **待确认**：`AiStreamEvent` 要不要合并 `reasoning`/`content` 为一个带 `kind` 的事件，前端好接？我按你
-  前端状态机偏好，倾向**带 kind**（见 S8 `AiEvent`），此处与 wire 保持同构。
+  前端状态机偏好，倾向**带 kind**（见 `ai/api.ts` `AiEvent`），此处与 wire 保持同构。
 
 ---
 
 ## 前端 seams
 
-### S6 `app/` 组装 seam（Mode switcher + `PlayMode` 组合）
+### S7 `app/` 组装 seam（Mode switcher + `PlayMode` 组合）
 
 `app/` 是 mode 组合处（ADR-0011/0012）。guide 组合拿 `game/` slice + `ai/` slice 拼。
 
@@ -426,7 +447,7 @@ export function composeGuideMode(root: HTMLElement, deps: AppDeps): { dispose():
 - **待确认**：`AppDeps` 里 `aiApi` 要不要进一步拆成 `AiApi` + `captureBoardImage` + 轴标组件工厂，
   便于 assemble 时按需注入、测试时 mock 更细？
 
-### S7 `ai/api.ts` —— wire 契约（镜像后端 `/ai/...`）
+### S8 `ai/api.ts` —— wire 契约（镜像后端 `/ai/...`）
 
 ```ts
 // ai/api.ts
@@ -454,9 +475,9 @@ export interface AiApi {
 ```
 
 - 前端**不解析** `SUGGEST`（#95）；`AiEvent` 只有 reasoning/content/done/interrupt，**没有坐标字段**。
-  image 形式的 base64 由 S11 收集后放进 `GuideRequest.image`。
+  image 形式的 base64 由 `ai/screenshot.ts` 收集后放进 `GuideRequest.imageDataUrl`。
 
-### S8 `ai/stateMachine.ts` —— 分析状态机
+### S9 `ai/stateMachine.ts` —— 分析状态机
 
 持有一次分析的生命周期（#97 失败两型 + 用户中断）。
 
@@ -478,7 +499,7 @@ export interface AnalysisMachine {
   start(req: GuideRequest): void;
   /** 用户中断：POST interrupt（前端保持 SSE 不 abort，#97）。 */
   interrupt(): Promise<void>;
-  /** 输入格式变更 / 新局 / 切 mode 时清空（历史清除语义，见 S6 组装）。 */
+  /** 输入格式变更 / 新局 / 切 mode 时清空（历史清除语义，见 `app/` 组装）。 */
   reset(): void;
   /** 订阅状态变化，返回退订。 */
   onState(cb: (s: AnalysisState) => void): () => void;
@@ -487,10 +508,10 @@ export interface AnalysisMachine {
 export function createAnalysisMachine(deps: { api: AiApi; newId: () => string }): AnalysisMachine;
 ```
 
-- 历史绑定一局、分析中不可点、输入格式变更 → 确认 + 清历史（#96）—— 这些判定放组装层（S6），状态机只负责
+- 历史绑定一局、分析中不可点、输入格式变更 → 确认 + 清历史（#96）—— 这些判定放组装层（`app/`），状态机只负责
   `running/done/interrupted/preflight-failed` 及累积文本。
 
-### S9 `ai/conversation.ts` —— 双流对话渲染（#95）
+### S10 `ai/conversation.ts` —— 双流对话渲染（#95）
 
 ```ts
 // ai/conversation.ts
@@ -501,7 +522,7 @@ export function createConversation(container: HTMLElement): {
 - `reasoning_content` → 浅色小字、整块可折叠；`content` → 正常字体、不折叠（仿 DeepSeek 网页版）。
 - `SUGGEST`/`SUGGEST null` 只是 content 文本，**不解析、不高亮**。
 
-### S10 `ai/axis.ts` —— 行列号辅助标记（#111）
+### S11 `ai/axis.ts` —— 行列号辅助标记（#111）
 
 ```ts
 // ai/axis.ts
@@ -516,7 +537,7 @@ export function createBoardAxis(boardEl: HTMLElement, opts?: { visible?: boolean
 - `.board` 外**绝对定位 overlay**、`pointer-events:none`、**不进 `.board` 截图**、对 4 形式零影响。
 - 默认关、guide 组件内状态（切走即丢、不持久化）。checkbox「行列号」落仪表盘（组装层）。
 
-### S11 `ai/screenshot.ts` —— `html-to-image` 截图（#93）
+### S12 `ai/screenshot.ts` —— `html-to-image` 截图（#93）
 
 ```ts
 // ai/screenshot.ts
@@ -524,7 +545,7 @@ export async function captureBoardImage(
   boardEl: HTMLElement, opts?: { pixelRatio?: number },
 ): Promise<string>;   // PNG data URL（默认 pixelRatio 不放大）
 ```
-- 供 S7 `GuideRequest.image` 用；Playwright 只作开发/工具截图，不作 runtime capture。
+- 供 `ai/api.ts` `GuideRequest.imageDataUrl` 用；Playwright 只作开发/工具截图，不作 runtime capture。
 
 ---
 
@@ -533,32 +554,28 @@ export async function captureBoardImage(
 | # | seam（模块边界） | 性质 | 主要 pub 接口 |
 |---|---|---|---|
 | S1 | `core::Game` | 复用，无新增 | 可见 API（只读） |
-| S2 | `ai::protocol` + `ai::provider` | **主 seam** | `Message`/`ChatRequest`/`ProviderEvent`（protocol）；`Provider::stream_chat`, `ProviderStream`（provider） |
-| S3 | `ai::agent` | 定义 | `Tool`, `Session`, `Agent::{stream,complete_once,run_loop}`, `AgentEvent` |
-| S4 | `ai_adapter` | 绑定 | `BoardView`, `system_prompt`, `build_text_blocks/build_image_blocks`, `Guide::suggest`（经 `Agent`）, `GuideEvent`, `InterruptReason`, `SuggestError`, `GuideRequest` |
-| S5 | `server` 传输 | 薄传输 | `ai_routes`, `AiStreamEvent`, `ai::protocol::ProviderError`（错误体） |
-| S6 | `app/` 组装 | 组合 | `mountMode`, `renderModeSwitcher`, `composeGuideMode` |
-| S7 | `ai/api.ts` | wire | `AiApi`, `AiEvent`, `GuideRequest` |
-| S8 | `ai/stateMachine.ts` | 状态机 | `AnalysisMachine`, `AnalysisState` |
-| S9 | `ai/conversation.ts` | 渲染 | `createConversation` |
-| S10 | `ai/axis.ts` | 渲染 | `createBoardAxis` |
-| S11 | `ai/screenshot.ts` | 工具 | `captureBoardImage` |
+| S2 | `ai::protocol` | 共享契约 | `Message`, `ChatRequest`, `ProviderEvent`, `ProviderError` |
+| S3 | `ai::provider` | 访问机制 | `Provider::stream_chat`, `ProviderStream`, `DeepSeek` |
+| S4 | `ai::agent` | 定义 | `Tool`, `Session`, `Agent::{stream,complete_once,run_loop}`, `AgentEvent` |
+| S5 | `ai_adapter` | 绑定 | `BoardView`, `system_prompt`, `build_text_blocks/build_image_blocks`, `Guide::suggest`（经 `Agent`）, `GuideEvent`, `InterruptReason`, `SuggestError`, `GuideRequest` |
+| S6 | `server` 传输 | 薄传输 | `ai_routes`, `AiStreamEvent`, `ai::protocol::ProviderError`（错误体） |
+| S7 | `app/` 组装 | 组合 | `mountMode`, `renderModeSwitcher`, `composeGuideMode` |
+| S8 | `ai/api.ts` | wire | `AiApi`, `AiEvent`, `GuideRequest` |
+| S9 | `ai/stateMachine.ts` | 状态机 | `AnalysisMachine`, `AnalysisState` |
+| S10 | `ai/conversation.ts` | 渲染 | `createConversation` |
+| S11 | `ai/axis.ts` | 渲染 | `createBoardAxis` |
+| S12 | `ai/screenshot.ts` | 工具 | `captureBoardImage` |
 
 ## 交叉切面：隐私与 promise
 
-- **保密性**：S4 `BoardView::from_game` 是唯一允许读取 `core::Game` 可见侧的地方；`Guide::suggest`/`render_*` 只消费
+- **保密性**：`ai_adapter::BoardView::from_game` 是唯一允许读取 `core::Game` 可见侧的地方；`Guide::suggest`/`build_*` 只消费
   `BoardView`。`mines` 在 `core` 内且 `#[cfg(test)]`，任何 `ai`/`ai_adapter`/`server` 路径都触不到。
   **测试断言**：发给 mock `Provider` 的 `ChatRequest.messages` 不含任何 mine 位置/布局信息。
-- **单流、单终止**：#97 终止统一由后端 SSE 终止 event 裁决；S2 只产生 `Done` 或（中断时）流结束，
-  S4 映射为 `GuideEvent::Interrupt(reason)`，S5 原样转发，前端 S8 据 `interrupt` 渲染红字。
+- **单流、单终止**：#97 终止统一由后端 SSE 终止 event 裁决；`ai::provider` 只产生 `Done` 或（中断时）流结束，
+  `ai_adapter` 映射为 `GuideEvent::Interrupt(reason)`，`server` 原样转发，前端 `ai/stateMachine.ts` 据 `interrupt` 渲染红字。
 
 ## 仍需你拍板的清单（汇总）
 
-1. **S4 请求体**：文本形式由后端读自己的 `Game` 渲染、前端只发 `format`（+`image`）、**不带 `model`**——接受？（修正 spec §10 字面。）
-2. **`SUGGEST` 永不解析**：确认事件流/结果里**不**带解析出的坐标字段。
-3. **`model` 暴露**：**定案**——前端不带，后端 `DeepSeek` 默认（`GuideRequest.model` 删；`#96` 未提模型选择器，留 `--model` CLI 口）。
-4. **分析 `id` 归属**：S5 的 `/ai/guide/:id/interrupt` 的 `<id>`，前端生成 vs 后端分配？
-5. **S5 `AiStreamEvent` 形状**：带 `kind` 的联合（`reasoning/content/done/interrupt`）是否就是你要的 wire 形状？
-6. **S3 vs S4**：`complete_once`（聚合）与 `suggest`（流式）并存——OK？
-7. **S2 `ProviderError`**：已定——`ProviderError` 为通用载体（`kind` / `code: Option<u16>` / `message`）且 `serde::Serialize`，
-  直接作为发送前端的 wire 错误体（删除了 `AiErrorBody` 和 `AiErrorKind`）；`ProviderErrorKind::{Config,Upstream}` 由 `deepseek::parse_http_error` 判定。
+1. **分析 `id` 归属**：`server` 的 `/ai/guide/:id/interrupt` 的 `<id>`，前端生成 vs 后端分配？
+2. **`server` `AiStreamEvent` 形状**：带 `kind` 的联合（`reasoning/content/done/interrupt`）是否就是你要的 wire 形状？
+3. **`ai::agent` vs `ai_adapter`**：`complete_once`（聚合）与 `suggest`（流式）并存——OK？
