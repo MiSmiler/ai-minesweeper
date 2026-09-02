@@ -260,11 +260,11 @@
 
 ### 10. API 契约 / wire 概览
 
-- `POST /ai/guide/:id`：开始一轮分析，返回 SSE 流（`content` + `reasoning_content` + 终止 event）。
-- `POST /ai/guide/:id/interrupt`：取消上游生成，驱动同一 SSE 的 `{reason:"user_interrupt"}` 终止 event。
-- 请求体：所选 **presentation form**（+ 图像形式附带 `image` base64）。
+- `POST /ai/guide/:id`：开始一轮分析，返回 SSE 流（`content` + `reasoning_content` + 中断 event）。
+- `POST /ai/guide/:id/interrupt`：取消上游生成，驱动同一 SSE 的 `{reason:"user_interrupt"}` 中断 event。
+- 请求体：所选 **presentation form**（+ 图像形式附带 `image_data_url`：前端 `html-to-image` 的 PNG data URL，含 base64）。
   **文本形式（A/B/C）的棋盘由后端读自己的 `Game` 渲染**（单 `Game` 权威），前端**不**回传棋盘数据；
-  图像形式（D）由前端 `html-to-image` 截 `.board` 并回传 `image`。请与 `docs/seams.md` S4 核对。
+  图像形式（D）由前端 `html-to-image` 截 `.board` 并回传 `image_data_url`。请与 `docs/seams.md` S4 核对。
 - 响应流在 `[DONE]` 处收尾；未收 `[DONE]` 即断 = 流中断（#97 ②）。
 
 ### 11. 前端 `ai/` slice（#96 补全）

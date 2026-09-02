@@ -136,7 +136,7 @@ pub trait Provider: Send + Sync {
     /// 前置失败返回 `Err`（映射 #97 ①）：provider 端先 `validate_model(req.model)`（model 不属于它 → `Config`）。
     /// 通过后返回 delta 流，末尾是 `Done`。
     /// 生成期间可通过 `cancel` 取消（用户中断 #97）——取消表现为流提前 error/结束，
-    /// 由 `ai_adapter::Guide::suggest` 映射为 `Terminated(user_interrupt)`。
+    /// 由 `ai_adapter::Guide::suggest` 映射为 `Interrupt(user_interrupt)`。
     async fn stream_chat(
         &self, req: ChatRequest, cancel: CancellationToken,
     ) -> Result<ProviderStream, ProviderError>;
@@ -207,13 +207,13 @@ pub enum AgentEvent {
     ReasoningDelta(String),
     ContentDelta(String),
     Done,           // [DONE]
-    Cancelled,      // cancel 触发（#97 ②）
+    Interrupted,    // 上游已中断（#97 ②）—— Guide::suggest 据此映射 GuideEvent::Interrupt(reason)
 }
 
 pub enum AgentError {
     Provider(ProviderError),
     NoProvider,     // stream 时 current_provider 为空 / 容器无此 provider（未 set_model 或切错名）
-    Cancelled,
+    Interrupted,
 }
 
 /// 按名字注册多个 provider 的容器（保序）。provider 只读；多 provider 为将来留口，本 map 只用 DeepSeek。
@@ -293,16 +293,16 @@ impl BoardView {
 pub fn system_prompt() -> String;
 
 /// 文本形式（A/B/C）的 user 消息体。纯。
-pub fn render_text(view: &BoardView, format: BoardFormat) -> Vec<ContentBlock>;
+pub fn build_text_blocks(view: &BoardView, format: BoardFormat) -> Vec<ContentBlock>;
 /// 图像形式（D）的 user 消息体 = 头部文本 + 截图 data URL。纯。
-pub fn render_image(view: &BoardView, image_data_url: &str) -> Vec<ContentBlock>;
+pub fn build_image_blocks(view: &BoardView, image_data_url: &str) -> Vec<ContentBlock>;
 
-/// 流式转发给前端的事件（reasoning / content 分开，结束时给终止 event）。
+/// 流式转发给前端的事件（reasoning / content 分开，结束时给中断 event）。
 pub enum GuideEvent {
     ReasoningDelta(String),
     ContentDelta(String),
     Done,                          // [DONE] 正常收尾
-    Terminated(InterruptReason),   // 未收 [DONE] —— #97 ②
+    Interrupt(InterruptReason),    // 未收 [DONE] —— #97 ②
 }
 
 /// 终止原因（#97）。wire / 前端镜像此值。
@@ -311,14 +311,15 @@ pub enum InterruptReason { UserInterrupt, RateLimit, Timeout, UpstreamError, Unk
 /// 前置失败 → bucket（#97 ①），走 HTTP 状态码 + 结构化错误体。
 pub enum SuggestError { PreFlight(AgentError) }
 
-/// 请求：前端只发 format（+ 图像形式的 image）。文本形式的棋盘由后端读自己的 Game；**不带 model**（后端 `DeepSeek` 默认）。
+/// 请求：前端只发 format（+ 图像形式附带 `image_data_url`）。文本形式的棋盘由后端读自己的 Game；**不带 model**（后端 `DeepSeek` 默认）。
 pub struct GuideRequest {
     pub format: BoardFormat,
-    pub image: Option<String>,    // image 形式：前端 `html-to-image` 的 PNG data URL
+    /// 仅 image 形式：前端 `html-to-image` 产出的 PNG data URL（含 `data:image/png;base64,` 前缀）。
+    pub image_data_url: Option<String>,
 }
 
-/// 一次性顾问：注入棋盘、走一轮、流式返回，末尾终止 event。
-/// 前置失败 → Err(PreFlight)；否则返回事件流（delta…+ Done | Terminated）。
+/// 一次性顾问：注入棋盘、走一轮、流式返回，末尾给中断 event。
+/// 前置失败 → Err(PreFlight)；否则返回事件流（delta…+ Done | Interrupt）。
 /// 多模态（vision）模型名——format D（Image）时切换（`agent.set_model(VISION_MODEL)`）。#92
 const VISION_MODEL: &str = "deepseek-v4-flash-vision-exp";
 
@@ -333,8 +334,8 @@ impl Guide {
     ) -> Result<impl Stream<Item = GuideEvent>, SuggestError>;
     // 内部：let mut agent = self.agent.lock().unwrap();
     //       req.format == Image → agent.set_model(VISION_MODEL, None)（只改 model，provider 沿用当前；#92）
-    //       render 棋盘 → Session(Message::System/User) → agent.stream()（agent 自动填 current_model）
-    //       把 AgentEvent 映射成 GuideEvent（Done→Done、Cancelled→Terminated(reason)），
+    //       build 棋盘消息 → Session(Message::System/User) → agent.stream()（agent 自动填 current_model）
+    //       把 AgentEvent 映射成 GuideEvent（Done→Done、Interrupted→Interrupt(reason)），
     //       把 AgentError 映射成 SuggestError。
     // 注：lock() 借 `&mut Agent` 调 set_model；stream 是 `&self`，同 guard 下可续用。
 }
@@ -366,9 +367,9 @@ pub fn ai_routes(state: Arc<AppState>) -> Router;
 pub enum AiStreamEvent {
     Reasoning(String),
     Content(String),
-    Terminated { reason: InterruptReason },   // 末端终止 event（#97）
+    Interrupt { reason: InterruptReason },   // 末端中断 event（#97）
 }
-// 注：[DONE] 是 SSE 流的收官标记；`Terminated` 是「未收 [DONE]」时的显式终止。
+// 注：[DONE] 是 SSE 流的收官标记；`Interrupt` 是「未收 [DONE]」时的显式中断。
 
 /// 前置失败的错误体 = `ai::protocol::ProviderError`（带 `Serialize`，序列化为 { kind, code, message }）。
 /// 不再单独定义 wire 错误体；`server` 直接把 `ProviderError` 序列化返回给前端。
@@ -430,11 +431,11 @@ export type AiEvent =
   | { kind: "reasoning"; text: string }
   | { kind: "content"; text: string }
   | { kind: "done" }
-  | { kind: "terminated"; reason: InterruptReason };
+  | { kind: "interrupt"; reason: InterruptReason };
 
 export type PreFlightError = { kind: "config" | "upstream"; code: number | null; message: string };
 
-export interface GuideRequest { format: BoardFormat; image?: string; }   // 不带 model（后端 DeepSeek 默认）
+export interface GuideRequest { format: BoardFormat; imageDataUrl?: string; }   // 不带 model（后端 DeepSeek 默认）
 
 export interface AiApi {
   /** POST /ai/guide/:id —— 消费 SSE 流，逐 event 回调；前置失败走 onPreFlightError。 */
@@ -444,7 +445,7 @@ export interface AiApi {
 }
 ```
 
-- 前端**不解析** `SUGGEST`（#95）；`AiEvent` 只有 reasoning/content/done/terminated，**没有坐标字段**。
+- 前端**不解析** `SUGGEST`（#95）；`AiEvent` 只有 reasoning/content/done/interrupt，**没有坐标字段**。
   image 形式的 base64 由 S11 收集后放进 `GuideRequest.image`。
 
 ### S8 `ai/stateMachine.ts` —— 分析状态机
@@ -526,7 +527,7 @@ export async function captureBoardImage(
 | S1 | `core::Game` | 复用，无新增 | 可见 API（只读） |
 | S2 | `ai::protocol` + `ai::provider` | **主 seam** | `Message`/`ChatRequest`/`ProviderEvent`（protocol）；`Provider::stream_chat`, `ProviderStream`（provider） |
 | S3 | `ai::agent` | 定义 | `Tool`, `Session`, `Agent::{stream,complete_once,run_loop}`, `AgentEvent` |
-| S4 | `ai_adapter` | 绑定 | `BoardView`, `system_prompt`, `render_text/image`, `Guide::suggest`（经 `Agent`）, `GuideEvent`, `InterruptReason`, `SuggestError`, `GuideRequest` |
+| S4 | `ai_adapter` | 绑定 | `BoardView`, `system_prompt`, `build_text_blocks/build_image_blocks`, `Guide::suggest`（经 `Agent`）, `GuideEvent`, `InterruptReason`, `SuggestError`, `GuideRequest` |
 | S5 | `server` 传输 | 薄传输 | `ai_routes`, `AiStreamEvent`, `ai::protocol::ProviderError`（错误体） |
 | S6 | `app/` 组装 | 组合 | `mountMode`, `renderModeSwitcher`, `composeGuideMode` |
 | S7 | `ai/api.ts` | wire | `AiApi`, `AiEvent`, `GuideRequest` |
@@ -541,7 +542,7 @@ export async function captureBoardImage(
   `BoardView`。`mines` 在 `core` 内且 `#[cfg(test)]`，任何 `ai`/`ai_adapter`/`server` 路径都触不到。
   **测试断言**：发给 mock `Provider` 的 `ChatRequest.messages` 不含任何 mine 位置/布局信息。
 - **单流、单终止**：#97 终止统一由后端 SSE 终止 event 裁决；S2 只产生 `Done` 或（中断时）流结束，
-  S4 映射为 `GuideEvent::Terminated(reason)`，S5 原样转发，前端 S8 据 `terminated` 渲染红字。
+  S4 映射为 `GuideEvent::Interrupt(reason)`，S5 原样转发，前端 S8 据 `interrupt` 渲染红字。
 
 ## 仍需你拍板的清单（汇总）
 
@@ -549,7 +550,7 @@ export async function captureBoardImage(
 2. **`SUGGEST` 永不解析**：确认事件流/结果里**不**带解析出的坐标字段。
 3. **`model` 暴露**：**定案**——前端不带，后端 `DeepSeek` 默认（`GuideRequest.model` 删；`#96` 未提模型选择器，留 `--model` CLI 口）。
 4. **分析 `id` 归属**：S5 的 `/ai/guide/:id/interrupt` 的 `<id>`，前端生成 vs 后端分配？
-5. **S5 `AiStreamEvent` 形状**：带 `kind` 的联合（`reasoning/content/done/terminated`）是否就是你要的 wire 形状？
+5. **S5 `AiStreamEvent` 形状**：带 `kind` 的联合（`reasoning/content/done/interrupt`）是否就是你要的 wire 形状？
 6. **S3 vs S4**：`complete_once`（聚合）与 `suggest`（流式）并存——OK？
 7. **S2 `ProviderError`**：已定——`ProviderError` 为通用载体（`kind` / `code: Option<u16>` / `message`）且 `serde::Serialize`，
   直接作为发送前端的 wire 错误体（删除了 `AiErrorBody` 和 `AiErrorKind`）；`ProviderErrorKind::{Config,Upstream}` 由 `deepseek::parse_http_error` 判定。
