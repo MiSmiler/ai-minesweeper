@@ -18,7 +18,7 @@
 - core/        已有（Game 等，纯逻辑，无 serde/server 依赖）
 - server/      已有（路由/wire）；ai_routes 为新增（/ai/... 薄传输）
 - ai/          新增（与 core 解耦的通用 runtime）
-  - protocol/  新增（共享协议/值类型：Message/ContentBlock/ToolCall/ToolDecl/ChatRequest/ProviderEvent/ProviderError）
+  - protocol/  新增（共享协议/值类型：Message/ContentBlock/ToolCall/ToolDecl/ChatRequest/StreamChunk/ProviderError）
   - provider/  新增（访问机制：Provider trait + deepseek.rs）
   - agent/     新增（Agent/Session/Tool：run_loop）
 - ai_adapter/  新增（扫雷绑定：BoardFormat/BoardView/system_prompt/Guide）
@@ -115,11 +115,12 @@ pub struct ChatRequest {
     pub tools: Vec<ToolDecl>,   // 顾问空集
 }
 
-/// 流式过程中的一个事件（content 与 reasoning_content 分开 —— #95 双流）。
-pub enum ProviderEvent {
+/// 共享「流内容」块（各层通用；reasoning / content 分开 —— #95 双流；`Done` 为正常收尾）。
+/// 中断/错误不在此，走各层 `Result<StreamChunk, E>` 的 `Err`。
+pub enum StreamChunk {
     ReasoningDelta(String),
     ContentDelta(String),
-    Done,                       // 终止、正常收尾（[DONE]）
+    Done,                       // 正常收尾；wire 上不出现（前端 [DONE] 收尾）
 }
 
 /// 前置失败（未流任何内容之前）—— 映射到 #97 的 bucket。
@@ -139,25 +140,26 @@ pub enum ProviderErrorKind { Config, Upstream }
 
 ### S3 `ai::provider` —— `Provider` trait + `deepseek`
 
-访问供应商的机制（依赖 `ai::protocol` 的 `ChatRequest`/`ProviderEvent`/`ProviderError`）。`agent` 是唯一内部消费者，
+访问供应商的机制（依赖 `ai::protocol` 的 `ChatRequest`/`StreamChunk`/`ProviderError`）。`agent` 是唯一内部消费者，
 测它时注入 mock `Provider`；`main` 作为组合根读 `DEEPSEEK_API_KEY`、构造 `DeepSeek`。`Provider`/`deepseek` 均对外
 `pub`（`pub mod deepseek`）；抽象 seam 不反向依赖 `deepseek`。
 
 ```rust
 // ai::provider/mod.rs —— 访问供应商的机制：Provider trait + ProviderStream
-use crate::protocol::{ChatRequest, ProviderEvent, ProviderError};
+use crate::protocol::{ChatRequest, StreamChunk, ProviderError};
 use futures::Stream;
 use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
 
 /// 上游生成是否已被取消（用户中断 / 超时 / 上游错误），由调用侧 `select!` 驱动。
-pub type ProviderStream = Pin<Box<dyn Stream<Item = ProviderEvent> + Send>>;
+/// 正常项 = `StreamChunk`（delta / Done）；流中错误/中断 = `Err(ProviderError)`。
+pub type ProviderStream = Pin<Box<dyn Stream<Item = Result<StreamChunk, ProviderError>> + Send>>;
 
 pub trait Provider: Send + Sync {
     /// 前置失败返回 `Err`（映射 #97 ①）：provider 端先 `validate_model(req.model)`（model 不属于它 → `Config`）。
-    /// 通过后返回 delta 流，末尾是 `Done`。
-    /// 生成期间可通过 `cancel` 取消（用户中断 #97）——取消表现为流提前 error/结束，
-    /// 由 `ai_adapter::Guide::suggest` 映射为 `Interrupt(user_interrupt)`。
+    /// 通过后返回流（`Item = Result<StreamChunk, ProviderError>`）：正常项 = reasoning/content delta + `Done`。
+    /// 生成期间可通过 `cancel` 取消（用户中断 #97）——取消表现为流提前 error/结束；
+    /// 流中上游错误也走 `Err(ProviderError)`（供 guide 映射 `Interrupt(reason)`）。
     async fn stream_chat(
         &self, req: ChatRequest, cancel: CancellationToken,
     ) -> Result<ProviderStream, ProviderError>;
@@ -223,18 +225,13 @@ impl Session {
     pub fn messages(&self) -> &[Message];
 }
 
-/// agent 层的流式事件（隔离 `ProviderEvent`；ai_adapter 只消费本类型）。
-pub enum AgentEvent {
-    ReasoningDelta(String),
-    ContentDelta(String),
-    Done,           // [DONE]
-    Interrupted,    // 上游已中断（#97 ②）—— Guide::suggest 据此映射 GuideEvent::Interrupt(reason)
-}
+// ai::agent 不定义独立事件类型：`Agent::stream` 的项 = `Result<StreamChunk, AgentError>`。
+// 正常项（`StreamChunk`）与 guide / ai_play 共享；中断/错误走 `Err(AgentError)`。
 
 pub enum AgentError {
     Provider(ProviderError),
     NoProvider,     // stream 时 current_provider 为空 / 容器无此 provider（未 set_model 或切错名）
-    Interrupted,
+    Interrupted,    // 流中被 cancel（用户中断 #97 ②）；guide 据此映射 `Interrupt(UserInterrupt)`。上游流中错误走 `Provider(ProviderError)`。
 }
 
 /// 按名字注册多个 provider 的容器（保序）。provider 只读；多 provider 为将来留口，本 map 只用 DeepSeek。
@@ -260,12 +257,13 @@ impl Agent {
     pub fn current_provider(&self) -> &str;
     pub fn current_model(&self) -> &str;
     pub fn add_tool(&mut self, tool: Arc<dyn Tool>);          // 预留给 AiPlay
-    /// 流式：把 session 发出去（`ChatRequest.model` 填 `current_model`），边收边转 `AgentEvent`（隔离 `ProviderEvent`）。
-    /// 内部 `providers.get(&self.current_provider)` 查不到 → `Err(NoProvider)`；其余前置失败 → `Err(Provider)`。
+    /// 流式：把 session 发出去（`ChatRequest.model` 填 `current_model`），边收流边转发 `StreamChunk`。
+    /// 外层 `Err` = 前置失败：`NoProvider`（查不到 current_provider）/ `Provider(ProviderError)`。
+    /// 内层 `Err(AgentError)` = 流中：`Interrupted`（用户 cancel）/ `Provider(ProviderError)`（上游错误）。
     /// 生成期间可由 `cancel` 中断（#97）。
     pub async fn stream(
         &self, session: &Session, cancel: CancellationToken,
-    ) -> Result<impl Stream<Item = AgentEvent>, AgentError>;
+    ) -> Result<impl Stream<Item = Result<StreamChunk, AgentError>>, AgentError>;
     /// 单轮完成（无工具循环）—— 顾问路径。
     /// 也是 dev 手工测试 `--test-ai-chat` 的入口（聚合、非流式；无需 `Provider` 新增接口）。
     /// 返回 `Message::Assistant`（`tool_calls: None` = 最终完整答复）。
@@ -318,13 +316,8 @@ pub fn build_text_blocks(view: &BoardView, format: BoardFormat) -> Vec<ContentBl
 /// 图像形式（D）的 user 消息体 = 头部文本 + 截图 data URL。纯。
 pub fn build_image_blocks(view: &BoardView, image_data_url: &str) -> Vec<ContentBlock>;
 
-/// 流式转发给前端的事件（reasoning / content 分开，结束时给中断 event）。
-pub enum GuideEvent {
-    ReasoningDelta(String),
-    ContentDelta(String),
-    Done,                          // [DONE] 正常收尾
-    Interrupt(InterruptReason),    // 未收 [DONE] —— #97 ②
-}
+// ai_adapter 不定义独立事件类型：`Guide::suggest` 的项 = `Result<StreamChunk, InterruptReason>`。
+// 正常项（`StreamChunk`）+ 流中中断 `Err(InterruptReason)`；前置失败走外层 `Err(SuggestError)`。
 
 /// 终止原因（#97）。wire / 前端镜像此值。
 pub enum InterruptReason { UserInterrupt, RateLimit, Timeout, UpstreamError, Unknown }
@@ -339,8 +332,8 @@ pub struct GuideRequest {
     pub image_data_url: Option<String>,
 }
 
-/// 一次性顾问：注入棋盘、走一轮、流式返回，末尾给中断 event。
-/// 前置失败 → Err(PreFlight)；否则返回事件流（delta…+ Done | Interrupt）。
+/// 一次性顾问：注入棋盘、走一轮、流式返回（`Ok(StreamChunk)` 推进 / `Err(InterruptReason)` 中断）。
+/// 前置失败 → `Err(PreFlight)`；否则返回流（`Item = Result<StreamChunk, InterruptReason>`）。
 /// 默认 model（非图像形式）；suggest 每次按 format 显式设，避免跨请求状态遗留。#92/#95
 const DEFAULT_MODEL: &str = "deepseek-v4-flash";
 /// 多模态（vision）model——format D（Image）时切换（`set_model(VISION_MODEL)`）。#92
@@ -354,13 +347,14 @@ impl Guide {
     /// 注入棋盘、走一轮、流式返回；`cancel` 可中断上游生成（#97）。
     pub async fn suggest(
         &self, game: &Game, req: GuideRequest, cancel: CancellationToken,
-    ) -> Result<impl Stream<Item = GuideEvent>, SuggestError>;
+    ) -> Result<impl Stream<Item = Result<StreamChunk, InterruptReason>>, SuggestError>;
     // 内部：let mut agent = self.agent.lock().unwrap();
     //       req.format == Image → agent.set_model(VISION_MODEL, None)
     //       否则               → agent.set_model(DEFAULT_MODEL, None)  // 每次按 format 显式设，避免跨请求遗留
     //       build 棋盘消息 → Session(Message::System/User) → agent.stream()（agent 自动填 current_model）
-    //       把 AgentEvent 映射成 GuideEvent（Done→Done、Interrupted→Interrupt(reason)），
-    //       把 AgentError 映射成 SuggestError。
+    //       `Ok(StreamChunk)` 透传；`Err(AgentError::Interrupted)`（用户 cancel）→ `Err(Interrupt(UserInterrupt))`；
+    //       `Err(AgentError::Provider(pe))`（上游流中错误）→ 按 `pe` 折射 `Err(Interrupt(rate_limit/timeout/upstream))`；
+    //       外层前置失败 → `Err(SuggestError)`。
     // 注：lock() 借 `&mut Agent` 调 set_model；stream 是 `&self`，同 guard 下可续用。
 }
 
@@ -392,13 +386,14 @@ pub fn ai_routes(state: Arc<AppState>) -> Router;
 //  POST /ai/guide/:id        → SSE 流（GuideEventDto…，收 [DONE] 结束）
 //  POST /ai/guide/:id/interrupt → 取消上游，驱动同 SSE 的 {reason:"user_interrupt"}
 
-/// SSE 流上的 wire 事件（镜像 ai_adapter::GuideEvent + 终止原因）。
+/// SSE 流上的 wire 事件（消费 `Guide::suggest` 的 `Result<StreamChunk, InterruptReason>` 映射）：
+/// `Ok(ReasoningDelta/ContentDelta)` → data；`Ok(Done)` → 发 `[DONE]`；`Err(reason)` → `Interrupt`。
 pub enum GuideEventDto {
     Reasoning(String),
     Content(String),
     Interrupt { reason: InterruptReason },   // 末端中断 event（#97）
 }
-// 注：[DONE] 是 SSE 流的收官标记；`Interrupt` 是「未收 [DONE]」时的显式中断。
+// 注：[DONE] 是 SSE 流的收官标记（wire 无 Done 变体）；`Interrupt` 是「未收 [DONE]」时的显式中断。
 
 /// 前置失败的错误体 = `ai::protocol::ProviderError`（带 `Serialize`，序列化为 { kind, code, message }）。
 /// 不再单独定义 wire 错误体；`server` 直接把 `ProviderError` 序列化返回给前端。
@@ -457,8 +452,8 @@ export type InterruptReason =
   | "user_interrupt" | "rate_limit" | "timeout" | "upstream_error" | "unknown";
 
 // 前端消费的 wire 事件（对应后端 `GuideEventDto`）：`sse_done` 由前端读到 SSE `[DONE]` 时合成，
-// wire 上不产 `sse_done`（后端 `GuideEventDto` 无 `Done` 变体）。注意与 S5 后端 `GuideEvent`（Rust）同名，
-// 但此处是 TS 类型、是后端 `GuideEventDto` 的 wire 镜像（不同语言/层）。
+// wire 上不产 `sse_done`（后端 `GuideEventDto` 无 `Done` 变体）。后端 domain 事件是共享的 `StreamChunk`
+// （`Ok(StreamChunk)`=delta/Done；流中中断走 `Err(InterruptReason)`），前端这里把它译成 wire 事件。
 export type GuideEvent =
   | { kind: "reasoning"; text: string }
   | { kind: "content"; text: string }
@@ -557,10 +552,10 @@ export async function captureBoardImage(
 | # | seam（模块边界） | 性质 | 主要 pub 接口 |
 |---|---|---|---|
 | S1 | `core::Game` | 复用，无新增 | 可见 API（只读） |
-| S2 | `ai::protocol` | 共享契约 | `Message`, `ChatRequest`, `ProviderEvent`, `ProviderError` |
+| S2 | `ai::protocol` | 共享契约 | `Message`, `ChatRequest`, `StreamChunk`, `ProviderError` |
 | S3 | `ai::provider` | 访问机制 | `Provider::stream_chat`, `ProviderStream`, `DeepSeek` |
-| S4 | `ai::agent` | 定义 | `Tool`, `Session`, `Agent::{stream,complete_once,run_loop}`, `AgentEvent` |
-| S5 | `ai_adapter` | 绑定 | `BoardView`, `system_prompt`, `build_text_blocks/build_image_blocks`, `Guide::suggest`（经 `Agent`）, `GuideEvent`, `InterruptReason`, `SuggestError`, `GuideRequest` |
+| S4 | `ai::agent` | 定义 | `Tool`, `Session`, `Agent::{stream,complete_once,run_loop}`, `StreamChunk`, `AgentError` |
+| S5 | `ai_adapter` | 绑定 | `BoardView`, `system_prompt`, `build_text_blocks/build_image_blocks`, `Guide::suggest`（经 `Agent`）, `StreamChunk`, `InterruptReason`, `SuggestError`, `GuideRequest` |
 | S6 | `server` 传输 | 薄传输 | `ai_routes`, `GuideEventDto`, `ai::protocol::ProviderError`（错误体） |
 | S7 | `app/` 组装 | 组合 | `mountMode`, `renderModeSwitcher`, `composeGuideMode` |
 | S8 | `ai/api.ts` | wire | `AiApi`, `GuideEvent`, `GuideRequest` |
@@ -575,7 +570,7 @@ export async function captureBoardImage(
   `BoardView`。`mines` 在 `core` 内且 `#[cfg(test)]`，任何 `ai`/`ai_adapter`/`server` 路径都触不到。
   **测试断言**：发给 mock `Provider` 的 `ChatRequest.messages` 不含任何 mine 位置/布局信息。
 - **单流、单终止**：#97 终止统一由后端 SSE 终止 event 裁决；`ai::provider` 只产生 `Done` 或（中断时）流结束，
-  `ai_adapter` 映射为 `GuideEvent::Interrupt(reason)`，`server` 原样转发，前端 `ai/stateMachine.ts` 据 `interrupt` 渲染红字。
+  `ai_adapter` 流中 `Err` → `Interrupt(reason)`，`server` 原样转发，前端 `ai/stateMachine.ts` 据 `interrupt` 渲染红字。
 
 ## 仍需你拍板的清单（汇总）
 
