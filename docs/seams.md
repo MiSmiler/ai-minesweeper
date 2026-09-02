@@ -45,7 +45,8 @@ AI「大脑」的单点。`ai_adapter::Guide::suggest` 与未来 `ai_play` 都�
 
 **实现注记**：本 spec 阶段 `main` 先 **hardcode `DeepSeek`**（直接 `DeepSeek::new` 注入 key），**不**实现
 `--provider`/`--model` CLI 选择——那只是为将来留口。但构造点收在 `main`、上层只见 `Box<dyn Provider>`，将来
-要加 CLI 时只需在 `main` 的 provider 选择处扩展，`ai_adapter`/`Guide`/S3`Agent` 零改动。
+要加 CLI 时只需在 `main` 的 provider 选择处扩展，`ai_adapter`/`Guide`/S3`Agent` 零改动。`main` 启动时可
+**可选预热**模型列表（`let _ = deepseek.list_models().await;`，失败忽略、不阻断启动），把「做准备」留在组合根而非 `new`。
 
 ```rust
 // ai::provider/mod.rs（抽象 seam；具体实现见 deepseek.rs）
@@ -115,15 +116,22 @@ pub trait Provider: Send + Sync {
 
 ```rust
 // provider/deepseek.rs —— 具体实现（pub，供 main 构造/选择；抽象 seam 不引用它）
-pub struct DeepSeek { api_key: String, base_url: String, client: reqwest::Client }
+pub struct DeepSeek {
+    api_key: String,
+    base_url: String,
+    client: reqwest::Client,
+    /// lazy 缓存 `GET /models` 结果：首次用到才拉，失败可重试，一次填充、多次复用。
+    models: tokio::sync::OnceCell<Vec<String>>,
+}
 pub struct DeepSeekConfig { pub api_key: String, pub base_url: String }
 impl DeepSeek {
-    /// 读 env `DEEPSEEK_API_KEY` 构造；无 key 时说明 AI 不启用。
+    /// 读 env `DEEPSEEK_API_KEY` 构造；无 key 时说明 AI 不启用。纯构造，不发网络请求。
     pub fn new(config: DeepSeekConfig) -> Self;
     /// `GET /models` 查询本 provider 支持的模型（可选 capability：校验模型名 / 填充选择器）。
+    /// lazy：首次调用经 `OnceCell::get_or_try_init` 拉取并缓存；失败不缓存、下次重试。
     pub async fn list_models(&self) -> Result<Vec<String>, ProviderError>;
-    /// 校验模型名是否属于本 provider；不属于则 Err（供 `--model` 前置校验）。
-    pub fn validate_model(&self, model: &str) -> Result<(), ProviderError>;
+    /// 严格校验：模型必须存在于本 provider 的模型列表（首次经 `list_models` 拉取/缓存）。
+    pub async fn validate_model(&self, model: &str) -> Result<(), ProviderError>;
     /// 把 DeepSeek 的 HTTP 错误响应解析成 `ProviderError`——错误码及含义归本 mod：
     /// 400 格式 / 401 认证失败 / 402 余额不足 / 422 参数错误 → `Config`；429 / 500 / 503 → `Upstream`。
     pub fn parse_http_error(code: u16, message: String) -> ProviderError;
