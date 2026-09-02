@@ -203,7 +203,8 @@
     prompt 强调「每个 emoji=一格」。emoji 多码点**只影响**「反查网格的程序」，demo 不做反查 → 不构成障碍。
   - **C 完整坐标**：每格写成 `[row][col]:x`，每格自报坐标，无需数行列。
   - **D 图像**：`html-to-image` 对 `.board` 截图（PNG base64）→ 后端 → vision-exp `image_url`。
-    图像独立验证视觉理解，**不设文字退化兜底**。
+    图像独立验证视觉理解，**不设文字退化兜底**。后端收到 format D 时把当前模型切换为 vision-exp
+    （`deepseek-v4-flash-vision-exp`），其余格式用默认模型。
 - 真实 DeepSeek 验证留实现期。推荐例见 `docs/board-format-prototype.md`（含自洽棋盘样例与目标 `SUGGEST` 输出）。
 
 ### 5. AI 输出契约（#95）
@@ -261,7 +262,7 @@
 
 - `POST /ai/guide/:id`：开始一轮分析，返回 SSE 流（`content` + `reasoning_content` + 终止 event）。
 - `POST /ai/guide/:id/interrupt`：取消上游生成，驱动同一 SSE 的 `{reason:"user_interrupt"}` 终止 event。
-- 请求体：所选 **presentation form** + **model**（+ 图像形式附带 `image` base64）。
+- 请求体：所选 **presentation form**（+ 图像形式附带 `image` base64）。
   **文本形式（A/B/C）的棋盘由后端读自己的 `Game` 渲染**（单 `Game` 权威），前端**不**回传棋盘数据；
   图像形式（D）由前端 `html-to-image` 截 `.board` 并回传 `image`。请与 `docs/seams.md` S4 核对。
 - 响应流在 `[DONE]` 处收尾；未收 `[DONE]` 即断 = 流中断（#97 ②）。
@@ -277,9 +278,9 @@
 - **入口**：CLI 参数 `--test-ai-chat <str>`，`<str>` 是发给 AI 的对话内容（一条 User message）。
 - **互斥**：只能**单独**指定，与其它所有参数冲突（clap `conflicts_with_all`）。
 - **main 早分支**：命中即进入「测试 AI」路径——不建 `Game`、不启动 server、不进正常流程；无 `DEEPSEEK_API_KEY` 时明确报错（AI 未配置）。
-- **实现**：复用 `Agent::complete_once`（S3：单轮、聚合、非流式），**不新增 `Provider` 非流式接口**。构造一个 `Agent`（DeepSeek + 默认 model 字符串）+ `Session`（push 一条 `Message::User`），`complete_once` 返回 `Message::Assistant`，打印其 `.content`（及 `.reasoning_content`）。
+- **实现**：复用 `Agent::complete_once`（S3：单轮、聚合、非流式），**不新增 `Provider` 非流式接口**。构造 `DeepSeek`（config + 默认 model）→ `Agent` + `Session`（push 一条 `Message::User`），`complete_once` 返回 `Message::Assistant`，打印其 `.content`（及 `.reasoning_content`）。
 - **输出**：完整回复打到 stdout，不要求流式（CLI 端本来就是聚合）。
-- **model**：默认字符串（如 `deepseek-v4-flash`），与产品路径一致、按字符串透传。
+- **model**：默认字符串（如 `deepseek-v4-flash`），作为构造 `DeepSeek` 的默认 model（模型统一由 `DeepSeek` 持有，不再透传校验）。
 
 ---
 
@@ -347,9 +348,9 @@
 - **「我玩」复用分析层**：`SinglePlay` 不接入分析/呈现层，两边不合并。
 - **`AiPlay` / `AiPlayWithMe` / `ai_play` 持久循环**：本 map 只实现一次性 `suggest`（无工具循环）。
 - **`ai` 抽成独立 crate**：AI 边界仍在演进，且 `ai` 与 `core` 解耦，未来抽 crate 是机械动作，现在不抽。
-- **多 provider / CLI 选择**：只做 DeepSeek，且本 map **hardcode 用 DeepSeek**（`main` 直接 `DeepSeek::new` 注入 key）；
+- **多 provider / CLI 选择**：只做 DeepSeek，且本 map **hardcode 用 DeepSeek**（`main` 直接 `DeepSeek::new(config, default_model)`）；
   `Provider` seam + `Box<dyn Provider>` 为未来留口。`--provider` / `--model` CLI 暂不实现（将来在 `main` 的选择处扩展，
-  `ai_adapter`/`Guide` 零改动）；模型名按字符串透传、不写死 enum。
+  `ai_adapter`/`Guide` 零改动）；模型名是字符串（不写死 enum），由 `DeepSeek` 持有。
 - **`tools`/`tool_use` 在顾问模式的实际调用**：顾问是 single-turn、只读、无工具；`tool_use` 支持仅为未来 `AiPlay` 准备。
 
 ---

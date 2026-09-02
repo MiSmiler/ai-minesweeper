@@ -35,26 +35,29 @@ impl Game {
 - **已确认**：不给 `core::Game` 加新的 `snapshot()` / 其它可见方法——`cell_view` + `flags_remaining`
   + `difficulty().mine_count()` 已够拼出 #94 头部与棋盘。
 
-### S2 `ai::provider`（主 seam）—— `Provider` trait + `deepseek` 实现
+### S2（主 seam）—— `ai::protocol`（共享协议值） + `ai::provider`（`Provider` trait + `deepseek`）
 
 AI「大脑」的单点。`ai_adapter::Guide::suggest` 与未来 `ai_play` 都经它；测它时注入 mock `Provider`。
 
-**文件划分（目录 mod，非平铺）**：`src/ai/provider/` 下 `mod.rs` 是抽象 seam（`Provider` trait + 共享类型），
-`deepseek.rs` 是具体实现。二者**都**对外 `pub`（`pub mod deepseek`）：`main` 作为组合根要读 `DEEPSEEK_API_KEY`、
-选 provider、把 key 注入 `DeepSeek`；`ai_adapter`/`Guide` 只消费 `Box<dyn Provider>`。抽象 seam 不反向依赖 `deepseek`。
+**文件划分（目录 mod，非平铺）**：
+- `src/ai/protocol/` —— **共享协议/值类型**（与供应商解耦）：`Message`/`ContentBlock`/`ToolCall`/`ToolDecl`/
+  `ChatRequest`/`ProviderEvent`/`ProviderError`。`provider`/`agent`/`ai_adapter`/`server` 都引用。
+- `src/ai/provider/` —— **访问供应商的机制**：`Provider` trait（`stream_chat`）+ `deepseek.rs`（`DeepSeek`
+  实现，持 `api_key`/`base_url`/`client`/`model`）。二者**都**对外 `pub`（`pub mod deepseek`）：`main` 作为
+  组合根读 `DEEPSEEK_API_KEY`、选 provider、注入 key 与默认 model；`ai_adapter`/`Guide` 只面向 `Agent`、
+  不再直连 `Provider`。抽象 seam 不反向依赖 `deepseek`。
 
-**实现注记**：本 spec 阶段 `main` 先 **hardcode `DeepSeek`**（直接 `DeepSeek::new` 注入 key），**不**实现
+**实现注记**：本 spec 阶段 `main` 先 **hardcode `DeepSeek`**（`DeepSeek::new(config, default_model)`），**不**实现
 `--provider`/`--model` CLI 选择——那只是为将来留口。但构造点收在 `main`、上层只见 `Box<dyn Provider>`，将来
-要加 CLI 时只需在 `main` 的 provider 选择处扩展，`ai_adapter`/`Guide`/S3`Agent` 零改动。`main` 启动时可
-**可选预热**模型列表（`let _ = deepseek.list_models().await;`，失败忽略、不阻断启动），把「做准备」留在组合根而非 `new`。
+要加 CLI 时只需在 `main` 的 provider 选择处扩展（用 `--model` 值 `set_model` 或改构造），`ai_adapter`/`Guide`/S3`Agent` 零改动。
+`main` 启动时可**可选预热**模型列表（`let _ = deepseek.list_models().await;`，失败忽略、不阻断启动）。
 
 ```rust
-// ai::provider/mod.rs（抽象 seam；具体实现见 deepseek.rs）
-use futures::Stream;
+// ai::protocol/mod.rs —— 共享协议/值类型（与供应商解耦；provider/agent/ai_adapter/server 共用）
+use serde::Serialize;
 
-/// 模型就是 provider 特有的「名字」字符串——不写死 enum（供应商会一直出新品，enum 会变成我们的维护负担）。
-/// `--model` 直接把字符串照搬传入 provider；是否属于该 provider 由 provider 端（DeepSeek）校验。
-/// DeepSeek 支持列表可经 `GET /models` 查询（可选 capability：校验模型名 / 填充选择器下拉）。
+/// 模型名就是 provider 特有的「名字」字符串——不写死 enum。是否属于该 provider 由 provider 端校验；
+/// 支持列表经 `GET /models`。注意：model 的**当前值**存在 `DeepSeek`（见 provider/deepseek.rs），不在协议层。
 
 /// 对话消息（按 role 区分字段集合）。`serde(tag="role")` 直接序列化成 wire 形状。
 /// 4 个变体覆盖 system / user / assistant / tool。
@@ -91,7 +94,6 @@ pub struct ToolDecl {
 
 pub struct ChatRequest {
     pub messages: Vec<Message>,
-    pub model: String,          // 具体模型名（"deepseek-v4-flash" 等），透传给 provider 校验
     pub stream: bool,           // 顾问恒 true（SSE）
     pub tools: Vec<ToolDecl>,   // 顾问空集
 }
@@ -116,11 +118,16 @@ pub struct ProviderError {
 /// 「前置失败」的两个 bucket（#97 ①）。`ProviderError`（wire 错误体）序列化时用它（"config"/"upstream"）。
 #[derive(serde::Serialize)]
 pub enum ProviderErrorKind { Config, Upstream }
+```
 
-/// 上游生成是否已被取消（用户中断 / 超时 / 上游错误），由调用侧 `select!` 驱动。
-// 类型由 tokio-util 提供；此处引用。
+```rust
+// ai::provider/mod.rs —— 访问供应商的机制：Provider trait + ProviderStream
+use crate::protocol::{ChatRequest, ProviderEvent, ProviderError};
+use futures::Stream;
+use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
 
+/// 上游生成是否已被取消（用户中断 / 超时 / 上游错误），由调用侧 `select!` 驱动。
 pub type ProviderStream = Pin<Box<dyn Stream<Item = ProviderEvent> + Send>>;
 
 pub trait Provider: Send + Sync {
@@ -134,18 +141,20 @@ pub trait Provider: Send + Sync {
 ```
 
 ```rust
-// provider/deepseek.rs —— 具体实现（pub，供 main 构造/选择；抽象 seam 不引用它）
+// ai/provider/deepseek.rs —— 具体实现（pub，供 main 构造/选择；抽象 seam 不引用它）
 pub struct DeepSeek {
     api_key: String,
     base_url: String,
     client: reqwest::Client,
+    model: String,                          // 模型名；构造时定死（换 model = Agent 重建 provider）
     /// lazy 缓存 `GET /models` 结果：首次用到才拉，失败可重试，一次填充、多次复用。
     models: tokio::sync::OnceCell<Vec<String>>,
 }
 pub struct DeepSeekConfig { pub api_key: String, pub base_url: String }
 impl DeepSeek {
     /// 读 env `DEEPSEEK_API_KEY` 构造；无 key 时说明 AI 不启用。纯构造，不发网络请求。
-    pub fn new(config: DeepSeekConfig) -> Self;
+    pub fn new(config: DeepSeekConfig, model: String) -> Self;
+    pub fn model(&self) -> &str;
     /// `GET /models` 查询本 provider 支持的模型（可选 capability：校验模型名 / 填充选择器）。
     /// lazy：首次调用经 `OnceCell::get_or_try_init` 拉取并缓存；失败不缓存、下次重试。
     pub async fn list_models(&self) -> Result<Vec<String>, ProviderError>;
@@ -156,7 +165,7 @@ impl DeepSeek {
     pub fn parse_http_error(code: u16, message: String) -> ProviderError;
 }
 impl Provider for DeepSeek {
-    // model 字符串直接作为 API 的 model 参数；无 enum、无我们维护的字符串映射表。
+    // 发请求时用自持的 model（构造时定死）；无 enum、无我们维护的映射表。
     // 连接失败/超时（无 HTTP 码）→ 直接构造 ProviderError{ kind: Upstream, code: None, message }。
 }
 ```
@@ -171,7 +180,9 @@ ADR-0013 的 `agent → provider`。顾问用 `complete_once`（单轮、无工�
 
 ```rust
 // ai::agent
-use crate::provider::{Message, Provider, ToolCall, ToolDecl};
+use crate::protocol::{Message, ToolCall, ToolDecl};
+use crate::provider::Provider;
+use futures::Stream;
 
 /// 一个工具（未来 AiPlay；顾问空集）。
 #[async_trait::async_trait]
@@ -188,10 +199,31 @@ impl Session {
     pub fn messages(&self) -> &[Message];
 }
 
-pub struct Agent { /* provider, model, Arc<Vec<Tool>> */ }
+/// agent 层的流式事件（隔离 `ProviderEvent`；ai_adapter 只消费本类型）。
+pub enum AgentEvent {
+    ReasoningDelta(String),
+    ContentDelta(String),
+    Done,           // [DONE]
+    Cancelled,      // cancel 触发（#97 ②）
+}
+
+pub enum AgentError {
+    Provider(ProviderError),
+    Cancelled,
+}
+
+pub struct Agent { /* provider, make_provider, Arc<Vec<Tool>> */ }
 impl Agent {
-    pub fn new(provider: Box<dyn Provider>, model: String) -> Self;
+    pub fn new(provider: Box<dyn Provider>,
+               make_provider: Arc<dyn Fn(&str) -> Box<dyn Provider> + Send + Sync>) -> Self;
+    /// 切换模型 = **重建 provider**（新 model，复用 config/client，由 make_provider 构造）。format D/vision 用。
+    pub fn set_model(&mut self, model: String) { self.provider = (self.make_provider)(&model); }
     pub fn add_tool(&mut self, tool: Arc<dyn Tool>);          // 预留给 AiPlay
+    /// 流式：把 session 发出去，边收边转 `AgentEvent`（隔离 `ProviderEvent`）。
+    /// 生成期间可由 `cancel` 中断（#97）；前置失败 → Err(Provider)。
+    pub async fn stream(
+        &self, session: &Session, cancel: CancellationToken,
+    ) -> Result<impl Stream<Item = AgentEvent>, AgentError>;
     /// 单轮完成（无工具循环）—— 顾问路径。
     /// 也是 dev 手工测试 `--test-ai-chat` 的入口（聚合、非流式；无需 `Provider` 新增接口）。
     /// 返回 `Message::Assistant`（`tool_calls: None` = 最终完整答复）。
@@ -205,15 +237,9 @@ impl Agent {
         &self, session: &Session, cancel: CancellationToken,
     ) -> Result<Message, AgentError>;
 }
-
-pub enum AgentError {
-    Provider(ProviderError),
-    Cancelled,
-}
 ```
 
-- **待确认**：`complete_once` 返回聚合结果的 `Message::Assistant`（消费完整流），而要流式给前端，`ai_adapter::Guide::suggest` 会直接消费 `Provider` 的流并转发，而非走 `complete_once`。两者并存是否 OK？
-  （即：`complete_once` 是「聚合结果」的工具/后端测 seam；`suggest` 是「流式」的对外 seam。可在 S4 里让 `suggest` 复用 `complete_once` 的内部，但对外仍流式。）
+- **已确认**：`Agent` 同时提供 `stream`（流式）与 `complete_once`（聚合，复用 `stream` 内部）。`suggest` 走 `stream`（流式给前端），`--test-ai-chat` 走 `complete_once`（聚合）。两条路并存、职责清晰。
 
 ### S4 `ai_adapter` —— `BoardFormat` / `BoardView` / `system_prompt` / `render_*` / `Guide::suggest`
 
@@ -222,8 +248,8 @@ pub enum AgentError {
 ```rust
 // ai_adapter（依赖 core + ai；不依赖 server）
 use crate::core::{Game, CellView, Difficulty, GameState, Position};
-use crate::ai::provider::{ContentBlock, Message, Provider, ProviderError};
-use crate::ai::agent::Tool;
+use crate::ai::protocol::{ContentBlock, Message};
+use crate::ai::agent::{Agent, AgentError, Tool};
 
 /// #94 4 种呈现形式。
 pub enum BoardFormat { SimpleText, Emoji, FullCoordinates, Image }
@@ -262,25 +288,34 @@ pub enum GuideEvent {
 pub enum InterruptReason { UserInterrupt, RateLimit, Timeout, UpstreamError, Unknown }
 
 /// 前置失败 → bucket（#97 ①），走 HTTP 状态码 + 结构化错误体。
-pub enum SuggestError { PreFlight(ProviderError) }
+pub enum SuggestError { PreFlight(AgentError) }
 
-/// 请求：前端只发 format / model（+ 图像形式的 image）。文本形式的棋盘由后端读自己的 Game。
+/// 请求：前端只发 format（+ 图像形式的 image）。文本形式的棋盘由后端读自己的 Game；**不带 model**（后端 `DeepSeek` 默认）。
 pub struct GuideRequest {
     pub format: BoardFormat,
-    pub model: String,            // 具体模型名（透传给 provider）；前端不校验
     pub image: Option<String>,    // image 形式：前端 `html-to-image` 的 PNG data URL
 }
 
 /// 一次性顾问：注入棋盘、走一轮、流式返回，末尾终止 event。
 /// 前置失败 → Err(PreFlight)；否则返回事件流（delta…+ Done | Terminated）。
-pub struct Guide { provider: Box<dyn Provider>, model: String }
+/// 多模态（vision）模型名——format D（Image）时切换（`agent.set_model(VISION_MODEL)`）。#92
+const VISION_MODEL: &str = "deepseek-v4-flash-vision-exp";
+
+/// 多线程共享：`Arc<Mutex<Agent>>`——`&self` 方法内 `lock()` 拿到 `&mut Agent` 就能 `set_model`（重建 provider）。
+pub struct Guide { agent: Arc<Mutex<Agent>> }
 impl Guide {
-    /// 用 provider（DeepSeek 或 mock）+ 默认 model 构造 Guide。
-    pub fn new(provider: Box<dyn Provider>, model: String) -> Self;
+    /// 用共享 Agent（DeepSeek 或 mock 构造）构造 Guide。
+    pub fn new(agent: Arc<Mutex<Agent>>) -> Self;
     /// 注入棋盘、走一轮、流式返回；`cancel` 可中断上游生成（#97）。
     pub async fn suggest(
         &self, game: &Game, req: GuideRequest, cancel: CancellationToken,
     ) -> Result<impl Stream<Item = GuideEvent>, SuggestError>;
+    // 内部：let mut agent = self.agent.lock().unwrap();
+    //       req.format == Image → agent.set_model(VISION_MODEL)（此刻重建 provider；#92）
+    //       render 棋盘 → Session(Message::System/User) → agent.stream()
+    //       把 AgentEvent 映射成 GuideEvent（Done→Done、Cancelled→Terminated(reason)），
+    //       把 AgentError 映射成 SuggestError。
+    // 注：lock() 借 `&mut Agent` 调 set_model；stream 是 `&self`，同 guard 下可续用。
 }
 
 /// 工具绑定（未来 AiPlay；顾问传空集）。绑到 GameHandle 以便未来双 Game 不换 adapter。
@@ -290,11 +325,11 @@ pub fn tools(handle: &GameHandle) -> Vec<Arc<dyn Tool>>;
 - **隐私**：`BoardView::from_game` 是隐私边界——只调 `cell_view`/`game_state`/`difficulty`/`size`/
   `flags_remaining`，**不**读 `mines`。测它时断言 payload 不含任何 mine 位置。
 - **待确认**：
-  - 文本形式**由后端读自己的 `Game` 渲染**、前端只发 `format`/`model`（+`image`）——这修正了 spec 第 10 节
+  - 文本形式**由后端读自己的 `Game` 渲染**、前端只发 `format`（+`image`），**不带 `model`**——这修正了 spec 第 10 节
     「请求体含玩家可见棋盘」的字面。**是否接受**？（我倾向如此：后端 Game 权威、前端薄、隐私收紧在后端。）
   - `SUGGEST {"row":N,"col":M}` **不做任何解析**（#95「永不解析、人读文本」）。事件流里**没有**坐标字段；
     `SUGGEST`/`SUGGEST null` 只是 content 末尾一段文本。**确认**不需要后端「报告」解析出的坐标。
-  - `GuideRequest` 里要不要暴露 `model` 选择？还是后端配置默认、前端不带？（#96 未提模型选择器。）
+  - `model` 暴露：**定案**——前端不带，后端 `DeepSeek` 默认（`GuideRequest.model` 删；`#96` 未提模型选择器，留 `--model` CLI 口）。
 
 ### S5 `server` —— `/ai/...` 传输 seam
 
@@ -314,7 +349,7 @@ pub enum AiStreamEvent {
 }
 // 注：[DONE] 是 SSE 流的收官标记；`Terminated` 是「未收 [DONE]」时的显式终止。
 
-/// 前置失败的错误体 = `ai::provider::ProviderError`（带 `Serialize`，序列化为 { kind, code, message }）。
+/// 前置失败的错误体 = `ai::protocol::ProviderError`（带 `Serialize`，序列化为 { kind, code, message }）。
 /// 不再单独定义 wire 错误体；`server` 直接把 `ProviderError` 序列化返回给前端。
 
 /// 路由处理逻辑（与现在测 apply_action 同思路，可独立测）。
@@ -378,7 +413,7 @@ export type AiEvent =
 
 export type PreFlightError = { kind: "config" | "upstream"; code: number | null; message: string };
 
-export interface GuideRequest { format: BoardFormat; model: string; image?: string; }
+export interface GuideRequest { format: BoardFormat; image?: string; }   // 不带 model（后端 DeepSeek 默认）
 
 export interface AiApi {
   /** POST /ai/guide/:id —— 消费 SSE 流，逐 event 回调；前置失败走 onPreFlightError。 */
@@ -468,10 +503,10 @@ export async function captureBoardImage(
 | # | seam（模块边界） | 性质 | 主要 pub 接口 |
 |---|---|---|---|
 | S1 | `core::Game` | 复用，无新增 | 可见 API（只读） |
-| S2 | `ai::provider::Provider` | **主 seam** | `stream_chat`, `ChatRequest`, `ProviderEvent`, `ProviderError` |
-| S3 | `ai::agent` | 定义 | `Tool`, `Session`, `Agent::{complete_once,run_loop}` |
-| S4 | `ai_adapter` | 绑定 | `BoardView`, `system_prompt`, `render_text/image`, `Guide::suggest`, `GuideEvent`, `InterruptReason`, `GuideRequest` |
-| S5 | `server` 传输 | 薄传输 | `ai_routes`, `AiStreamEvent`, `ProviderError`（错误体） |
+| S2 | `ai::protocol` + `ai::provider` | **主 seam** | `Message`/`ChatRequest`/`ProviderEvent`（protocol）；`Provider::stream_chat`, `ProviderStream`（provider） |
+| S3 | `ai::agent` | 定义 | `Tool`, `Session`, `Agent::{stream,complete_once,run_loop}`, `AgentEvent` |
+| S4 | `ai_adapter` | 绑定 | `BoardView`, `system_prompt`, `render_text/image`, `Guide::suggest`（经 `Agent`）, `GuideEvent`, `InterruptReason`, `SuggestError`, `GuideRequest` |
+| S5 | `server` 传输 | 薄传输 | `ai_routes`, `AiStreamEvent`, `ai::protocol::ProviderError`（错误体） |
 | S6 | `app/` 组装 | 组合 | `mountMode`, `renderModeSwitcher`, `composeGuideMode` |
 | S7 | `ai/api.ts` | wire | `AiApi`, `AiEvent`, `GuideRequest` |
 | S8 | `ai/stateMachine.ts` | 状态机 | `AnalysisMachine`, `AnalysisState` |
@@ -489,9 +524,9 @@ export async function captureBoardImage(
 
 ## 仍需你拍板的清单（汇总）
 
-1. **S4 请求体**：文本形式由后端读自己的 `Game` 渲染、前端只发 `format`/`model`（+`image`）——接受？（修正 spec §10 字面。）
+1. **S4 请求体**：文本形式由后端读自己的 `Game` 渲染、前端只发 `format`（+`image`）、**不带 `model`**——接受？（修正 spec §10 字面。）
 2. **`SUGGEST` 永不解析**：确认事件流/结果里**不**带解析出的坐标字段。
-3. **`model` 暴露**：前端是否可选模型，还是后端默认？（#96 没提模型选择器。）
+3. **`model` 暴露**：**定案**——前端不带，后端 `DeepSeek` 默认（`GuideRequest.model` 删；`#96` 未提模型选择器，留 `--model` CLI 口）。
 4. **分析 `id` 归属**：S5 的 `/ai/guide/:id/interrupt` 的 `<id>`，前端生成 vs 后端分配？
 5. **S5 `AiStreamEvent` 形状**：带 `kind` 的联合（`reasoning/content/done/terminated`）是否就是你要的 wire 形状？
 6. **S3 vs S4**：`complete_once`（聚合）与 `suggest`（流式）并存——OK？
