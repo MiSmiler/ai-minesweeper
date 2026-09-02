@@ -388,6 +388,9 @@ pub fn ai_routes(state: Arc<AppState>) -> Router;
 
 /// SSE 流上的 wire 事件（消费 `Guide::suggest` 的 `Result<StreamChunk, InterruptReason>` 映射）：
 /// `Ok(ReasoningDelta/ContentDelta)` → data；`Ok(Done)` → 发 `[DONE]`；`Err(reason)` → `Interrupt`。
+/// 带 `kind` 序列化（`#[serde(tag="kind")]`），与前端 `GuideEvent`(TS) 同构：
+/// `{kind:"reasoning",text}` / `{kind:"content",text}` / `{kind:"interrupt",reason}`。
+/// 注：`Reasoning`/`Content` 的 payload 需映射为 `text` 字段（变体改带字段或自定义 `Serialize`）。
 pub enum GuideEventDto {
     Reasoning(String),
     Content(String),
@@ -403,11 +406,10 @@ pub(crate) fn handle_guide(...) -> impl IntoResponse;   // SSE
 pub(crate) fn handle_interrupt(...) -> impl IntoResponse;
 ```
 
-- **待确认**：分析 `id` 由谁生成？`/ai/guide/:id/interrupt` 需要 `<id>`。我倾向**前端**（client）生成
-  id（如 `crypto.randomUUID()`），因为「中断」由前端发起、且前端持有该分析会话；`id` 随 SSE 建立即锁定。
-  **若你倾向后端分配（在 SSE 首帧下发 id），请指出。**
-- **待确认**：`GuideEventDto` 要不要合并 `reasoning`/`content` 为一个带 `kind` 的事件，前端好接？我按你
-  前端状态机偏好，倾向**带 kind**（见 `ai/api.ts` `GuideEvent`），此处与 wire 保持同构。
+- **定案**：分析 `id` 由**前端**生成（如 `crypto.randomUUID()`）——中断由前端发起、前端持有该分析会话；
+  `POST /ai/guide/:id` 带上它、`POST /ai/guide/:id/interrupt` 复用同 id，`server` 用 `<id>` 关联该 SSE 的 `cancel`。
+- **定案**：`GuideEventDto` 带 `kind`（`#[serde(tag="kind")]`），与前端 `GuideEvent`(TS)（`{kind:"reasoning"/"content"/"interrupt"}`）同构。
+  实现：`Reasoning`/`Content` 的 payload 映射为 `text` 字段（变体改带字段或自定义 `Serialize`），产出 `{kind,text}`。
 
 ---
 
@@ -571,9 +573,3 @@ export async function captureBoardImage(
   **测试断言**：发给 mock `Provider` 的 `ChatRequest.messages` 不含任何 mine 位置/布局信息。
 - **单流、单终止**：#97 终止统一由后端 SSE 终止 event 裁决；`ai::provider` 只产生 `Done` 或（中断时）流结束，
   `ai_adapter` 流中 `Err` → `Interrupt(reason)`，`server` 原样转发，前端 `ai/stateMachine.ts` 据 `interrupt` 渲染红字。
-
-## 仍需你拍板的清单（汇总）
-
-1. **分析 `id` 归属**：`server` 的 `/ai/guide/:id/interrupt` 的 `<id>`，前端生成 vs 后端分配？
-2. **`server` `GuideEventDto` 形状**：带 `kind` 的联合（`reasoning/content/interrupt`；收尾走 `[DONE]`）是否就是你要的 wire 形状？
-3. **`ai::agent` vs `ai_adapter`**：`complete_once`（聚合）与 `suggest`（流式）并存——OK？
