@@ -343,6 +343,10 @@ impl Guide {
     // 注：lock() 借 `&mut Agent` 调 set_model；stream 是 `&self`，同 guard 下可续用。
 }
 
+/// 访问一个游戏实例可见状态的句柄（ADR-0013：工具绑定是参数而非写死单一 Game，为未来 AiPlayWithMe 双 Game 留口）。
+/// TODO: 现实现 = 封装 `Arc<Mutex<core::Game>>`（单 Game）；细节待 AiPlay 落地时补。本 map 工具集为空。
+pub struct GameHandle { /* TODO */ }
+
 /// 工具绑定（未来 AiPlay；顾问传空集）。绑到 GameHandle 以便未来双 Game 不换 adapter。
 pub fn tools(handle: &GameHandle) -> Vec<Arc<dyn Tool>>;
 ```
