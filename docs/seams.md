@@ -389,11 +389,11 @@ pub fn tools(handle: &GameHandle) -> Vec<Arc<dyn Tool>>;
 ```rust
 // server
 pub fn ai_routes(state: Arc<AppState>) -> Router;
-//  POST /ai/guide/:id        → SSE 流（AiStreamEvent…，收 [DONE] 结束）
+//  POST /ai/guide/:id        → SSE 流（GuideEventDto…，收 [DONE] 结束）
 //  POST /ai/guide/:id/interrupt → 取消上游，驱动同 SSE 的 {reason:"user_interrupt"}
 
 /// SSE 流上的 wire 事件（镜像 ai_adapter::GuideEvent + 终止原因）。
-pub enum AiStreamEvent {
+pub enum GuideEventDto {
     Reasoning(String),
     Content(String),
     Interrupt { reason: InterruptReason },   // 末端中断 event（#97）
@@ -411,8 +411,8 @@ pub(crate) fn handle_interrupt(...) -> impl IntoResponse;
 - **待确认**：分析 `id` 由谁生成？`/ai/guide/:id/interrupt` 需要 `<id>`。我倾向**前端**（client）生成
   id（如 `crypto.randomUUID()`），因为「中断」由前端发起、且前端持有该分析会话；`id` 随 SSE 建立即锁定。
   **若你倾向后端分配（在 SSE 首帧下发 id），请指出。**
-- **待确认**：`AiStreamEvent` 要不要合并 `reasoning`/`content` 为一个带 `kind` 的事件，前端好接？我按你
-  前端状态机偏好，倾向**带 kind**（见 `ai/api.ts` `AiEvent`），此处与 wire 保持同构。
+- **待确认**：`GuideEventDto` 要不要合并 `reasoning`/`content` 为一个带 `kind` 的事件，前端好接？我按你
+  前端状态机偏好，倾向**带 kind**（见 `ai/api.ts` `GuideEvent`），此处与 wire 保持同构。
 
 ---
 
@@ -456,10 +456,13 @@ export type BoardFormat = "simple-text" | "emoji" | "full-coordinates" | "image"
 export type InterruptReason =
   | "user_interrupt" | "rate_limit" | "timeout" | "upstream_error" | "unknown";
 
-export type AiEvent =
+// 前端消费的 wire 事件（对应后端 `GuideEventDto`）：`sse_done` 由前端读到 SSE `[DONE]` 时合成，
+// wire 上不产 `sse_done`（后端 `GuideEventDto` 无 `Done` 变体）。注意与 S5 后端 `GuideEvent`（Rust）同名，
+// 但此处是 TS 类型、是后端 `GuideEventDto` 的 wire 镜像（不同语言/层）。
+export type GuideEvent =
   | { kind: "reasoning"; text: string }
   | { kind: "content"; text: string }
-  | { kind: "done" }
+  | { kind: "sse_done" }
   | { kind: "interrupt"; reason: InterruptReason };
 
 export type PreFlightError = { kind: "config" | "upstream"; code: number | null; message: string };
@@ -468,13 +471,13 @@ export interface GuideRequest { format: BoardFormat; imageDataUrl?: string; }   
 
 export interface AiApi {
   /** POST /ai/guide/:id —— 消费 SSE 流，逐 event 回调；前置失败走 onPreFlightError。 */
-  startGuide(id: string, req: GuideRequest, onEvent: (e: AiEvent) => void, onPreFlightError: (e: PreFlightError) => void): void;
+  startGuide(id: string, req: GuideRequest, onEvent: (e: GuideEvent) => void, onPreFlightError: (e: PreFlightError) => void): void;
   /** POST /ai/guide/:id/interrupt。 */
   interrupt(id: string): Promise<unknown>;
 }
 ```
 
-- 前端**不解析** `SUGGEST`（#95）；`AiEvent` 只有 reasoning/content/done/interrupt，**没有坐标字段**。
+- 前端**不解析** `SUGGEST`（#95）；`GuideEvent` 只有 reasoning/content/sse_done/interrupt，**没有坐标字段**。
   image 形式的 base64 由 `ai/screenshot.ts` 收集后放进 `GuideRequest.imageDataUrl`。
 
 ### S9 `ai/stateMachine.ts` —— 分析状态机
@@ -558,9 +561,9 @@ export async function captureBoardImage(
 | S3 | `ai::provider` | 访问机制 | `Provider::stream_chat`, `ProviderStream`, `DeepSeek` |
 | S4 | `ai::agent` | 定义 | `Tool`, `Session`, `Agent::{stream,complete_once,run_loop}`, `AgentEvent` |
 | S5 | `ai_adapter` | 绑定 | `BoardView`, `system_prompt`, `build_text_blocks/build_image_blocks`, `Guide::suggest`（经 `Agent`）, `GuideEvent`, `InterruptReason`, `SuggestError`, `GuideRequest` |
-| S6 | `server` 传输 | 薄传输 | `ai_routes`, `AiStreamEvent`, `ai::protocol::ProviderError`（错误体） |
+| S6 | `server` 传输 | 薄传输 | `ai_routes`, `GuideEventDto`, `ai::protocol::ProviderError`（错误体） |
 | S7 | `app/` 组装 | 组合 | `mountMode`, `renderModeSwitcher`, `composeGuideMode` |
-| S8 | `ai/api.ts` | wire | `AiApi`, `AiEvent`, `GuideRequest` |
+| S8 | `ai/api.ts` | wire | `AiApi`, `GuideEvent`, `GuideRequest` |
 | S9 | `ai/stateMachine.ts` | 状态机 | `AnalysisMachine`, `AnalysisState` |
 | S10 | `ai/conversation.ts` | 渲染 | `createConversation` |
 | S11 | `ai/axis.ts` | 渲染 | `createBoardAxis` |
@@ -577,5 +580,5 @@ export async function captureBoardImage(
 ## 仍需你拍板的清单（汇总）
 
 1. **分析 `id` 归属**：`server` 的 `/ai/guide/:id/interrupt` 的 `<id>`，前端生成 vs 后端分配？
-2. **`server` `AiStreamEvent` 形状**：带 `kind` 的联合（`reasoning/content/done/interrupt`）是否就是你要的 wire 形状？
+2. **`server` `GuideEventDto` 形状**：带 `kind` 的联合（`reasoning/content/interrupt`；收尾走 `[DONE]`）是否就是你要的 wire 形状？
 3. **`ai::agent` vs `ai_adapter`**：`complete_once`（聚合）与 `suggest`（流式）并存——OK？
