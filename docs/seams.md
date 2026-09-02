@@ -353,12 +353,13 @@ pub fn tools(handle: &GameHandle) -> Vec<Arc<dyn Tool>>;
 
 - **隐私**：`BoardView::from_game` 是隐私边界——只调 `cell_view`/`game_state`/`difficulty`/`size`/
   `flags_remaining`，**不**读 `mines`。测它时断言 payload 不含任何 mine 位置。
-- **待确认**：
-  - 文本形式**由后端读自己的 `Game` 渲染**、前端只发 `format`（+`image`），**不带 `model`**——这修正了 spec 第 10 节
-    「请求体含玩家可见棋盘」的字面。**是否接受**？（我倾向如此：后端 Game 权威、前端薄、隐私收紧在后端。）
+- **定案**：
+  - 文本形式**由后端读自己的 `Game` 渲染**、前端只发 `format`（+`image`），**不带 `model`**——后端 Game 权威、前端薄、
+    隐私（snapshot）收紧在后端（`BoardView::from_game`）。spec §10/用户故事措辞已统一为「后端读自己的 `Game` 渲染」。
   - `SUGGEST {"row":N,"col":M}` **不做任何解析**（#95「永不解析、人读文本」）。事件流里**没有**坐标字段；
-    `SUGGEST`/`SUGGEST null` 只是 content 末尾一段文本。**确认**不需要后端「报告」解析出的坐标。
-  - `model` 暴露：**定案**——前端不带，后端 `DeepSeek` 默认（`GuideRequest.model` 删；`#96` 未提模型选择器，留 `--model` CLI 口）。
+    `SUGGEST`/`SUGGEST null` 只是 content 末尾一段文本。**不需要**后端「报告」解析出的坐标。
+  - `model` 暴露：**定案**——前端不带，后端 `DeepSeek` 默认（`GuideRequest.model` 删；`#96` 未提模型选择器）。
+    `--model` CLI **不在本 map 实现**（留口：将来在 `main` 选择处扩展；`ai_adapter`/`Guide` 零改动）。
 
 ### S5 `server` —— `/ai/...` 传输 seam
 

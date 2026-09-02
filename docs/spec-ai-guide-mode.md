@@ -40,7 +40,7 @@
 - 左下仪表盘：**分析**按钮、「输入格式」下拉（4 种呈现形式）、**行列号**辅助标记 checkbox、**历史**列表。
 - 右侧对话框：`reasoning_content`（思考链，浅色小字、整块可折叠）+ `content`（可读推理 + 末尾
   `SUGGEST {"row":N,"col":M}` 行，正常字体、不折叠）。坐标 0-based，人读文本、靠 `#111` 行列号定位格子。
-- 点「分析」：把当前局**玩家可见状态**（`snapshot` 语义）按选中的形式序列化，Rust 后端代理转发给
+- 点「分析」：后端读自己的 `Game`，把该局**玩家可见状态**（`snapshot` 语义）按选中形式序列化，再代理转发给
   DeepSeek（OpenAI 兼容 `POST /chat/completions`），SSE 流式返回推理 + 建议。
 - 顶栏 **mode-switcher**：`SinglePlay` ↔ `AiGuide` 互斥；**切换即弃局开新局**，无「换个模式接着同一局」。
 - 保留原「我玩」（`SinglePlay`）模式不变。
