@@ -63,7 +63,7 @@ use futures::Stream;
 pub enum Message {
     System { content: String },
     /// 可多模态（文本/图）。
-    User { content: Vec<ContentPart> },
+    User { content: Vec<ContentBlock> },
     Assistant {
         content: String,
         #[serde(skip_serializing_if = "Option::is_none")] reasoning_content: Option<String>,
@@ -72,19 +72,19 @@ pub enum Message {
     Tool { tool_call_id: String, content: String },
 }
 #[derive(serde::Serialize)]
-pub enum ContentPart {
+pub enum ContentBlock {
     Text(String),
     /// data URL / base64 的 PNG；仅 vision-exp，单图 ≤384 token（#92）。wire 多模态形状（`{type,text}` /
     /// `{type,image_url,image_url:{url}}`）与内部表示不同，实现期用 serde 标注/转换。
     ImageUrl(String),
 }
-/// model 请求调用某工具（function calling）。与 `ToolSpec` 是**相反方向**：`ToolSpec` 是「声明」
+/// model 请求调用某工具（function calling）。与 `ToolDecl` 是**相反方向**：`ToolDecl` 是「声明」
 /// （喂给 model 的 tools 数组），`ToolCall` 是「model 请求调用」（assistant.tool_calls 的一项），
 /// 按 `name` 衔接 `Tool`。
 pub struct ToolCall { pub id: String, pub name: String, pub arguments: serde_json::Value }
 
-/// 工具（未来 AiPlay 用；顾问模式传空集）
-pub struct ToolSpec {
+/// 工具「声明」（未来 AiPlay 用；顾问模式传空集）—— 与 `ToolCall`（model 请求调用）相对。
+pub struct ToolDecl {
     pub name: String, pub description: String,
     pub parameters: serde_json::Value,   // JSON Schema
 }
@@ -93,7 +93,7 @@ pub struct ChatRequest {
     pub messages: Vec<Message>,
     pub model: String,          // 具体模型名（"deepseek-v4-flash" 等），透传给 provider 校验
     pub stream: bool,           // 顾问恒 true（SSE）
-    pub tools: Vec<ToolSpec>,   // 顾问空集
+    pub tools: Vec<ToolDecl>,   // 顾问空集
 }
 
 /// 流式过程中的一个事件（content 与 reasoning_content 分开 —— #95 双流）。
@@ -171,12 +171,12 @@ ADR-0013 的 `agent → provider`。顾问用 `complete_once`（单轮、无工�
 
 ```rust
 // ai::agent
-use crate::provider::{Message, Provider, ToolCall, ToolSpec};
+use crate::provider::{Message, Provider, ToolCall, ToolDecl};
 
 /// 一个工具（未来 AiPlay；顾问空集）。
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
-    fn spec(&self) -> ToolSpec;
+    fn decl(&self) -> ToolDecl;
     async fn call(&self, args: serde_json::Value) -> Result<serde_json::Value, String>;
 }
 
@@ -222,7 +222,7 @@ pub enum AgentError {
 ```rust
 // ai_adapter（依赖 core + ai；不依赖 server）
 use crate::core::{Game, CellView, Difficulty, GameState, Position};
-use crate::ai::provider::{ContentPart, Message, Provider, ProviderError};
+use crate::ai::provider::{ContentBlock, Message, Provider, ProviderError};
 use crate::ai::agent::Tool;
 
 /// #94 4 种呈现形式。
@@ -246,9 +246,9 @@ impl BoardView {
 pub fn system_prompt() -> String;
 
 /// 文本形式（A/B/C）的 user 消息体。纯。
-pub fn render_text(view: &BoardView, format: BoardFormat) -> Vec<ContentPart>;
+pub fn render_text(view: &BoardView, format: BoardFormat) -> Vec<ContentBlock>;
 /// 图像形式（D）的 user 消息体 = 头部文本 + 截图 data URL。纯。
-pub fn render_image(view: &BoardView, image_data_url: &str) -> Vec<ContentPart>;
+pub fn render_image(view: &BoardView, image_data_url: &str) -> Vec<ContentBlock>;
 
 /// 流式转发给前端的事件（reasoning / content 分开，结束时给终止 event）。
 pub enum GuideEvent {
