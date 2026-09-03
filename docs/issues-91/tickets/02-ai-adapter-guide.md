@@ -1,6 +1,6 @@
 # 02: ai_adapter 扫雷绑定（BoardFormat / BoardView / Guide::suggest）
 
-**What to build:** 把扫雷 `Game` 的**玩家可见**侧渲染成 #94 的 4 种输入形式 + 共享 system prompt；`Guide::suggest` 注入一盘、走一轮（经 mock Provider）返回分析流。**隐私硬约束**：发送的 payload 只含玩家可见状态，**绝不泄露 Mine 布局**。本 ticket 不接真实 DeepSeek HTTP（留 03）。
+**What to build:** 把扫雷 `Game` 的**玩家可见**侧渲染成 #94 的 4 种输入形式 + 共享 system prompt；`Guide::suggest` 注入一盘、走一轮（经 mock Provider）返回分析流。**隐私硬约束**：发送的 payload 只含玩家可见状态，**绝不泄露 Mine 布局**。本 ticket 不接真实 DeepSeek HTTP。
 
 
 **Blocked by:** 01
@@ -24,6 +24,7 @@ enum BoardFormat { SimpleText, Emoji, FullCoordinates, Image }
 struct BoardView { difficulty: Difficulty, state: GameState, rows: usize, cols: usize,
                    mine_count: usize, flags_remaining: i32, cells: Vec<CellView> }   // 不含 mine 布局（隐私硬约束）
 impl BoardView { fn from_game(game: &Game) -> Self; }   // 隐私 seam：只读可见侧
+// S1 定案：**不**给 core::Game 新增 snapshot() 等可见方法——cell_view + flags_remaining + difficulty().mine_count() 已够拼出头部与棋盘
 
 fn system_prompt() -> String;   // 坐标 0-based、只看可见、末尾 SUGGEST 契约
 fn build_text_blocks(view: &BoardView, format: BoardFormat) -> Vec<ContentBlock>;

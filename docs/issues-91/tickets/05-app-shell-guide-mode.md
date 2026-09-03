@@ -1,6 +1,6 @@
 # 05: 前端 app/ 外壳（PlayMode + mode-switcher + guide 三区）
 
-**What to build:** 前端组装层：`PlayModeName`/`mountMode`/`renderModeSwitcher`，组装出 `AiGuide` 组合——左上完整照搬的棋盘（独立 game client）、左下仪表盘（分析/中断、输入格式下拉、session 策略下拉、行列号 checkbox、历史）、右侧对话框空壳。顶栏 mode-switcher 切换 = 弃局开新局；`.top-bar` 更名 `.game-top-bar`。AI 分析先用 stub（本 ticket 不接后端）。**同时定义前端 wire 类型契约**（`AiApi`/`GuideEvent`/`GuideRequest`/`ProviderError`/`BoardFormat`，供 `AppDeps` 注入与 stub 分析按钮使用；真实消费 SSE 的实现留给 06）。**注：`PlayMode`（概念驼峰 `SinglePlay`/`AiGuide`）与 `PlayModeName`（kebab 运行时标识）不强行统一。**
+**What to build:** 前端组装层：`PlayModeName`/`mountMode`/`renderModeSwitcher`，组装出 `AiGuide` 组合——左上完整照搬的棋盘（独立 game client）、左下仪表盘（分析/中断、输入格式下拉、session 策略下拉、行列号 checkbox、历史）、右侧对话框空壳。**同时重构现 `main.ts`**：把现 single 组合抽到 `singleMode.ts` 的 `composeSingleMode`、改造 `main.ts` 为读初始 mode → `mountMode` + `renderModeSwitcher` + `onSwitch`。顶栏 mode-switcher 切换 = 弃局开新局；`.top-bar` 更名 `.game-top-bar`。AI 分析先用 stub（本 ticket 不接后端）。**同时定义前端 wire 类型契约**（`AiApi`/`GuideEvent`/`GuideRequest`/`ProviderError`/`BoardFormat`，供 `AppDeps` 注入与 stub 分析按钮使用；真实消费 SSE 的实现不属本 ticket）。**注：`PlayMode`（概念驼峰 `SinglePlay`/`AiGuide`）与 `PlayModeName`（kebab 运行时标识）不强行统一。**
 
 
 **Blocked by:** None (can start immediately)
@@ -17,7 +17,7 @@
 ### 接口契约
 
 ```ts
-// ai/api.ts —— 前端 wire 类型契约（本 ticket 定义；实现消费 SSE 在 06）
+// ai/api.ts —— 前端 wire 类型契约（本 ticket 定义；消费 SSE 的实现不属本 ticket）
 export type BoardFormat = "simple-text" | "emoji" | "full-coordinates" | "image";
 export type InterruptReason = "user_interrupt" | "rate_limit" | "timeout" | "upstream_error" | "unknown";
 export type GuideEvent =

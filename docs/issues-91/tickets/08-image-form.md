@@ -15,7 +15,7 @@
 ### 接口契约
 
 ```ts
-// ai/screenshot.ts
+// ai/screenshot.ts（依赖：package.json 需声明 html-to-image）
 export async function captureBoardImage(boardEl: HTMLElement, opts?: { pixelRatio?: number }): Promise<string>;
 // 返回 PNG data URL（默认 pixelRatio 不放大）；供 GuideRequest.imageDataUrl；Playwright 只作开发/工具截图，不作 runtime capture
 ```

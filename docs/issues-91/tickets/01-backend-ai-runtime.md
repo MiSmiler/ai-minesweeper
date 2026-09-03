@@ -1,6 +1,6 @@
 # 01: 后端 AI 运行时内核（protocol / provider / agent）
 
-**What to build:** 建立通用 AI 运行时（`ai` 模块，与 `core` 解耦）：与供应商解耦的共享值类型、可插拔的 `Provider` seam、`Agent`/`Session` 骨架。`--test-ai-chat` CLI 自检入口先用 mock Provider 验证「发一条 User 消息 → 回一条 Assistant 回复」的单轮 `complete_once` 路径。本 ticket **不接扫雷、不接真实 HTTP**；DeepSeek 真实实现留 03。
+**What to build:** 建立通用 AI 运行时（`ai` 模块，与 `core` 解耦）：与供应商解耦的共享值类型、可插拔的 `Provider` seam、`Agent`/`Session` 骨架。`--test-ai-chat` CLI 自检入口先用 mock Provider 验证「发一条 User 消息 → 回一条 Assistant 回复」的单轮 `complete_once` 路径。本 ticket **不接扫雷、不接真实 HTTP**；真实 DeepSeek 实现不在本 ticket。
 
 
 **Blocked by:** None (can start immediately)
@@ -17,6 +17,7 @@
 
 ```rust
 // ai::protocol
+// 本 ticket 引入的依赖（Cargo.toml）：futures（Stream/ProviderStream）、tokio-util（CancellationToken）
 enum Message {
   System { content: String },
   User { content: Vec<ContentBlock> },
@@ -25,6 +26,7 @@ enum Message {
 }
 // serde(tag="role", rename_all="lowercase")
 enum ContentBlock { Text(String), ImageUrl(String) }   // ImageUrl: data URL/base64 PNG; 仅 vision-exp, ≤384 token
+//   wire 多模态形状与内部表示不同（{type,text} / {type,image_url,image_url:{url}}），实现期用 serde 标注/转换
 struct ToolCall { id: String, name: String, arguments: serde_json::Value }   // model 请求调用（与 ToolDecl 相反方向）
 struct ToolDecl { name: String, description: String, parameters: serde_json::Value }  // 喂给 model 的 tools 声明
 struct ChatRequest { messages: Vec<Message>, model: String, stream: bool, tools: Vec<ToolDecl> }  // model 必填，由 Agent 填 current_model

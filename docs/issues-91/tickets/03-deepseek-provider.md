@@ -18,6 +18,8 @@
 
 ```rust
 // ai::provider::deepseek
+// 本 ticket 引入的依赖（Cargo.toml）：reqwest（OpenAI 兼容 HTTP client）
+// base_url = "https://api.deepseek.com"（OpenAI 兼容 POST /chat/completions，Bearer 认证）
 struct DeepSeek { api_key: String, base_url: String, client: reqwest::Client, models: tokio::sync::OnceCell<Vec<String>> }
 struct DeepSeekConfig { api_key: String, base_url: String }
 impl DeepSeek {
