@@ -1,6 +1,6 @@
 # AI 引导模式（#91）审阅 Agenda —— 逐个对齐待办
 
-> 这是 issue **#91** 的 `docs/spec-ai-guide-mode.md` / `docs/seams.md` 审阅过程中，与用户**逐个对齐**的待办跟踪表。
+> 这是 issue **#91** 的 `spec-ai-guide-mode.md` / `seams.md` 审阅过程中，与用户**逐个对齐**的待办跟踪表。
 > 流程：逐个确认 → 定案 → 落进 spec/seams 文档 → 提交。顺次讨论；新点追加到末尾。
 > 状态：`- [x]` = 已定案（附提交哈希），`- [ ]` = 待对齐。
 

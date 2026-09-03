@@ -1,6 +1,6 @@
 # Seams & 各 seam 的 pub 接口（草稿）
 
-> 本文件被 `docs/spec-ai-guide-mode.md` 索引（见其 Testing Decisions「拟用 seams」一节）。
+> 本文件被 `spec-ai-guide-mode.md` 索引（见其 Testing Decisions「拟用 seams」一节）。
 > 目标：给每个 seam 确定**基本形状**（pub 接口的类型/签名），供人工审阅、定稿。
 > **形状层**——只列接口骨架与关键类型，不含实现；每个 seam 下用 `待确认` 标出需要你拍板的分叉点。
 > 语言约定：**代码/类型一律 English**，说明性散文用中文；领域术语按 `CONTEXT.md` 词汇表。

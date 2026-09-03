@@ -205,7 +205,7 @@
   - **D 图像**：`html-to-image` 对 `.board` 截图（PNG base64）→ 后端 → vision-exp `image_url`。
     图像独立验证视觉理解，**不设文字退化兜底**。后端每次按 format 显式设 model：format D → vision-exp
     （`deepseek-v4-flash-vision-exp`），其余格式回默认 model（`deepseek-v4-flash`）。
-- 真实 DeepSeek 验证留实现期。推荐例见 `docs/board-format-prototype.md`（含自洽棋盘样例与目标 `SUGGEST` 输出）。
+- 真实 DeepSeek 验证留实现期。推荐例见 `board-format-prototype.md`（含自洽棋盘样例与目标 `SUGGEST` 输出）。
 
 ### 5. AI 输出契约（#95）
 
@@ -266,7 +266,7 @@
 - `POST /ai/guide/:id/interrupt`：取消上游生成，驱动同一 SSE 的 `{reason:"user_interrupt"}` 中断 event。
 - 请求体：所选 **presentation form**（+ 图像形式附带 `image_data_url`：前端 `html-to-image` 的 PNG data URL，含 base64）。
   **文本形式（A/B/C）的棋盘由后端读自己的 `Game` 渲染**（单 `Game` 权威），前端**不**回传棋盘数据；
-  图像形式（D）由前端 `html-to-image` 截 `.board` 并回传 `image_data_url`。请与 `docs/seams.md` S5 核对。
+  图像形式（D）由前端 `html-to-image` 截 `.board` 并回传 `image_data_url`。请与 `seams.md` S5 核对。
 - 响应流在 `[DONE]` 处收尾；未收 `[DONE]` 即断 = 流中断（#97 ②）。
 
 ### 11. 前端 `ai/` slice（#96 补全）
@@ -296,10 +296,10 @@
 > 纯逻辑（gesture/preview/hitTest/snapshotRender）各自独立测。
 > 本 spec 遵循同一精神：**只测外部可观察行为，不测内部实现细节**，用 mock 替换外部依赖。
 
-**Seam 清单与各 seam 的 pub 接口形状（S1–S12）见 [`docs/seams.md`](seams.md)**——本小节只概览每侧的主 seam，具体类型/签名以及每处 `待确认` 分叉点都以该文件为准。
+**Seam 清单与各 seam 的 pub 接口形状（S1–S12）见 [`seams.md`](seams.md)**——本小节只概览每侧的主 seam，具体类型/签名以及每处 `待确认` 分叉点都以该文件为准。
 
-**拟用 seams（完整清单见 `docs/seams.md`，此处为概览）**：
-> 注：此处 seam 1-5 是**按测试组**的分组（provider / ai_adapter 纯函数 / deepseek / server / 前端组合），与 `docs/seams.md` 的 **S1-S12（按模块边界）** 是两套编号，不互相替代。
+**拟用 seams（完整清单见 `seams.md`，此处为概览）**：
+> 注：此处 seam 1-5 是**按测试组**的分组（provider / ai_adapter 纯函数 / deepseek / server / 前端组合），与 `seams.md` 的 **S1-S12（按模块边界）** 是两套编号，不互相替代。
 
 1. **后端主 seam：`ai::provider::Provider`**（拟建）。
    这是 AI「大脑」的单点。`ai_adapter::Guide::suggest(&self, game, req: GuideRequest, cancel)` 是顾问入口，测它时注入一个
