@@ -415,39 +415,7 @@ pub(crate) fn handle_interrupt(...) -> impl IntoResponse;
 
 ## 前端 seams
 
-### S7 `app/` 组装 seam（Mode switcher + `PlayMode` 组合）
-
-`app/` 是 mode 组合处（ADR-0011/0012）。guide 组合拿 `game/` slice + `ai/` slice 拼。
-
-```ts
-// app/
-export type PlayModeName = "single" | "ai-guide";
-
-export interface AppDeps {
-  getPlayMode(): PlayModeName;
-  // 复用 game slice 的既有入口（createGameClient 由各 mode 实例化）
-  // ai/ slice 的入口（由 composeGuideMode 用）
-  aiApi: AiApi;
-}
-
-/** 挂载某个 mode 的组合，返回卸载函数。切 mode 即调用当前卸载 + 挂载新的。 */
-export function mountMode(mode: PlayModeName, root: HTMLElement, deps: AppDeps): () => void;
-
-/** 顶栏 mode-switcher；切 mode 触发 onSwitch。 */
-export function renderModeSwitcher(root: HTMLElement, current: PlayModeName, onSwitch: (m: PlayModeName) => void): void;
-
-/** 组装 guide 模式（独立 DOM + 独立 game client + ai/ slice）。 */
-export function composeGuideMode(root: HTMLElement, deps: AppDeps): { dispose(): void };
-```
-
-- `PlayModeName` 是**前端** `app/` 组合层概念（ADR-0011/0012）：决定挂载哪个 mode 的 DOM / `createGameClient` / 组件组合。
-  后端**无对应类型**——单 `Game`、无模式字段；「模式」只隐式体现在端点划分（`/state`/`/action` 单局 vs `/ai/guide/:id` guide 流）。
-  切 mode = 前端弃局开新局，对后端透明。
-- 每个 mode 独立 DOM + 独立 `createGameClient`（ADR-0012）。
-- **待确认**：`AppDeps` 里 `aiApi` 要不要进一步拆成 `AiApi` + `captureBoardImage` + 轴标组件工厂，
-  便于 assemble 时按需注入、测试时 mock 更细？
-
-### S8 `ai/api.ts` —— wire 契约（镜像后端 `/ai/...`）
+### S7 `ai/api.ts` —— wire 契约（镜像后端 `/ai/...`）
 
 ```ts
 // ai/api.ts
@@ -480,7 +448,7 @@ export interface AiApi {
 - 前端**不解析** `SUGGEST`（#95）；`GuideEvent` 只有 reasoning/content/sse_done/interrupt，**没有坐标字段**。
   image 形式的 base64 由 `ai/screenshot.ts` 收集后放进 `GuideRequest.imageDataUrl`。
 
-### S9 `ai/stateMachine.ts` —— 分析状态机
+### S8 `ai/stateMachine.ts` —— 分析状态机
 
 持有一次分析的生命周期（#97 失败两型 + 用户中断）。
 
@@ -514,7 +482,7 @@ export function createAnalysisMachine(deps: { api: AiApi; newId: () => string })
 - 历史绑定一局、分析中不可点、输入格式变更 → 确认 + 清历史（#96）—— 这些判定放组装层（`app/`），状态机只负责
   `running/done/interrupted/preflight-failed` 及累积文本。
 
-### S10 `ai/conversation.ts` —— 双流对话渲染（#95）
+### S9 `ai/conversation.ts` —— 双流对话渲染（#95）
 
 ```ts
 // ai/conversation.ts
@@ -525,7 +493,7 @@ export function createConversation(container: HTMLElement): {
 - `reasoning_content` → 浅色小字、整块可折叠；`content` → 正常字体、不折叠（仿 DeepSeek 网页版）。
 - `SUGGEST`/`SUGGEST null` 只是 content 文本，**不解析、不高亮**。
 
-### S11 `ai/axis.ts` —— 行列号辅助标记（#111）
+### S10 `ai/axis.ts` —— 行列号辅助标记（#111）
 
 ```ts
 // ai/axis.ts
@@ -540,7 +508,7 @@ export function createBoardAxis(boardEl: HTMLElement, opts?: { visible?: boolean
 - `.board` 外**绝对定位 overlay**、`pointer-events:none`、**不进 `.board` 截图**、对 4 形式零影响。
 - 默认关、guide 组件内状态（切走即丢、不持久化）。checkbox「行列号」落仪表盘（组装层）。
 
-### S12 `ai/screenshot.ts` —— `html-to-image` 截图（#93）
+### S11 `ai/screenshot.ts` —— `html-to-image` 截图（#93）
 
 ```ts
 // ai/screenshot.ts
@@ -549,6 +517,37 @@ export async function captureBoardImage(
 ): Promise<string>;   // PNG data URL（默认 pixelRatio 不放大）
 ```
 - 供 `ai/api.ts` `GuideRequest.imageDataUrl` 用；Playwright 只作开发/工具截图，不作 runtime capture。
+### S12 `app/` 组装 seam（Mode switcher + `PlayMode` 组合）
+
+`app/` 是 mode 组合处（ADR-0011/0012）。guide 组合拿 `game/` slice + `ai/` slice 拼。
+
+```ts
+// app/
+export type PlayModeName = "single" | "ai-guide";
+
+export interface AppDeps {
+  getPlayMode(): PlayModeName;
+  // 复用 game slice 的既有入口（createGameClient 由各 mode 实例化）
+  // ai/ slice 的入口（由 composeGuideMode 用）
+  aiApi: AiApi;
+}
+
+/** 挂载某个 mode 的组合，返回卸载函数。切 mode 即调用当前卸载 + 挂载新的。 */
+export function mountMode(mode: PlayModeName, root: HTMLElement, deps: AppDeps): () => void;
+
+/** 顶栏 mode-switcher；切 mode 触发 onSwitch。 */
+export function renderModeSwitcher(root: HTMLElement, current: PlayModeName, onSwitch: (m: PlayModeName) => void): void;
+
+/** 组装 guide 模式（独立 DOM + 独立 game client + ai/ slice）。 */
+export function composeGuideMode(root: HTMLElement, deps: AppDeps): { dispose(): void };
+```
+
+- `PlayModeName` 是**前端** `app/` 组合层概念（ADR-0011/0012）：决定挂载哪个 mode 的 DOM / `createGameClient` / 组件组合。
+  后端**无对应类型**——单 `Game`、无模式字段；「模式」只隐式体现在端点划分（`/state`/`/action` 单局 vs `/ai/guide/:id` guide 流）。
+  切 mode = 前端弃局开新局，对后端透明。
+- 每个 mode 独立 DOM + 独立 `createGameClient`（ADR-0012）。
+- **待确认**：`AppDeps` 里 `aiApi` 要不要进一步拆成 `AiApi` + `captureBoardImage` + 轴标组件工厂，
+  便于 assemble 时按需注入、测试时 mock 更细？
 
 ---
 
@@ -562,12 +561,12 @@ export async function captureBoardImage(
 | S4 | `ai::agent` | 定义 | `Tool`, `Session`, `Agent::{stream,complete_once,run_loop}`, `StreamChunk`, `AgentError` |
 | S5 | `ai_adapter` | 绑定 | `BoardView`, `system_prompt`, `build_text_blocks/build_image_blocks`, `Guide::suggest`（经 `Agent`）, `StreamChunk`, `InterruptReason`, `SuggestError`, `GuideRequest` |
 | S6 | `server` 传输 | 薄传输 | `ai_routes`, `GuideEventDto`, `ai::protocol::ProviderError`（错误体） |
-| S7 | `app/` 组装 | 组合 | `mountMode`, `renderModeSwitcher`, `composeGuideMode` |
-| S8 | `ai/api.ts` | wire | `AiApi`, `GuideEvent`, `GuideRequest` |
-| S9 | `ai/stateMachine.ts` | 状态机 | `AnalysisMachine`, `AnalysisState` |
-| S10 | `ai/conversation.ts` | 渲染 | `createConversation` |
-| S11 | `ai/axis.ts` | 渲染 | `createBoardAxis` |
-| S12 | `ai/screenshot.ts` | 工具 | `captureBoardImage` |
+| S7 | `ai/api.ts` | wire | `AiApi`, `GuideEvent`, `GuideRequest` |
+| S8 | `ai/stateMachine.ts` | 状态机 | `AnalysisMachine`, `AnalysisState` |
+| S9 | `ai/conversation.ts` | 渲染 | `createConversation` |
+| S10 | `ai/axis.ts` | 渲染 | `createBoardAxis` |
+| S11 | `ai/screenshot.ts` | 工具 | `captureBoardImage` |
+| S12 | `app/` 组装 | 组合 | `mountMode`, `renderModeSwitcher`, `composeGuideMode` |
 
 ## 交叉切面：隐私与 promise
 
