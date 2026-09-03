@@ -34,6 +34,10 @@ If a failure is clearly caused by your changes, fix it before reporting done. If
 
 Skip a side's steps when the round touched no files of that side; skip everything when the round touched only non-code files (docs, markdown, etc.).
 
+### Git staging
+
+**Never unstage on your own** (`git reset`, `git restore --staged`, or any way that moves previously staged work back out of the index) unless the user explicitly instructs it. If you believe unstaging is genuinely necessary mid-round, **ask for the user's explicit consent before running it.**
+
 ### Before committing
 
 Before executing `git commit`, **show the proposed commit message and wait for confirmation**. Use Conventional Commits format (`feat:`, `fix:`, `docs:`, `chore:`, etc.).
