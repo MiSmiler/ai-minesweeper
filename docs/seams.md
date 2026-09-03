@@ -360,6 +360,8 @@ impl Guide {
     // 内部：let mut agent = self.agent.lock().unwrap();
     //       req.format == Image → agent.set_model(VISION_MODEL, None)
     //       否则               → agent.set_model(DEFAULT_MODEL, None)  // 每次按 format 显式设，避免跨请求遗留
+    //       image 形式：先把 `req.image_data_url` 留底写盘（<exe_dir>/base64_img/YYYYMMDD_<seed>_<seq>.png，
+    //         写失败不阻断发送），再构造 image blocks——留底是 suggest 的内部副作用，不加 pub 接口。
     //       build 棋盘消息 → Session(Message::System/User) → agent.stream()（agent 自动填 current_model）
     //       `Ok(StreamChunk)` 透传；`Err(AgentError::Cancelled)`（用户 cancel）→ `Err(Interrupt(UserInterrupt))`；
     //       `Err(AgentError::Provider(pe))`（上游流中错误）→ 按 `pe` 折射 `Err(Interrupt(rate_limit/timeout/upstream))`；

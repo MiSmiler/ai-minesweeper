@@ -239,7 +239,7 @@
 
 - 图像在**前端**用 `html-to-image` 截 `.board`，`pixelRatio` 接口预留、默认不放大，PNG base64 → 后端。
 - 后端转发 DeepSeek 前先**留底**写盘 `<exe_dir>/base64_img/YYYYMMDD_<seed>_<seq>.png`（**不阻断发送**），
-  再以 `image_url` 传给 vision-exp。
+  再以 `image_url` 传给 vision-exp。**留底在 `ai_adapter::Guide::suggest` 内做**（内部副作用，不加 pub 接口）。
 - Playwright 仅作开发/工具时截图，不作 runtime capture。
 - 表头字段见 #94（头部带 `Mine count` 等）。
 
