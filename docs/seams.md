@@ -231,7 +231,8 @@ impl Session {
 pub enum AgentError {
     Provider(ProviderError),
     NoProvider,     // stream 时 current_provider 为空 / 容器无此 provider（未 set_model 或切错名）
-    Interrupted,    // 流中被 cancel（用户中断 #97 ②）；guide 据此映射 `Interrupt(UserInterrupt)`。上游流中错误走 `Provider(ProviderError)`。
+    Cancelled,    // 流被打断（#97 ②）。目前仅由用户手动 cancel（server::handle_user_interrupt）触发 → guide 映射 `Interrupt(UserInterrupt)`；
+                  // 将来可能出现非用户也 cancel 当前流（如切 mode/新局/超时掐断）——届时需区分来源。上游流中错误走 `Provider(ProviderError)`。
 }
 
 /// 按名字注册多个 provider 的容器（保序）。provider 只读；多 provider 为将来留口，本 map 只用 DeepSeek。
@@ -259,7 +260,7 @@ impl Agent {
     pub fn add_tool(&mut self, tool: Arc<dyn Tool>);          // 预留给 AiPlay
     /// 流式：把 session 发出去（`ChatRequest.model` 填 `current_model`），边收流边转发 `StreamChunk`。
     /// 外层 `Err` = 前置失败：`NoProvider`（查不到 current_provider）/ `Provider(ProviderError)`。
-    /// 内层 `Err(AgentError)` = 流中：`Interrupted`（用户 cancel）/ `Provider(ProviderError)`（上游错误）。
+    /// 内层 `Err(AgentError)` = 流中：`Cancelled`（用户 cancel）/ `Provider(ProviderError)`（上游错误）。
     /// 生成期间可由 `cancel` 中断（#97）。
     pub async fn stream(
         &self, session: &Session, cancel: CancellationToken,
@@ -317,13 +318,13 @@ pub fn build_text_blocks(view: &BoardView, format: BoardFormat) -> Vec<ContentBl
 pub fn build_image_blocks(view: &BoardView, image_data_url: &str) -> Vec<ContentBlock>;
 
 // ai_adapter 不定义独立事件类型：`Guide::suggest` 的项 = `Result<StreamChunk, InterruptReason>`。
-// 正常项（`StreamChunk`）+ 流中中断 `Err(InterruptReason)`；前置失败走外层 `Err(SuggestError)`。
+// 正常项（`StreamChunk`）+ 流中中断 `Err(InterruptReason)`；前置失败走外层 `Err(SuggestPreFlightError)`。
 
 /// 终止原因（#97）。wire / 前端镜像此值。
 pub enum InterruptReason { UserInterrupt, RateLimit, Timeout, UpstreamError, Unknown }
 
 /// 前置失败 → bucket（#97 ①），走 HTTP 状态码 + 结构化错误体。
-pub enum SuggestError { PreFlight(AgentError) }
+pub struct SuggestPreFlightError(AgentError);
 
 /// 请求：前端只发 format（+ 图像形式附带 `image_data_url`）。文本形式的棋盘由后端读自己的 Game；**不带 model**（后端 `DeepSeek` 默认）。
 pub struct GuideRequest {
@@ -333,7 +334,7 @@ pub struct GuideRequest {
 }
 
 /// 一次性顾问：注入棋盘、走一轮、流式返回（`Ok(StreamChunk)` 推进 / `Err(InterruptReason)` 中断）。
-/// 前置失败 → `Err(PreFlight)`；否则返回流（`Item = Result<StreamChunk, InterruptReason>`）。
+/// 前置失败 → `Err(SuggestPreFlightError)`；否则返回流（`Item = Result<StreamChunk, InterruptReason>`）。
 /// 默认 model（非图像形式）；suggest 每次按 format 显式设，避免跨请求状态遗留。#92/#95
 const DEFAULT_MODEL: &str = "deepseek-v4-flash";
 /// 多模态（vision）model——format D（Image）时切换（`set_model(VISION_MODEL)`）。#92
@@ -347,14 +348,14 @@ impl Guide {
     /// 注入棋盘、走一轮、流式返回；`cancel` 可中断上游生成（#97）。
     pub async fn suggest(
         &self, game: &Game, req: GuideRequest, cancel: CancellationToken,
-    ) -> Result<impl Stream<Item = Result<StreamChunk, InterruptReason>>, SuggestError>;
+    ) -> Result<impl Stream<Item = Result<StreamChunk, InterruptReason>>, SuggestPreFlightError>;
     // 内部：let mut agent = self.agent.lock().unwrap();
     //       req.format == Image → agent.set_model(VISION_MODEL, None)
     //       否则               → agent.set_model(DEFAULT_MODEL, None)  // 每次按 format 显式设，避免跨请求遗留
     //       build 棋盘消息 → Session(Message::System/User) → agent.stream()（agent 自动填 current_model）
-    //       `Ok(StreamChunk)` 透传；`Err(AgentError::Interrupted)`（用户 cancel）→ `Err(Interrupt(UserInterrupt))`；
+    //       `Ok(StreamChunk)` 透传；`Err(AgentError::Cancelled)`（用户 cancel）→ `Err(Interrupt(UserInterrupt))`；
     //       `Err(AgentError::Provider(pe))`（上游流中错误）→ 按 `pe` 折射 `Err(Interrupt(rate_limit/timeout/upstream))`；
-    //       外层前置失败 → `Err(SuggestError)`。
+    //       外层前置失败 → `Err(SuggestPreFlightError)`。
     // 注：lock() 借 `&mut Agent` 调 set_model；stream 是 `&self`，同 guard 下可续用。
 }
 
@@ -403,7 +404,7 @@ pub enum GuideEventDto {
 
 /// 路由处理逻辑（与现在测 apply_action 同思路，可独立测）。
 pub(crate) fn handle_guide(...) -> impl IntoResponse;   // SSE
-pub(crate) fn handle_interrupt(...) -> impl IntoResponse;
+pub(crate) fn handle_user_interrupt(...) -> impl IntoResponse;
 ```
 
 - **定案**：分析会话 id（`sessionId`）由**前端**生成（如 `crypto.randomUUID()`）——中断由前端发起、前端持有该分析会话；
@@ -559,7 +560,7 @@ export function composeGuideMode(root: HTMLElement, deps: AppDeps): { dispose():
 | S2 | `ai::protocol` | 共享契约 | `Message`, `ChatRequest`, `StreamChunk`, `ProviderError` |
 | S3 | `ai::provider` | 访问机制 | `Provider::stream_chat`, `ProviderStream`, `DeepSeek` |
 | S4 | `ai::agent` | 定义 | `Tool`, `Session`, `Agent::{stream,complete_once,run_loop}`, `StreamChunk`, `AgentError` |
-| S5 | `ai_adapter` | 绑定 | `BoardView`, `system_prompt`, `build_text_blocks/build_image_blocks`, `Guide::suggest`（经 `Agent`）, `StreamChunk`, `InterruptReason`, `SuggestError`, `GuideRequest` |
+| S5 | `ai_adapter` | 绑定 | `BoardView`, `system_prompt`, `build_text_blocks/build_image_blocks`, `Guide::suggest`（经 `Agent`）, `StreamChunk`, `InterruptReason`, `SuggestPreFlightError`, `GuideRequest` |
 | S6 | `server` 传输 | 薄传输 | `ai_routes`, `GuideEventDto`, `ai::protocol::ProviderError`（错误体） |
 | S7 | `ai/api.ts` | wire | `AiApi`, `GuideEvent`, `GuideRequest` |
 | S8 | `ai/stateMachine.ts` | 状态机 | `AnalysisMachine`, `AnalysisState` |
