@@ -33,7 +33,13 @@ export interface AiApi {
 }
 // 前端不解析 SUGGEST（#95）；GuideEvent 无坐标字段；image base64 由 ai/screenshot.ts 收集进 GuideRequest.imageDataUrl
 
-// app/
+// app/ —— 组合层（文件拆分源自 seams.md 首部目录树）
+// app/main.ts    ：入口 —— 读初始 mode → mountMode + renderModeSwitcher + onSwitch（改造自现 main.ts）
+// app/mode.ts    ：PlayModeName / AppDeps / mountMode（分发） + renderModeSwitcher（UI 控件）
+// app/singleMode.ts：composeSingleMode —— 从现 main.ts 抽出 single 组合；供 mountMode("single")
+// app/guideMode.ts ：composeGuideMode —— 新增，拼 ai/ slice
+
+// app/mode.ts
 export type PlayModeName = "single" | "ai-guide";
 export type SessionStrategy = "per-analysis" | "per-game";   // per-game 未实现，UI 置灰 + 标注「(未实现)」
 export type CaptureBoardImage = (boardEl: HTMLElement, opts?: { pixelRatio?: number }) => Promise<string>;   // = ai/screenshot.ts
@@ -45,6 +51,12 @@ export interface AppDeps {
 }
 export function mountMode(mode: PlayModeName, root: HTMLElement, deps: AppDeps): () => void;
 export function renderModeSwitcher(root: HTMLElement, current: PlayModeName, onSwitch: (m: PlayModeName) => void): void;
-export function composeGuideMode(root: HTMLElement, deps: AppDeps): { dispose(): void };
+
+// app/singleMode.ts
+export function composeSingleMode(root: HTMLElement, deps: AppDeps): { dispose(): void };   // 现有 single 组合（从现 main.ts 抽出）
+
+// app/guideMode.ts
+export function composeGuideMode(root: HTMLElement, deps: AppDeps): { dispose(): void };   // 新增，拼 ai/ slice
+
 // PlayMode（概念驼峰 SinglePlay/AiGuide）= 前端组装层概念，无后端类型；PlayModeName（kebab）= 运行时标识；UI 显示名用驼峰 label
 ```
