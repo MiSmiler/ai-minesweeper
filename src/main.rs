@@ -1,3 +1,4 @@
+mod ai;
 mod core;
 mod server;
 
@@ -5,10 +6,14 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 
 use clap::Parser;
+use tokio_util::sync::CancellationToken;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+use crate::ai::agent::{Agent, ProviderSet, Session};
+use crate::ai::protocol::{ContentBlock, Message};
+use crate::ai::provider::MockProvider;
 use crate::core::{Difficulty, Features, Game, GameConfig, Seed};
 
 /// Command-line options for the game server.
@@ -36,6 +41,13 @@ struct Cli {
     /// Interface to bind.
     #[arg(long, default_value = "127.0.0.1")]
     host: String,
+
+    /// Run the AI runtime self-check (issue #113): build a mock `Provider`,
+    /// send one `User` message through `complete_once`, and print the
+    /// Assistant reply. Exits immediately afterwards and never starts the
+    /// server. Mutually exclusive with every server option.
+    #[arg(long, conflicts_with_all = ["prank", "seed", "port", "host"])]
+    test_ai_chat: Option<String>,
 }
 
 #[tokio::main]
@@ -49,6 +61,21 @@ async fn main() {
         .init();
 
     let cli = Cli::parse();
+
+    // `--test-ai-chat` is a self-contained runtime self-check: it exits before
+    // the normal server flow, using a mock Provider so no real API key is
+    // required at this layer (issue #113). A failure here is a hard error — it
+    // never falls through into the product.
+    if let Some(prompt) = cli.test_ai_chat {
+        match run_test_ai_chat(&prompt).await {
+            Ok(()) => return,
+            Err(err) => {
+                eprintln!("test-ai-chat failed: {err}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     let features = if cli.prank {
         Features::prank()
     } else {
@@ -87,6 +114,43 @@ async fn main() {
     axum::serve(listener, router).await.expect("server error");
 }
 
+/// The `--test-ai-chat` self-check: a mock `Provider` exercises the
+/// `complete_once` path — one `User` message in, one `Assistant` reply out
+/// (issue #113). Offline by design; the real DeepSeek provider arrives in a
+/// later ticket, at which point a missing API key becomes a hard error here.
+async fn run_test_ai_chat(prompt: &str) -> Result<(), String> {
+    let mut providers = ProviderSet::new();
+    providers.insert("mock".to_string(), Box::new(MockProvider::new()));
+    let mut agent = Agent::new(providers);
+    agent.set_model("mock-model".to_string(), Some("mock"));
+
+    let mut session = Session::new(Message::System {
+        content: "You are a self-test assistant (issue #113).".to_string(),
+    });
+    session.push(Message::User {
+        content: vec![ContentBlock::Text(prompt.to_string())],
+    });
+
+    match agent
+        .complete_once(&session, CancellationToken::new())
+        .await
+    {
+        Ok(Message::Assistant {
+            content,
+            reasoning_content,
+            ..
+        }) => {
+            if let Some(reasoning) = &reasoning_content {
+                println!("reasoning: {reasoning}");
+            }
+            println!("assistant: {content}");
+            Ok(())
+        }
+        Ok(other) => Err(format!("unexpected reply: {other:?}")),
+        Err(err) => Err(format!("agent error: {err:?}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,5 +173,23 @@ mod tests {
         let cli = Cli::try_parse_from(["minesweeper", "--prank"]).unwrap();
         assert!(cli.prank);
         assert_eq!(cli.seed, None);
+    }
+
+    #[test]
+    fn test_ai_chat_parses_alone() {
+        let cli = Cli::try_parse_from(["minesweeper", "--test-ai-chat", "hello"]).unwrap();
+        assert_eq!(cli.test_ai_chat.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn test_ai_chat_conflicts_with_every_other_arg() {
+        assert!(Cli::try_parse_from(["minesweeper", "--test-ai-chat", "hi", "--prank"]).is_err());
+        assert!(Cli::try_parse_from(["minesweeper", "--prank", "--test-ai-chat", "hi"]).is_err());
+        assert!(
+            Cli::try_parse_from(["minesweeper", "--seed", "42", "--test-ai-chat", "hi"]).is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["minesweeper", "--test-ai-chat", "hi", "--port", "9000"]).is_err()
+        );
     }
 }
