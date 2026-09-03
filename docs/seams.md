@@ -531,11 +531,17 @@ export async function captureBoardImage(
 // app/
 export type PlayModeName = "single" | "ai-guide";
 
+/// `captureBoardImage`（S11 `screenshot.ts`）的函数类型：截图棋盘 PNG（data URL）。
+export type CaptureBoardImage = (boardEl: HTMLElement, opts?: { pixelRatio?: number }) => Promise<string>;
+
 export interface AppDeps {
   getPlayMode(): PlayModeName;
   // 复用 game slice 的既有入口（createGameClient 由各 mode 实例化）
   // ai/ slice 的入口（由 composeGuideMode 用）
   aiApi: AiApi;
+  // 注入 captureBoardImage：它是浏览器真实截图（html-to-image），测试环境（jsdom）无法真正截图，
+  // 必须依赖注入以便 stub。轴标（createBoardAxis）是纯 DOM、测试可跑，直接 import，不进 AppDeps。
+  captureBoardImage: CaptureBoardImage;
 }
 
 /** 挂载某个 mode 的组合，返回卸载函数。切 mode 即调用当前卸载 + 挂载新的。 */
@@ -552,8 +558,9 @@ export function composeGuideMode(root: HTMLElement, deps: AppDeps): { dispose():
   后端**无对应类型**——单 `Game`、无模式字段；「模式」只隐式体现在端点划分（`/state`/`/action` 单局 vs `/ai/guide/:id` guide 流）。
   切 mode = 前端弃局开新局，对后端透明。
 - 每个 mode 独立 DOM + 独立 `createGameClient`（ADR-0012）。
-- **待确认**：`AppDeps` 里 `aiApi` 要不要进一步拆成 `AiApi` + `captureBoardImage` + 轴标组件工厂，
-  便于 assemble 时按需注入、测试时 mock 更细？
+- **定案**：`AppDeps` 注入 `aiApi` + `captureBoardImage`（B2）。`captureBoardImage` 是浏览器真实截图
+  （html-to-image），测试环境（jsdom）无法真截图，须依赖注入以便 stub；`createBoardAxis`（轴标）是
+  纯 DOM、测试可跑，直接 import，不进 `AppDeps`。
 
 ---
 
