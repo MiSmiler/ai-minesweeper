@@ -367,6 +367,8 @@ impl Guide {
     //       `Err(AgentError::Provider(pe))`（上游流中错误）→ 按 `pe` 折射 `Err(Interrupt(rate_limit/timeout/upstream))`；
     //       外层前置失败 → `Err(SuggestPreFlightError)`。
     // 注：lock() 借 `&mut Agent` 调 set_model；stream 是 `&self`，同 guard 下可续用。
+    // 无并发需求：同刻只运行一个 `running` 的 `suggest`（前端 `AnalysisPhase.running` 保证），故不做并发安全设计
+    // （不引入 `&mut self`/额外锁）；Session 局部、model 按 format 显式设，每次调用状态自洽。
 }
 
 /// 访问一个游戏实例可见状态的句柄（ADR-0013：工具绑定是参数而非写死单一 Game，为未来 AiPlayWithMe 双 Game 留口）。

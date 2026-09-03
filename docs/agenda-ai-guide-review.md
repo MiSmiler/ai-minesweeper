@@ -11,4 +11,4 @@
 - [x] **`deepseek-v4-pro` 定位**（模型）：**定案** —— pro 属 DeepSeek 支持列表、本期不选用；suggest 只用 flash（text）/ vision-exp（image）。
 - [x] **`--test-ai-chat` 进 seams 目录树**（可选）：**定案** —— 补进 seams 目录树 `main.rs` 注记（CLI 自检入口，复用 `Agent::complete_once`）。
 - [x] **用户故事 8「我选的模型」措辞**（措辞）：**定案** —— 改为「发给 AI，后端按输入格式自动定模型」（去掉「我选的模型」）。
-- [ ] **`Guide::suggest` 非并发安全注记**（接受项）：补不补注解。
+- [x] **`Guide::suggest` 非并发安全注记**（接受项）：**定案** —— 确认无并发需求（同刻仅一个 running suggest），补注记「不做并发安全设计、每次调用自洽」。
