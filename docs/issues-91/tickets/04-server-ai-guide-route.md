@@ -19,7 +19,7 @@
 // main.rs（组合根）—— 读 DEEPSEEK_API_KEY → DeepSeek::new(DeepSeekConfig{api_key, base_url}) → ProviderSet.insert("deepseek", …) →
 //   Agent::new(set) → agent.set_model(default_model, Some("deepseek")) → 挂 router（ai_routes）+ --test-ai-chat 早退分支
 
-// server
+// src/server/ai_routes.rs —— server 薄传输（/ai/...；由 server/mod.rs 挂载）
 fn ai_routes(state: Arc<AppState>) -> Router;
 //  POST /ai/guide/:id          → SSE 流（GuideEventDto…，收 [DONE] 结束）
 //  POST /ai/guide/:id/interrupt→ 取消上游，驱动同 SSE 的 {reason:"user_interrupt"}

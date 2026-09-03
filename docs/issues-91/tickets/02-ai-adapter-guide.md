@@ -16,6 +16,7 @@
 ### 接口契约
 
 ```rust
+// src/ai_adapter/mod.rs —— ai_adapter（扫雷绑定；依赖 core + ai；不依赖 server）
 // 依赖 core::Game 可见 API（只读）：game_state() / difficulty() / size() / flags_remaining() / cell_view(pos) -> CellView
 
 #[derive(serde::Serialize, serde::Deserialize)] #[serde(rename_all = "kebab-case")]

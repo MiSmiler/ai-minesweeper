@@ -16,7 +16,7 @@
 ### 接口契约
 
 ```rust
-// ai::protocol
+// src/ai/protocol/mod.rs —— ai::protocol
 // 本 ticket 引入的依赖（Cargo.toml）：futures（Stream/ProviderStream）、tokio-util（CancellationToken）
 enum Message {
   System { content: String },
@@ -34,13 +34,13 @@ enum StreamChunk { ReasoningDelta(String), ContentDelta(String), Done }   // Don
 enum ProviderErrorKind { Config, Upstream }   // 序列化 "config"/"upstream"
 struct ProviderError { kind: ProviderErrorKind, code: Option<u16>, message: String }   // wire 错误体 {kind,code,message}
 
-// ai::provider
+// src/ai/provider/mod.rs —— ai::provider
 type ProviderStream = Pin<Box<dyn Stream<Item = Result<StreamChunk, ProviderError>> + Send>>;
 trait Provider: Send + Sync {
   async fn stream_chat(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ProviderStream, ProviderError>;
 }
 
-// ai::agent
+// src/ai/agent/mod.rs —— ai::agent
 trait Tool: Send + Sync { fn decl(&self) -> ToolDecl; async fn call(&self, args: serde_json::Value) -> Result<String, String>; }
 struct Session;  // impl { new(system: Message), push(&mut, Message), messages(&self) -> &[Message] }
 enum AgentError { Provider(ProviderError), NoProvider, Cancelled }
