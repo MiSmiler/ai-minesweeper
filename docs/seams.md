@@ -22,7 +22,7 @@
   - provider/  新增（访问机制：Provider trait + deepseek.rs）
   - agent/     新增（Agent/Session/Tool：run_loop）
 - ai_adapter/  新增（扫雷绑定：BoardFormat/BoardView/system_prompt/Guide）
-- main.rs      组合根（读 DEEPSEEK_API_KEY、构造 ProviderSet/Agent、挂 /ai/...）
+- main.rs      组合根（读 DEEPSEEK_API_KEY、构造 ProviderSet/Agent、挂 /ai/...）；另有一条 `--test-ai-chat` CLI 自检入口（命中即早退、复用 Agent::complete_once，不进正常流程）
 
 前端 frontend/src/：
 - app/    组合层（ADR-0011/0012）：

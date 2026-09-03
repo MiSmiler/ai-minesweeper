@@ -276,7 +276,7 @@
 
 ### 12. dev 手工测试 CLI —— `--test-ai-chat`（新需求）
 
-- **用途**：开发阶段快速验证 DeepSeek（`Provider`）通路能否真正跑通——读 `DEEPSEEK_API_KEY`、发一条对话、打印完整回复。不属于产品功能路径，是 `main` 的 dev 工具分支。
+- **用途**：开发阶段快速验证 DeepSeek（`Provider`）通路能否真正跑通——读 `DEEPSEEK_API_KEY`、发一条对话、打印完整回复。不属于产品功能路径，是 `main` 的一条 CLI 自检入口。
 - **入口**：CLI 参数 `--test-ai-chat <str>`，`<str>` 是发给 AI 的对话内容（一条 User message）。
 - **互斥**：只能**单独**指定，与其它所有参数冲突（clap `conflicts_with_all`）。
 - **main 早分支**：命中即进入「测试 AI」路径——不建 `Game`、不启动 server、不进正常流程；无 `DEEPSEEK_API_KEY` 时明确报错（AI 未配置）。
