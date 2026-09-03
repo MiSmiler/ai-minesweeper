@@ -440,7 +440,10 @@ export function renderModeSwitcher(root: HTMLElement, current: PlayModeName, onS
 export function composeGuideMode(root: HTMLElement, deps: AppDeps): { dispose(): void };
 ```
 
-- 切 mode = 弃局开新局（后端仍是单 `Game`）；每个 mode 独立 DOM + 独立 `createGameClient`（ADR-0012）。
+- `PlayModeName` 是**前端** `app/` 组合层概念（ADR-0011/0012）：决定挂载哪个 mode 的 DOM / `createGameClient` / 组件组合。
+  后端**无对应类型**——单 `Game`、无模式字段；「模式」只隐式体现在端点划分（`/state`/`/action` 单局 vs `/ai/guide/:id` guide 流）。
+  切 mode = 前端弃局开新局，对后端透明。
+- 每个 mode 独立 DOM + 独立 `createGameClient`（ADR-0012）。
 - **待确认**：`AppDeps` 里 `aiApi` 要不要进一步拆成 `AiApi` + `captureBoardImage` + 轴标组件工厂，
   便于 assemble 时按需注入、测试时 mock 更细？
 
