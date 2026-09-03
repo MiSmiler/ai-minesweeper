@@ -1,0 +1,15 @@
+# 04: server /ai/guide 传输路由与 SSE 终止
+
+**What to build:** `POST /ai/guide/:id` 返回 SSE 流（`GuideEventDto`：`reasoning`/`content`/`interrupt`），`[DONE]` 收尾；`POST /ai/guide/:id/interrupt` 取消上游生成；前置失败返回 `ProviderError` 序列化错误体；`sessionId` 由前端生成、`server` 用它关联 cancel。
+
+**Coverage seams:** S6（+ 消费 S5、用 S2 错误体）
+
+**Blocked by:** 02, 03
+
+**Status:** ready-for-agent
+
+- [ ] `POST /ai/guide/:id` 消费 `Guide::suggest` 流：`Ok(delta)` → data；`Ok(Done)` → 发 `[DONE]`；`Err(reason)` → `{kind:"interrupt",reason}` event；`GuideEventDto` 带 `kind`（`#[serde(tag="kind")]`）。
+- [ ] `POST /ai/guide/:id/interrupt` 用同 `sessionId` 取消上游生成（`CancellationToken`），并在**同一 SSE** 发 `{kind:"interrupt",reason:"user_interrupt"}`；`rate_limit`/`timeout`/`upstream_error` 同理映射。
+- [ ] 前置失败（HTTP 4xx/5xx、未流任何内容）→ 返回 `ProviderError` 序列化体 `{kind,code,message}`（`config`/`upstream`），不下发 SSE。
+- [ ] `server` 是薄传输层：`ai_routes` 挂到组合根；`server` 不依赖 `ai_adapter` 内部实现（`handle_guide`/`handle_user_interrupt` 可独立测）。
+- [ ] 一个 `Game` 同时只有一局；`/ai/...` 只读棋盘（不写 `Game`）。
