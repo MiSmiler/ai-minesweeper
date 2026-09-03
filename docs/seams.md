@@ -25,7 +25,11 @@
 - main.rs      组合根（读 DEEPSEEK_API_KEY、构造 ProviderSet/Agent、挂 /ai/...）
 
 前端 frontend/src/：
-- app/    已有（main/切 mode）；guide 组合为新增
+- app/    组合层（ADR-0011/0012）：
+          · main.ts      —— 入口：读初始 mode → mountMode + renderModeSwitcher + onSwitch（改造自现 main.ts）
+          · mode.ts      —— PlayModeName / AppDeps / mountMode（分发）+ renderModeSwitcher（UI 控件）
+          · singleMode.ts—— composeSingleMode（从现 main.ts 抽出 single 组合；供 mountMode("single")）
+          · guideMode.ts —— composeGuideMode（新增，拼 ai/ slice）
 - game/   已有（api/client/render/interaction）
 - ai/     新增（api.ts/stateMachine.ts/conversation.ts/axis.ts/screenshot.ts）
 - infra/  已有（log/testUtils）
@@ -518,6 +522,7 @@ export async function captureBoardImage(
 ): Promise<string>;   // PNG data URL（默认 pixelRatio 不放大）
 ```
 - 供 `ai/api.ts` `GuideRequest.imageDataUrl` 用；Playwright 只作开发/工具截图，不作 runtime capture。
+
 ### S12 `app/` 组装 seam（Mode switcher + `PlayMode` 组合）
 
 `app/` 是 mode 组合处（ADR-0011/0012）。guide 组合拿 `game/` slice + `ai/` slice 拼。
