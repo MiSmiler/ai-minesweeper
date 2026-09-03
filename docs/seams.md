@@ -531,6 +531,11 @@ export async function captureBoardImage(
 // app/
 export type PlayModeName = "single" | "ai-guide";
 
+/// session 策略（#96「8 项」= 4 形式 × 本 2 策略）：per-analysis（一次分析一个新上下文，已实现）/
+/// per-game（同 session 内多次分析拼接上下文，**未实现**，UI 置灰 + 标注「(未实现)」）。
+/// 仅组装层 UI 概念，本期不传给 AiApi/AnalysisMachine/Guide。
+export type SessionStrategy = "per-analysis" | "per-game";
+
 /// `captureBoardImage`（S11 `screenshot.ts`）的函数类型：截图棋盘 PNG（data URL）。
 export type CaptureBoardImage = (boardEl: HTMLElement, opts?: { pixelRatio?: number }) => Promise<string>;
 
@@ -561,6 +566,10 @@ export function composeGuideMode(root: HTMLElement, deps: AppDeps): { dispose():
 - **定案**：`AppDeps` 注入 `aiApi` + `captureBoardImage`（B2）。`captureBoardImage` 是浏览器真实截图
   （html-to-image），测试环境（jsdom）无法真截图，须依赖注入以便 stub；`createBoardAxis`（轴标）是
   纯 DOM、测试可跑，直接 import，不进 `AppDeps`。
+- **定案**：仪表盘预留「session 策略」下拉（`SessionStrategy`：`per-analysis` 可用 / `per-game` 标注
+  「(未实现)」置灰不可选；不与 `BoardFormat` 混）。本 map 只实现 `per-analysis`（每分析全新上下文）。
+  **切换 session 策略 = 弃局开新局 + 清分析**（同切 mode 语义）。`per-game` 为将来「同 session 多次分析
+  拼接上下文」留口；**本期不传入核心 seam**（`AiApi`/`AnalysisMachine`/`Guide` 签名不变）。
 
 ---
 
