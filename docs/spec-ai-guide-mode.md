@@ -132,7 +132,7 @@
 41. 作为系统，我想让 `/ai/...` 路由由 `server` 持有（薄传输层），`ai_adapter` 不依赖 `server`，这样职责清晰（ADR-0013）。
 42. 作为系统，我想让 AI 组织为 `ai`（通用 agent runtime、与 `core` 解耦）+ `ai_adapter`（扫雷绑定、依赖 `core`+`ai`），这样 `ai` 可复用、可未来抽 crate（ADR-0013）。
 43. 作为系统，我想让 `ai` 内分 `agent → provider`，`provider` 只有 `Provider` seam + `deepseek` 实现，这样未来可加别的 provider。
-44. 作为系统，我想做**一次性顾问** `ai_adapter::suggest()`（single-turn、只读），而不是让 AI 自主点格子，这样本 map 的「建议 + 人照做」与 `#24` 的「AI 自主玩」区分开。
+44. 作为系统，我想做**一次性顾问** `ai_adapter::Guide::suggest()`（single-turn、只读），而不是让 AI 自主点格子，这样本 map 的「建议 + 人照做」与 `#24` 的「AI 自主玩」区分开。
 45. 作为系统，我想给 AI 的输入**只含玩家可见信息**（`snapshot` 语义：hidden/flagged/revealed+数字），**绝不泄露 Mine 布局**，这样「验证 AI 理解力」才有意义。
 46. 作为系统，我想让给 AI 的 payload **不含 mine 位置/总量等机密**（只带 `Mine count` 这个 recipe 常量），这样前端薄客户端不至于背着雷布局。
 47. 作为系统，我想让 `ai_adapter` 的工具绑定走 `GameHandle`（而非硬编码单一 `Game`），这样为未来「AI 和我玩」双 Game 留口（ADR-0013）。
@@ -247,7 +247,7 @@
 
 ### 9. 后端 `/ai/...` 路由与失败/终止（#97）
 
-- 路由由 `server` 持有（薄传输层），调 `ai_adapter::suggest()`。
+- 路由由 `server` 持有（薄传输层），调 `ai_adapter::Guide::suggest()`。
 - 失败**不影响对局**（core `Game` 独立），只收束分析状态机。**无自动重试、无「重试」按钮**；
   再点「分析」开一轮新分析（发当前棋盘、不缓存失败快照）。
 - 呈现分两型：
@@ -299,10 +299,11 @@
 **Seam 清单与各 seam 的 pub 接口形状（S1–S12）见 [`docs/seams.md`](seams.md)**——本小节只概览每侧的主 seam，具体类型/签名以及每处 `待确认` 分叉点都以该文件为准。
 
 **拟用 seams（完整清单见 `docs/seams.md`，此处为概览）**：
+> 注：此处 seam 1-5 是**按测试组**的分组（provider / ai_adapter 纯函数 / deepseek / server / 前端组合），与 `docs/seams.md` 的 **S1-S12（按模块边界）** 是两套编号，不互相替代。
 
 1. **后端主 seam：`ai::provider::Provider`**（拟建）。
-   这是 AI「大脑」的单点。`ai_adapter::suggest(game, form, provider)` 是顾问入口，测它时注入一个
-   **mock `Provider`**，一次性覆盖：棋盘→prompt→provider→SSE 解析→`SUGGEST` 提取→返回分析。
+   这是 AI「大脑」的单点。`ai_adapter::Guide::suggest(&self, game, req: GuideRequest, cancel)` 是顾问入口，测它时注入一个
+   **mock `Provider`**，一次性覆盖：棋盘→prompt→provider→SSE 解析→（content 透传，含末尾 SUGGEST 行）→返回分析。
    也经此 seam 测失败/终止路径（mock provider 返回错误码 / 触发 `[DONE]` 缺失）。
 
    - 说明：`core::Game` 是核心层唯一 seam；类比上，AI 运行时的单一 seam 就是其**可插拔 provider**。
