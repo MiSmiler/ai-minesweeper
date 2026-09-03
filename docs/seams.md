@@ -565,8 +565,11 @@ export function renderModeSwitcher(root: HTMLElement, current: PlayModeName, onS
 export function composeGuideMode(root: HTMLElement, deps: AppDeps): { dispose(): void };
 ```
 
-- `PlayModeName` 是**前端** `app/` 组合层概念（ADR-0011/0012）：决定挂载哪个 mode 的 DOM / `createGameClient` / 组件组合。
-  后端**无对应类型**——单 `Game`、无模式字段；「模式」只隐式体现在端点划分（`/state`/`/action` 单局 vs `/ai/guide/:id` guide 流）。
+- `PlayMode`（**概念**，ADR-0011/0012，变体驼峰 `SinglePlay`/`AiGuide`）= 领域概念「一个 Game 从哪个视角展示」，
+  只在**前端组装层**有意义——后端**无对应类型**（单 `Game`、无模式字段；「模式」只隐式体现在端点划分
+  `/state`/`/action` 单局 vs `/ai/guide/:id` guide 流）。
+- `PlayModeName`（**前端代码值**，kebab `"single"`/`"ai-guide"`）= `PlayMode` 概念的**运行时标识**，供
+  `mountMode`/`renderModeSwitcher` 判断；**UI 显示名**用驼峰 `SinglePlay`/`AiGuide`（属 label，非 `PlayModeName`）。
   切 mode = 前端弃局开新局，对后端透明。
 - 每个 mode 独立 DOM + 独立 `createGameClient`（ADR-0012）。
 - **定案**：`AppDeps` 注入 `aiApi` + `captureBoardImage`（B2）。`captureBoardImage` 是浏览器真实截图
