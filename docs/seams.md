@@ -367,7 +367,7 @@ impl Guide {
     //       `Err(AgentError::Provider(pe))`（上游流中错误）→ 按 `pe` 折射 `Err(Interrupt(rate_limit/timeout/upstream))`；
     //       外层前置失败 → `Err(SuggestPreFlightError)`。
     // 注：lock() 借 `&mut Agent` 调 set_model；stream 是 `&self`，同 guard 下可续用。
-    // 无并发需求：同刻只运行一个 `running` 的 `suggest`（前端 `AnalysisPhase.running` 保证），故不做并发安全设计
+    // 无并发需求：同刻只运行一个 `running` 的 `suggest`（前端 `GuidePhase.running` 保证），故不做并发安全设计
     // （不引入 `&mut self`/额外锁）；Session 局部、model 按 format 显式设，每次调用状态自洽。
 }
 
@@ -467,18 +467,18 @@ export interface AiApi {
 
 ```ts
 // ai/stateMachine.ts
-export type AnalysisPhase =
+export type GuidePhase =
   | "idle" | "running" | "done" | "interrupted" | "preflight-failed";
 
-export interface AnalysisState {
-  phase: AnalysisPhase;
+export interface GuideState {
+  phase: GuidePhase;
   reasoning: string;      // 累积
   content: string;        // 累积（含末尾 SUGGEST 行）
   interruptReason?: InterruptReason;   // interrupted 时
   providerError?: ProviderError;     // preflight-failed 时
 }
 
-export interface AnalysisMachine {
+export interface GuideMachine {
   /** 发起一轮分析；每轮 = 最新棋盘（不缓存失败快照，#97）。 */
   start(req: GuideRequest): void;
   /** 用户主动取消：POST /ai/guide/:id/interrupt（前端保持 SSE 不 abort，#97）。 */
@@ -486,10 +486,10 @@ export interface AnalysisMachine {
   /** 输入格式变更 / 新局 / 切 mode 时清空（历史清除语义，见 `app/` 组装）。 */
   reset(): void;
   /** 订阅状态变化，返回退订。 */
-  onState(cb: (s: AnalysisState) => void): () => void;
+  onState(cb: (s: GuideState) => void): () => void;
 }
 
-export function createAnalysisMachine(deps: { api: AiApi; newSessionId: () => string }): AnalysisMachine;
+export function createGuideMachine(deps: { api: AiApi; newSessionId: () => string }): GuideMachine;
 ```
 
 - 历史绑定一局、分析中不可点、输入格式变更 → 确认 + 清历史（#96）—— 这些判定放组装层（`app/`），状态机只负责
@@ -500,7 +500,7 @@ export function createAnalysisMachine(deps: { api: AiApi; newSessionId: () => st
 ```ts
 // ai/conversation.ts
 export function createConversation(container: HTMLElement): {
-  render(state: AnalysisState): void;
+  render(state: GuideState): void;
 };
 ```
 - `reasoning_content` → 浅色小字、整块可折叠；`content` → 正常字体、不折叠（仿 DeepSeek 网页版）。
@@ -541,7 +541,7 @@ export type PlayModeName = "single" | "ai-guide";
 
 /// session 策略（#96「8 项」= 4 形式 × 本 2 策略）：per-analysis（一次分析一个新上下文，已实现）/
 /// per-game（同 session 内多次分析拼接上下文，**未实现**，UI 置灰 + 标注「(未实现)」）。
-/// 仅组装层 UI 概念，本期不传给 AiApi/AnalysisMachine/Guide。
+/// 仅组装层 UI 概念，本期不传给 AiApi/GuideMachine/Guide。
 export type SessionStrategy = "per-analysis" | "per-game";
 
 /// `captureBoardImage`（S11 `screenshot.ts`）的函数类型：截图棋盘 PNG（data URL）。
@@ -580,7 +580,7 @@ export function composeGuideMode(root: HTMLElement, deps: AppDeps): { dispose():
 - **定案**：仪表盘预留「session 策略」下拉（`SessionStrategy`：`per-analysis` 可用 / `per-game` 标注
   「(未实现)」置灰不可选；不与 `BoardFormat` 混）。本 map 只实现 `per-analysis`（每分析全新上下文）。
   **切换 session 策略 = 弃局开新局 + 清分析**（同切 mode 语义）。`per-game` 为将来「同 session 多次分析
-  拼接上下文」留口；**本期不传入核心 seam**（`AiApi`/`AnalysisMachine`/`Guide` 签名不变）。
+  拼接上下文」留口；**本期不传入核心 seam**（`AiApi`/`GuideMachine`/`Guide` 签名不变）。
 
 ---
 
@@ -595,7 +595,7 @@ export function composeGuideMode(root: HTMLElement, deps: AppDeps): { dispose():
 | S5 | `ai_adapter` | 绑定 | `BoardView`, `system_prompt`, `build_text_blocks/build_image_blocks`, `Guide::suggest`（经 `Agent`）, `StreamChunk`, `InterruptReason`, `SuggestPreFlightError`, `GuideRequest` |
 | S6 | `server` 传输 | 薄传输 | `ai_routes`, `GuideEventDto`, `ai::protocol::ProviderError`（错误体） |
 | S7 | `ai/api.ts` | wire | `AiApi`, `GuideEvent`, `GuideRequest` |
-| S8 | `ai/stateMachine.ts` | 状态机 | `AnalysisMachine`, `AnalysisState` |
+| S8 | `ai/stateMachine.ts` | 状态机 | `GuideMachine`, `GuideState` |
 | S9 | `ai/conversation.ts` | 渲染 | `createConversation` |
 | S10 | `ai/axis.ts` | 渲染 | `createBoardAxis` |
 | S11 | `ai/screenshot.ts` | 工具 | `captureBoardImage` |

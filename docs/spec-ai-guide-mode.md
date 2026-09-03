@@ -272,6 +272,7 @@
 ### 11. 前端 `ai/` slice（#96 补全）
 
 - `frontend/src/ai/` slice（ADR-0011 已预留）：AI 对话、分析状态机、双流渲染、行列号组件、`html-to-image` 截图。
+  一次「分析」会话 = 一次 `Guide::suggest`；前端状态机类型用 `GuideMachine`/`GuidePhase`/`GuideState`（随后端 `Guide` 命名，同 `startGuide`/`GuideEvent`/`GuideRequest`）。
 - `app/` 组装：mode-switcher + 各 `PlayMode` 组合；guide 组合拿 `ai/` slice + `game/` slice 拼。
 
 ### 12. dev 手工测试 CLI —— `--test-ai-chat`（新需求）
