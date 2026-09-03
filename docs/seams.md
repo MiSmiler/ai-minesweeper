@@ -296,7 +296,11 @@ use crate::core::{Game, CellView, Difficulty, GameState, Position};
 use crate::ai::protocol::{ContentBlock, Message};
 use crate::ai::agent::{Agent, AgentError, Tool};
 
-/// #94 4 种呈现形式。
+/// #94 4 种呈现形式。wire 序列化 = kebab-case（`#[serde(rename_all = "kebab-case")]`），
+/// 与前端 `ai/api.ts` 的 kebab 字面量对齐：`SimpleText → "simple-text"`、`FullCoordinates → "full-coordinates"`。
+/// 它是 POST /ai/guide/:id 请求体字段（前端传回），故需 `Deserialize`（与 `GuideRequest` 一起）。
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum BoardFormat { SimpleText, Emoji, FullCoordinates, Image }
 
 /// 玩家可见棋盘视图；**绝不携带 Mine 布局**（隐私硬约束）。

@@ -5,7 +5,7 @@
 > 状态：`- [x]` = 已定案（附提交哈希），`- [ ]` = 待对齐。
 
 - [x] **`#96`「8 项」→ session 策略**（未确定项）：4 形式 × 2 session 策略。**定案 C**：只实现 `per-analysis`；UI 预留下拉、`per-game` 标注「(未实现)」置灰；切会话策略 = 弃局开新局。`903c4bc`
-- [ ] **`BoardFormat` serde rename**（wire 契约）：后端 enum ↔ 前端 kebab 的序列化字符串没锁死。
+- [x] **`BoardFormat` serde rename**（wire 契约）：**定案** —— 锁 `kebab-case`（后端 `#[serde(rename_all = "kebab-case")]`，与前端 kebab 对齐）。
 - [ ] **base64 留底写盘无 seam**（spec→seams gap）：图像 `image_data_url` 的留底写盘功能落哪。
 - [ ] **`PlayMode`(驼峰) vs `PlayModeName`(kebab)**（命名/形态）：类型形态 + UI label 区分。
 - [ ] **`deepseek-v4-pro` 定位**（模型）：是否进本 map。
