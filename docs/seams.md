@@ -433,13 +433,13 @@ export type GuideEvent =
   | { kind: "sse_done" }
   | { kind: "interrupt"; reason: InterruptReason };
 
-export type PreFlightError = { kind: "config" | "upstream"; code: number | null; message: string };
+export type ProviderError = { kind: "config" | "upstream"; code: number | null; message: string };   // = 后端 `ai::protocol::ProviderError`（wire 错误体）
 
 export interface GuideRequest { format: BoardFormat; imageDataUrl?: string; }   // 不带 model（后端 DeepSeek 默认）
 
 export interface AiApi {
-  /** POST /ai/guide/:id —— 消费 SSE 流，逐 event 回调；前置失败走 onPreFlightError。 */
-  startGuide(id: string, req: GuideRequest, onEvent: (e: GuideEvent) => void, onPreFlightError: (e: PreFlightError) => void): void;
+  /** POST /ai/guide/:id —— 消费 SSE 流，逐 event 回调；前置失败走 onProviderError。 */
+  startGuide(id: string, req: GuideRequest, onEvent: (e: GuideEvent) => void, onProviderError: (e: ProviderError) => void): void;
   /** POST /ai/guide/:id/interrupt。 */
   interrupt(id: string): Promise<unknown>;
 }
@@ -462,7 +462,7 @@ export interface AnalysisState {
   reasoning: string;      // 累积
   content: string;        // 累积（含末尾 SUGGEST 行）
   interruptReason?: InterruptReason;   // interrupted 时
-  preFlightError?: PreFlightError;     // preflight-failed 时
+  providerError?: ProviderError;     // preflight-failed 时
 }
 
 export interface AnalysisMachine {
