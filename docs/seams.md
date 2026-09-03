@@ -406,8 +406,8 @@ pub(crate) fn handle_guide(...) -> impl IntoResponse;   // SSE
 pub(crate) fn handle_interrupt(...) -> impl IntoResponse;
 ```
 
-- **定案**：分析 `id` 由**前端**生成（如 `crypto.randomUUID()`）——中断由前端发起、前端持有该分析会话；
-  `POST /ai/guide/:id` 带上它、`POST /ai/guide/:id/interrupt` 复用同 id，`server` 用 `<id>` 关联该 SSE 的 `cancel`。
+- **定案**：分析会话 id（`sessionId`）由**前端**生成（如 `crypto.randomUUID()`）——中断由前端发起、前端持有该分析会话；
+  `POST /ai/guide/:id` 带上它、`POST /ai/guide/:id/interrupt` 复用同 `sessionId`，`server` 用 `<id>` 关联该 SSE 的 `cancel`。（`:id` = `sessionId`）
 - **定案**：`GuideEventDto` 带 `kind`（`#[serde(tag="kind")]`），与前端 `GuideEvent`(TS)（`{kind:"reasoning"/"content"/"interrupt"}`）同构。
   实现：`Reasoning`/`Content` 的 payload 映射为 `text` 字段（变体改带字段或自定义 `Serialize`），产出 `{kind,text}`。
 
@@ -438,10 +438,10 @@ export type ProviderError = { kind: "config" | "upstream"; code: number | null; 
 export interface GuideRequest { format: BoardFormat; imageDataUrl?: string; }   // 不带 model（后端 DeepSeek 默认）
 
 export interface AiApi {
-  /** POST /ai/guide/:id —— 消费 SSE 流，逐 event 回调；前置失败走 onProviderError。 */
-  startGuide(id: string, req: GuideRequest, onEvent: (e: GuideEvent) => void, onProviderError: (e: ProviderError) => void): void;
-  /** POST /ai/guide/:id/interrupt。 */
-  interrupt(id: string): Promise<unknown>;
+  /** POST /ai/guide/:id —— 消费 SSE 流（`:id` = `sessionId`），逐 event 回调；前置失败走 onProviderError。 */
+  startGuide(sessionId: string, req: GuideRequest, onEvent: (e: GuideEvent) => void, onProviderError: (e: ProviderError) => void): void;
+  /** POST /ai/guide/:id/interrupt —— 用户主动取消。 */
+  interrupt_by_user(sessionId: string): Promise<unknown>;
 }
 ```
 
@@ -476,7 +476,7 @@ export interface AnalysisMachine {
   onState(cb: (s: AnalysisState) => void): () => void;
 }
 
-export function createAnalysisMachine(deps: { api: AiApi; newId: () => string }): AnalysisMachine;
+export function createAnalysisMachine(deps: { api: AiApi; newSessionId: () => string }): AnalysisMachine;
 ```
 
 - 历史绑定一局、分析中不可点、输入格式变更 → 确认 + 清历史（#96）—— 这些判定放组装层（`app/`），状态机只负责
