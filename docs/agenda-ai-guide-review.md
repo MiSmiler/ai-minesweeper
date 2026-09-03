@@ -8,7 +8,7 @@
 - [x] **`BoardFormat` serde rename**（wire 契约）：**定案** —— 锁 `kebab-case`（后端 `#[serde(rename_all = "kebab-case")]`，与前端 kebab 对齐）。
 - [x] **base64 留底写盘无 seam**（spec→seams gap）：**定案** —— 留底在 `ai_adapter::Guide::suggest` 内做（内部副作用，不加 pub 接口）。
 - [x] **`PlayMode`(驼峰) vs `PlayModeName`(kebab)**（命名/形态）：**定案** —— 概念 `PlayMode`(驼峰变体 `SinglePlay`/`AiGuide`) = 前端组装层概念（无后端类型）；`PlayModeName`(kebab) = 其运行时标识；UI 显示名用驼峰 label。不强行统一。
-- [ ] **`deepseek-v4-pro` 定位**（模型）：是否进本 map。
+- [x] **`deepseek-v4-pro` 定位**（模型）：**定案** —— pro 属 DeepSeek 支持列表、本期不选用；suggest 只用 flash（text）/ vision-exp（image）。
 - [ ] **`--test-ai-chat` 进 seams 目录树**（可选）：补不补。
 - [ ] **用户故事 8「我选的模型」措辞**（措辞）：与「前端不带 model」的内部矛盾。
 - [ ] **`Guide::suggest` 非并发安全注记**（接受项）：补不补注解。

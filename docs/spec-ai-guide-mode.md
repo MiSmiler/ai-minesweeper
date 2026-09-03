@@ -140,7 +140,7 @@
 ### 模型与流（#92、#95）
 
 48. 作为系统，我想让 DeepSeek 走 OpenAI 兼容 `POST /chat/completions`（`base_url=https://api.deepseek.com`、Bearer 认证），这样集成成本低。
-49. 作为系统，我想支持 `deepseek-v4-flash` / `deepseek-v4-pro` / `deepseek-v4-flash-vision-exp`，这样能按需选快/强/视觉模型。
+49. 作为系统，我想让 provider 支持这几个模型（`deepseek-v4-flash` / `deepseek-v4-pro` / `deepseek-v4-flash-vision-exp`）；但本 map 的「分析」只选用 flash（text 形式）/ vision-exp（image 形式），pro 属支持列表、本期不选用（无模型选择功能）。
 50. 作为系统，我想让 SSE 流把 `content` 和 `reasoning_content` **分开**，这样前端能双流呈现（#95）。
 51. 作为系统，我想遵守「带 `tools` 就必须回传 CoT」的约束，这样未来进 `AiPlay` 时思考链不被丢弃。
 52. 作为系统，我想处理 DeepSeek 的错误码 `400/401/402/422/429/500/503`，并把它们映射成 #97 的 bucket（前置失败对应 400/401/402 配置错误，429/500/503/网络 对应上游瞬时）。
@@ -227,7 +227,9 @@
 
 ### 7. DeepSeek API（#92）
 
-- 模型：`deepseek-v4-flash` / `deepseek-v4-pro` / `deepseek-v4-flash-vision-exp`
+- 模型：`deepseek-v4-flash` / `deepseek-v4-pro` / `deepseek-v4-flash-vision-exp`（DeepSeek 支持列表；`validate_model` 校验任意存在项）。
+  **本 map 的 `Guide::suggest` 只用** `deepseek-v4-flash`（text 形式）/ `deepseek-v4-flash-vision-exp`（image 形式）；
+  `deepseek-v4-pro` 属支持列表、**本期不选用**（本 map 无模型选择功能）。
   （1M 上下文 / 384K max output，默认 thinking）。
 - OpenAI 兼容 `POST /chat/completions`（`base_url=https://api.deepseek.com`，Bearer 认证）。
 - SSE 流式：`content` + `reasoning_content` **分离**（带 `tools` 必须回传 CoT）。
