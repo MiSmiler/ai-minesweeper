@@ -468,8 +468,8 @@ export interface AnalysisState {
 export interface AnalysisMachine {
   /** 发起一轮分析；每轮 = 最新棋盘（不缓存失败快照，#97）。 */
   start(req: GuideRequest): void;
-  /** 用户中断：POST interrupt（前端保持 SSE 不 abort，#97）。 */
-  interrupt(): Promise<void>;
+  /** 用户主动取消：POST /ai/guide/:id/interrupt（前端保持 SSE 不 abort，#97）。 */
+  interrupt_by_user(): Promise<void>;
   /** 输入格式变更 / 新局 / 切 mode 时清空（历史清除语义，见 `app/` 组装）。 */
   reset(): void;
   /** 订阅状态变化，返回退订。 */
