@@ -322,21 +322,24 @@ button:hover {
 .guide-layout {
   display: grid;
   grid-template-columns: auto auto;
-  grid-template-rows: auto auto;
+  /* Single row: the left cell (game + dashboard) and the dialog are sibling
+     grid items. Keeping the dialog out of the left cell's rows means a taller
+     dialog never shifts the dashboard down (issue #119). */
+  grid-template-rows: auto;
   gap: 12px;
   align-items: start;
 }
 
-/* Grid placement: game top-left, dashboard bottom-left, dialog right column
-   spanning both rows. */
-.guide-game {
+/* The left cell stacks game above dashboard; the gap mirrors the old row gap. */
+.guide-left {
   grid-column: 1;
   grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .guide-dashboard {
-  grid-column: 1;
-  grid-row: 2;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -410,11 +413,14 @@ button:hover {
 
 .guide-dialog {
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
-  width: 360px;
-  height: 100%;
+  width: 460px;
+  /* Bound the dialog to the viewport (body 16px padding + mode-switcher
+     chrome ≈ 57px + bottom margin) so `.dialog-stream` scrolls internally
+     instead of stretching the page (issue #119). */
+  max-height: calc(100vh - 73px);
   padding: 10px;
   background: var(--face);
   border-radius: 8px;

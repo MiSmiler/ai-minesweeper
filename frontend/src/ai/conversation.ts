@@ -19,6 +19,9 @@ export function createConversation(container: HTMLElement): Conversation {
   // existing styling/test selectors keep working.
   const collapse = document.createElement("details");
   collapse.className = "dialog-collapse";
+  // The reasoning block is expanded by default (user story #10); the user may
+  // collapse it via the <summary> toggle, which `render` leaves untouched.
+  collapse.open = true;
   const summary = document.createElement("summary");
   summary.className = "dialog-reasoning-summary";
   summary.textContent = "推理";

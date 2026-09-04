@@ -52,10 +52,16 @@ export function composeGuideMode(
   container.className = "guide-layout";
   root.replaceChildren(container);
 
+  // The game + dashboard stack into one grid cell (`.guide-left`) so the dialog
+  // (a sibling cell) growing never shifts them (issue #119).
+  const left = document.createElement("div");
+  left.className = "guide-left";
+  container.appendChild(left);
+
   // --- Top-left game area: an independent game area + its axis labels ---
   const gameZone = document.createElement("div");
   gameZone.className = "guide-game";
-  container.appendChild(gameZone);
+  left.appendChild(gameZone);
 
   let currentFormat: BoardFormat = "simple-text";
   let history: Array<{ format: BoardFormat; state: GuideState }> = [];
@@ -82,7 +88,7 @@ export function composeGuideMode(
   // --- Bottom-left dashboard ---
   const dashboard = document.createElement("div");
   dashboard.className = "guide-dashboard";
-  container.appendChild(dashboard);
+  left.appendChild(dashboard);
 
   // Analyze / interrupt button (dual state, user story #34).
   const analysisBtn = document.createElement("button");

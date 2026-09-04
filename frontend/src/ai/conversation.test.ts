@@ -45,6 +45,20 @@ describe("createConversation", () => {
     ).toBeNull();
   });
 
+  it("expands the reasoning block by default and keeps it open across renders", () => {
+    const c = createConversation(container);
+    const details = container.querySelector(
+      "details.dialog-collapse",
+    ) as HTMLDetailsElement;
+    expect(details.open).toBe(true);
+
+    // The user-visible `open` state is preserved when streaming updates arrive.
+    c.render({ phase: "running", reasoning: "更多", content: "x" });
+    expect(details.open).toBe(true);
+    c.render({ phase: "done", reasoning: "结论", content: "y" });
+    expect(details.open).toBe(true);
+  });
+
   it("renders an interrupt as a red tail line, not an alert", () => {
     render({
       phase: "interrupted",
