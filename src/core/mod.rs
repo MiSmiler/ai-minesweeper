@@ -226,7 +226,7 @@ impl GameState {
 /// Pinned Seed reproduces the exact layout (ADR-0004); a Random game
 /// regenerates the Seed until the First Click is safe (ADR-0009); a Prank
 /// game forces the clicked Cell in (ADR-0002).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Game {
     config: GameConfig,
     size: BoardSize,

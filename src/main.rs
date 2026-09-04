@@ -3,6 +3,7 @@ mod ai_adapter;
 mod core;
 mod server;
 
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 
@@ -15,6 +16,7 @@ use tracing_subscriber::EnvFilter;
 use crate::ai::agent::{Agent, ProviderSet, Session};
 use crate::ai::protocol::{ContentBlock, Message};
 use crate::ai::provider::{DeepSeek, DeepSeekConfig};
+use crate::ai_adapter::{DEFAULT_MODEL, Guide};
 use crate::core::{Difficulty, Features, Game, GameConfig, Seed};
 
 /// Command-line options for the game server.
@@ -95,7 +97,28 @@ async fn main() {
     // only the Difficulty.
     let game = Game::with_config(GameConfig::new(Difficulty::Beginner, features, cli.seed));
     server::log_new_game(&game, "startup");
-    let state: Arc<Mutex<Game>> = Arc::new(Mutex::new(game));
+    let game: Arc<Mutex<Game>> = Arc::new(Mutex::new(game));
+
+    // AI assembly (issue #116/#117): a real DeepSeek Provider is registered
+    // only when a key is present; absent it, the `/ai/...` routes still mount
+    // and a `suggest` pre-flight fails cleanly with a `config` ProviderError.
+    // `Guide::suggest` picks the model per format, so the model here is a
+    // default and the provider is fixed to the DeepSeek entry.
+    let mut providers = ProviderSet::new();
+    if let Some(config) = DeepSeekConfig::from_env() {
+        providers.insert("deepseek".to_string(), Box::new(DeepSeek::new(config)));
+    }
+    let mut agent = Agent::new(providers);
+    agent.set_model(DEFAULT_MODEL.to_string(), Some("deepseek"));
+    // The `Guide` holds the agent behind a `tokio::sync::Mutex` so its guard
+    // (held across the streaming network call) is `Send` for the axum handler.
+    let guide = Guide::new(Arc::new(tokio::sync::Mutex::new(agent)));
+
+    let state = Arc::new(server::AppState {
+        game,
+        guide,
+        ai_sessions: Arc::new(Mutex::new(HashMap::new())),
+    });
 
     // The built frontend (frontend/dist) is served at the root; unknown
     // paths fall back to index.html so client-side routing never 404s.

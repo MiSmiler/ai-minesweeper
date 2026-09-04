@@ -15,8 +15,9 @@
 
 #![allow(dead_code)] // whole public surface is a seam awaiting the /ai/guide route (#117)
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use tokio::sync::Mutex;
 
 use base64::Engine as _;
 use futures::{Stream, StreamExt};
@@ -180,16 +181,20 @@ pub struct GuideRequest {
 }
 
 /// Default model (text forms); `Guide::suggest` sets it per format.
-const DEFAULT_MODEL: &str = "deepseek-v4-flash";
+pub(crate) const DEFAULT_MODEL: &str = "deepseek-v4-flash";
 /// Multimodal (vision) model — format D (Image) switches to it.
 const VISION_MODEL: &str = "deepseek-v4-flash-vision-exp";
 
 /// The one-shot advisor: inject a board, run one round, stream the result.
 ///
 /// Shared across threads via `Arc<Mutex<Agent>>`; `&self` methods `lock()` to
-/// get `&mut Agent` for `set_model`. No concurrency design beyond the lock:
-/// the frontend's `GuidePhase.running` means at most one `suggest` runs at a
-/// time, and every call's `Session` is local with the model set per format.
+/// get `&mut Agent` for `set_model`. A `tokio::sync::Mutex` is used so the
+/// guard held across the `agent.stream(...).await` network round trip is
+/// `Send` (a `std::sync::MutexGuard` is not), keeping `suggest`'s future
+/// `Send`-compatible with axum handlers. No concurrency design beyond the
+/// lock: the frontend's `GuidePhase.running` means at most one `suggest` runs
+/// at a time, and every call's `Session` is local with the model set per
+/// format.
 pub struct Guide {
     agent: Arc<Mutex<Agent>>,
 }
@@ -211,13 +216,13 @@ impl Guide {
         req: GuideRequest,
         cancel: CancellationToken,
     ) -> Result<
-        impl Stream<Item = Result<StreamChunk, InterruptReason>> + Send,
+        impl Stream<Item = Result<StreamChunk, InterruptReason>> + Send + use<>,
         SuggestPreFlightError,
     > {
         let view = BoardView::from_game(game);
         let image = matches!(req.format, BoardFormat::Image);
 
-        let mut agent = self.agent.lock().unwrap();
+        let mut agent = self.agent.lock().await;
         if image {
             agent.set_model(VISION_MODEL.to_string(), None);
         } else {
@@ -259,12 +264,12 @@ impl Guide {
 /// tools.
 pub struct GameHandle {
     #[allow(dead_code)]
-    game: Arc<Mutex<Game>>,
+    game: Arc<std::sync::Mutex<Game>>,
 }
 
 impl GameHandle {
     /// Wraps the shared game handle.
-    pub fn new(game: Arc<Mutex<Game>>) -> Self {
+    pub fn new(game: Arc<std::sync::Mutex<Game>>) -> Self {
         Self { game }
     }
 }
