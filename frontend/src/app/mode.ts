@@ -37,19 +37,35 @@ export interface AppDeps {
   captureBoardImage: CaptureBoardImage;
 }
 
-/** Mounts the composition for a mode into `root` and returns a teardown
- * function. Switching modes = dispose the current composition and mount a new
- * one — the current Game is abandoned and a fresh one starts (ADR-0012). */
+/** A mounted PlayMode composition, with an optional guard the shell consults
+ * before discarding it (mode switch) or on a page unload (refresh). Only the
+ * AiGuide composition implements the guard — it is the only one that holds
+ * guide analyses whose loss a refresh / switch would silently discard
+ * (issue #112 US-32: any history-clearing operation asks first). */
+export interface Composition {
+  /** Tears down the composition; the current Game is abandoned (ADR-0012). */
+  dispose(): void;
+  /** True while the composition holds guide analyses a refresh/switch would
+   * discard (i.e. guide history is non-empty). */
+  hasGuideHistory?(): boolean;
+  /** Blocking confirm before discarding guide history; returns true to
+   * proceed. `message` is context-specific. Absent when there is no history
+   * to discard — callers treat `undefined` as "proceed". */
+  confirmDiscard?(message: string): boolean;
+}
+
+/** Mounts the composition for a mode into `root`. Switching modes = dispose
+ * the current composition and mount a new one — the current Game is abandoned
+ * and a fresh one starts (ADR-0012). Returns the composition so the shell can
+ * guard a history-bearing switch. */
 export function mountMode(
   mode: PlayModeName,
   root: HTMLElement,
   deps: AppDeps,
-): () => void {
-  const { dispose } =
-    mode === "ai-guide"
-      ? composeGuideMode(root, deps)
-      : composeSingleMode(root, deps);
-  return dispose;
+): Composition {
+  return mode === "ai-guide"
+    ? composeGuideMode(root, deps)
+    : composeSingleMode(root, deps);
 }
 
 const MODES: ReadonlyArray<[PlayModeName, string]> = [

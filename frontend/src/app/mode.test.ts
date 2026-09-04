@@ -45,27 +45,27 @@ describe("mountMode", () => {
   it("mounts the single composition for 'single'", () => {
     mockFetch();
     const root = mount();
-    const dispose = mountMode("single", root, makeDeps());
+    const composition = mountMode("single", root, makeDeps());
     expect(root.querySelector(".game-area")).toBeTruthy();
     expect(root.querySelector(".game-top-bar")).toBeTruthy();
-    dispose();
+    composition.dispose();
   });
 
   it("mounts the guide composition for 'ai-guide'", () => {
     mockFetch();
     const root = mount();
-    const dispose = mountMode("ai-guide", root, makeDeps());
+    const composition = mountMode("ai-guide", root, makeDeps());
     expect(root.querySelector(".guide-layout")).toBeTruthy();
     expect(root.querySelector(".guide-dashboard")).toBeTruthy();
     expect(root.querySelector(".guide-dialog")).toBeTruthy();
-    dispose();
+    composition.dispose();
   });
 
   it("returns a teardown that clears the mounted composition", () => {
     mockFetch();
     const root = mount();
-    const disposeSingle = mountMode("single", root, makeDeps());
-    disposeSingle();
+    const composition = mountMode("single", root, makeDeps());
+    composition.dispose();
     expect(root.querySelector(".game-area")).toBeNull();
   });
 });

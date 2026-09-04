@@ -2,11 +2,7 @@
 // the old `main.ts`). It is the game area alone — the player plays unaided.
 
 import { createGameArea } from "./gameArea";
-import type { AppDeps } from "./mode";
-
-export interface Composition {
-  dispose(): void;
-}
+import type { AppDeps, Composition } from "./mode";
 
 /** Mounts the SinglePlay composition (an independent game area) into `root`.
  * `deps` is part of the seam but unused here — SinglePlay touches no AI. */

@@ -10,11 +10,7 @@ import { createConversation } from "../ai/conversation";
 import { createBoardAxis, type AxisOverlay } from "../ai/axis";
 import { createGuideMachine, type GuideState } from "../ai/stateMachine";
 import { createGameArea, type GameArea } from "./gameArea";
-import type { AppDeps, SessionStrategy } from "./mode";
-
-export interface Composition {
-  dispose(): void;
-}
+import type { AppDeps, Composition, SessionStrategy } from "./mode";
 
 const FORMATS: ReadonlyArray<{ value: BoardFormat; label: string }> = [
   { value: "simple-text", label: "A 简单字符 (simple-text)" },
@@ -75,6 +71,11 @@ export function composeGuideMode(
       machine.reset();
       renderHistory();
     },
+    // Any new game (smiley or difficulty) discards the per-game history; ask
+    // first when there is history to lose (issue #112 US-32 spirit).
+    beforeNewGame: () =>
+      history.length === 0 ||
+      window.confirm("开始新游戏将清空 guide 历史，是否继续？"),
   });
   // Default off (user story #16): createBoardAxis starts hidden; the checkbox
   // drives setVisible. The row/col labels themselves are #118's product.
@@ -247,5 +248,12 @@ export function composeGuideMode(
     container.remove();
   };
 
-  return { dispose };
+  return {
+    dispose,
+    /** True while the guide holds analyses a refresh / mode switch would clear. */
+    hasGuideHistory: () => history.length > 0,
+    /** Blocking confirm before discarding guide history (mode switch). */
+    confirmDiscard: (message) =>
+      history.length === 0 || window.confirm(message),
+  };
 }

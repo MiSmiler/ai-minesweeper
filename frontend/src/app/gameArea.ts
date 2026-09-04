@@ -42,6 +42,9 @@ export interface GameAreaOptions {
   /** Called after a new-game action is confirmed — the mode uses it to reset
    * per-game state (history, session id). */
   onNewGame?: () => void;
+  /** Called before a new game (smiley / difficulty) is confirmed; return false
+   * to cancel. The AiGuide mode uses it to guard a guide-history discard. */
+  beforeNewGame?: () => boolean;
 }
 
 const DIFFICULTIES = ["beginner", "intermediate", "expert"] as const;
@@ -186,12 +189,14 @@ export function createGameArea(
     const target = ev.target as HTMLElement;
     const difficultyBtn = target.closest<HTMLElement>("[data-difficulty]");
     if (difficultyBtn) {
+      if (opts.beforeNewGame && !opts.beforeNewGame()) return;
       client.newGame(
         difficultyBtn.dataset.difficulty as GameSnapshot["difficulty"],
       );
       return;
     }
     if (target.closest(".smiley")) {
+      if (opts.beforeNewGame && !opts.beforeNewGame()) return;
       client.newGame();
     }
   };

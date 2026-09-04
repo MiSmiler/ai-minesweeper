@@ -264,10 +264,11 @@ describe("composeGuideMode history binding", () => {
     expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
   });
 
-  it("a new game clears history", async () => {
+  it("a new game clears history after confirmation", async () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     composeGuideMode(root, h.deps);
     await flush(); // init done, so the game area click listener is live
     await seedOneHistoryEntry(root, h);
@@ -278,8 +279,67 @@ describe("composeGuideMode history binding", () => {
     )!;
     difficulty.click();
     await flush();
+    expect(confirmSpy).toHaveBeenCalled();
     expect(root.querySelectorAll(".history-entry")).toHaveLength(0);
     expect($(root, ".history-empty")).toBeTruthy();
+  });
+
+  it("declining a new game keeps history and does not start one", async () => {
+    mockFetch();
+    const root = mount();
+    const h = makeHarness();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    composeGuideMode(root, h.deps);
+    await flush();
+    await seedOneHistoryEntry(root, h);
+    expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
+
+    const difficulty = root.querySelector<HTMLButtonElement>(
+      '[data-difficulty="beginner"]',
+    )!;
+    difficulty.click();
+    await flush();
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
+    expect($(root, ".history-empty")).toBeFalsy();
+  });
+
+  it("the smiley starts a new game after confirmation", async () => {
+    mockFetch();
+    const root = mount();
+    const h = makeHarness();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    composeGuideMode(root, h.deps);
+    await flush();
+    await seedOneHistoryEntry(root, h);
+    expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
+
+    const smiley = root.querySelector<HTMLButtonElement>(".smiley")!;
+    smiley.click();
+    await flush();
+    expect(root.querySelectorAll(".history-entry")).toHaveLength(0);
+    expect($(root, ".history-empty")).toBeTruthy();
+  });
+
+  it("guards refresh / mode switch via hasGuideHistory and confirmDiscard", async () => {
+    mockFetch();
+    const root = mount();
+    const h = makeHarness();
+    const composition = composeGuideMode(root, h.deps);
+    expect(composition.hasGuideHistory!()).toBe(false);
+    // No history to discard: confirmDiscard proceeds without asking.
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    expect(composition.confirmDiscard!("msg")).toBe(true);
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    await seedOneHistoryEntry(root, h);
+    expect(composition.hasGuideHistory!()).toBe(true);
+    // History present: confirmDiscard asks and honors the choice.
+    confirmSpy.mockReturnValue(false);
+    expect(composition.confirmDiscard!("msg")).toBe(false);
+    expect(confirmSpy).toHaveBeenCalledWith("msg");
+    confirmSpy.mockReturnValue(true);
+    expect(composition.confirmDiscard!("msg")).toBe(true);
   });
 
   it("the axis checkbox toggles the axis layer", () => {
