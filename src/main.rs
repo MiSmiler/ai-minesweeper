@@ -1,4 +1,5 @@
 mod ai;
+mod ai_adapter;
 mod core;
 mod server;
 

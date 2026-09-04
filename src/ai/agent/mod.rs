@@ -156,7 +156,8 @@ impl Agent {
         &self,
         session: &Session,
         cancel: CancellationToken,
-    ) -> Result<impl Stream<Item = Result<StreamChunk, AgentError>> + Send, AgentError> {
+    ) -> Result<impl Stream<Item = Result<StreamChunk, AgentError>> + Send + use<>, AgentError>
+    {
         let provider = self
             .providers
             .get(&self.current_provider)

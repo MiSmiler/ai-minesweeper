@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+base64 = "0.22"
 async-trait = "0.1"
 axum = "0.8.9"
 clap = { version = "4", features = ["derive"] }
