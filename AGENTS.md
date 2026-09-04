@@ -40,7 +40,7 @@ Skip a side's steps when the round touched no files of that side; skip everythin
 
 ### Git staging
 
-**Never unstage on your own** (`git reset`, `git restore --staged`, or any way that moves previously staged work back out of the index) unless the user explicitly instructs it. If you believe unstaging is genuinely necessary mid-round, **ask for the user's explicit consent before running it.**
+Treat the index as the user's to manage: **never stage or unstage on your own**. Both `git add` (moving work into the index) and `git reset` / `git restore --staged` (moving work back out of it) change what the user has committed there, so either one needs the user's explicit consent *before* you run it. If you believe a staging change is genuinely necessary mid-round, **ask first**; do not run it unprompted.
 
 ### Before committing
 
