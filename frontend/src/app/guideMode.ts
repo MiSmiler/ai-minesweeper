@@ -1,22 +1,19 @@
 // The `AiGuide` composition (ADR-0012): the top-left game area (a full copy
 // of SinglePlay with its own independent game client), the bottom-left
 // dashboard (analyze/interrupt, input format, session strategy, row/col axis,
-// history), and the right dialog shell. The "Analyze" button is wired to the
-// injected `deps.aiApi`, which is a stub/mock in this ticket — the real SSE
-// consumer lands later.
+// history), and the right dialog shell. The "Analyze" button drives the
+// `GuideMachine` (issue #119) which consumes the real SSE stream; the dialog is
+// rendered by `createConversation`.
 
-import type { BoardFormat, GuideEvent, ProviderError } from "../ai/api";
+import type { BoardFormat, GuideRequest, ProviderError } from "../ai/api";
+import { createConversation } from "../ai/conversation";
 import { createBoardAxis, type AxisOverlay } from "../ai/axis";
+import { createGuideMachine, type GuideState } from "../ai/stateMachine";
 import { createGameArea, type GameArea } from "./gameArea";
 import type { AppDeps, SessionStrategy } from "./mode";
 
 export interface Composition {
   dispose(): void;
-}
-
-interface HistoryEntry {
-  format: BoardFormat;
-  events: GuideEvent[];
 }
 
 const FORMATS: ReadonlyArray<{ value: BoardFormat; label: string }> = [
@@ -35,6 +32,17 @@ const STRATEGIES: ReadonlyArray<{
   { value: "per-game", label: "per-game (未实现)", disabled: true },
 ];
 
+/** Buckets a `preflight-failed` error into a human alert message (issue #97 ①).
+ * 4xx/5xx surface via the HTTP status / provider kind; the alert blocks
+ * (synchronous `window.alert`). */
+function providerAlertMessage(e: ProviderError): string {
+  if (e.kind === "config") return `AI 未配置：${e.message}`;
+  if (e.code === 429) return "AI 请求过于频繁（429），请稍后再试。";
+  if (e.code === 408) return "AI 响应超时（408），请稍后再试。";
+  if (e.kind === "upstream") return `AI 服务异常：${e.message}`;
+  return `分析失败：${e.message}`;
+}
+
 /** Mounts the AiGuide composition (game area + dashboard + dialog) into `root`. */
 export function composeGuideMode(
   root: HTMLElement,
@@ -49,19 +57,16 @@ export function composeGuideMode(
   gameZone.className = "guide-game";
   container.appendChild(gameZone);
 
-  let sessionId = newSessionId();
   let currentFormat: BoardFormat = "simple-text";
-  let analysisRunning = false;
-  let history: HistoryEntry[] = [];
-  let activeEvents: GuideEvent[] = [];
+  let history: Array<{ format: BoardFormat; state: GuideState }> = [];
+  let running = false;
 
   const gameArea: GameArea = createGameArea(gameZone, {
     onNewGame: () => {
-      // A new game abandons the current board: reset the per-game session
-      // and history (issue #114: history binds to the current game).
-      sessionId = newSessionId();
+      // A new game abandons the current board: reset the per-game session and
+      // history (issue #114: history binds to the current game).
       history = [];
-      activeEvents = [];
+      machine.reset();
       renderHistory();
     },
   });
@@ -69,7 +74,7 @@ export function composeGuideMode(
   // drives setVisible. The row/col labels themselves are #118's product.
   const axis: AxisOverlay = createBoardAxis(gameArea.boardEl);
 
-  /** A fresh session id per game; the stub backend only needs uniqueness. */
+  /** A fresh session id per analysis; the backend only needs uniqueness. */
   function newSessionId(): string {
     return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
@@ -109,6 +114,7 @@ export function composeGuideMode(
     }
     currentFormat = next;
     history = [];
+    machine.reset();
     renderHistory();
   });
 
@@ -147,6 +153,40 @@ export function composeGuideMode(
   historyBox.append(historyTitle, historyList);
   dashboard.appendChild(historyBox);
 
+  // --- Right dialog shell ---
+  const dialog = document.createElement("div");
+  dialog.className = "guide-dialog";
+  const dialogTitle = document.createElement("h3");
+  dialogTitle.textContent = "AI 对话";
+  const dialogStream = document.createElement("div");
+  dialogStream.className = "dialog-stream";
+  dialog.append(dialogTitle, dialogStream);
+  container.appendChild(dialog);
+
+  const conversation = createConversation(dialogStream);
+  const machine = createGuideMachine({ api: deps.aiApi, newSessionId });
+
+  function setRunning(next: boolean): void {
+    running = next;
+    analysisBtn.textContent = next ? "中断" : "分析";
+    analysisBtn.classList.toggle("running", next);
+    historyList.classList.toggle("locked", next);
+  }
+
+  const unsubscribe = machine.onState((state) => {
+    conversation.render(state);
+    setRunning(state.phase === "running");
+    // A completed analysis is recorded in history; interrupted / pre-flight
+    // failures are not (partial / absent output, issue #97).
+    if (state.phase === "done") {
+      history.push({ format: currentFormat, state: { ...state } });
+      renderHistory();
+    }
+    if (state.phase === "preflight-failed" && state.providerError) {
+      window.alert(providerAlertMessage(state.providerError));
+    }
+  });
+
   function renderHistory(): void {
     historyList.replaceChildren();
     if (history.length === 0) {
@@ -162,60 +202,16 @@ export function composeGuideMode(
       li.dataset.index = String(i);
       li.textContent = `分析 #${i + 1} (${entry.format})`;
       li.addEventListener("click", () => {
-        if (analysisRunning) return; // Not clickable while an analysis is running (user story #31)
-        replayHistory(entry);
+        if (running) return; // Not clickable while an analysis is running (user story #31)
+        conversation.render(entry.state);
       });
       historyList.appendChild(li);
     });
   }
   renderHistory();
 
-  // --- Right dialog shell ---
-  const dialog = document.createElement("div");
-  dialog.className = "guide-dialog";
-  const dialogTitle = document.createElement("h3");
-  dialogTitle.textContent = "AI 对话";
-  const dialogStream = document.createElement("div");
-  dialogStream.className = "dialog-stream";
-  dialog.append(dialogTitle, dialogStream);
-  container.appendChild(dialog);
-
-  function setAnalysisRunning(running: boolean): void {
-    analysisRunning = running;
-    analysisBtn.textContent = running ? "中断" : "分析";
-    analysisBtn.classList.toggle("running", running);
-    historyList.classList.toggle("locked", running);
-  }
-
-  function replayHistory(entry: HistoryEntry): void {
-    dialogStream.replaceChildren();
-    for (const e of entry.events) appendGuideEvent(e, false);
-  }
-
-  function appendGuideEvent(e: GuideEvent, collect: boolean): void {
-    if (collect) activeEvents.push(e);
-    if (e.kind === "reasoning") {
-      appendDialog("reasoning", e.text);
-    } else if (e.kind === "content") {
-      appendDialog("content", e.text);
-    } else if (e.kind === "interrupt") {
-      appendDialog("interrupt", `已中断:${e.reason}`);
-    }
-  }
-
-  function appendDialog(
-    kind: "reasoning" | "content" | "interrupt",
-    text: string,
-  ): void {
-    const block = document.createElement("div");
-    block.className = `dialog-block dialog-${kind}`;
-    block.textContent = text;
-    dialogStream.appendChild(block);
-    dialogStream.scrollTop = dialogStream.scrollHeight;
-  }
-
   async function startAnalysis(): Promise<void> {
-    if (analysisRunning) return;
+    if (running) return;
     const format = currentFormat;
     let imageDataUrl: string | undefined;
     if (format === "image") {
@@ -229,50 +225,17 @@ export function composeGuideMode(
         return;
       }
     }
-    activeEvents = [];
-    setAnalysisRunning(true);
-    deps.aiApi.startGuide(
-      sessionId,
-      { format, imageDataUrl },
-      onGuideEvent,
-      onProviderError,
-    );
-  }
-
-  function interruptAnalysis(): void {
-    void deps.aiApi.interrupt_by_user(sessionId);
-  }
-
-  function onGuideEvent(e: GuideEvent): void {
-    switch (e.kind) {
-      case "reasoning":
-      case "content":
-      case "interrupt":
-        appendGuideEvent(e, true);
-        if (e.kind === "interrupt") setAnalysisRunning(false);
-        return;
-      case "sse_done":
-        appendGuideEvent(e, true); // collect is a no-op for sse_done
-        setAnalysisRunning(false);
-        history.push({ format: currentFormat, events: [...activeEvents] });
-        renderHistory();
-        return;
-    }
-  }
-
-  function onProviderError(e: ProviderError): void {
-    // Pre-flight failure (before any stream): alert and stop the analysis
-    // (issue #97). The Game is unaffected.
-    setAnalysisRunning(false);
-    window.alert(`分析失败：${e.message}`);
+    const req: GuideRequest = { format, imageDataUrl };
+    machine.start(req);
   }
 
   analysisBtn.addEventListener("click", () => {
-    if (analysisRunning) interruptAnalysis();
+    if (running) void machine.interrupt_by_user();
     else void startAnalysis();
   });
 
   const dispose = (): void => {
+    unsubscribe();
     axis.destroy();
     gameArea.dispose();
     container.remove();

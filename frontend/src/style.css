@@ -442,7 +442,18 @@ button:hover {
   white-space: pre-wrap;
 }
 
-/* Reasoning: light, smaller, collapsible (user story #10). */
+/* Reasoning: light, smaller, collapsible (user story #10). The whole block is
+   one <details>/<summary> (issue #119); the body is .dialog-reasoning. */
+.dialog-collapse {
+  border-radius: 4px;
+}
+.dialog-collapse summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: #6a6a72;
+  user-select: none;
+  padding: 2px 4px;
+}
 .dialog-reasoning {
   background: #f2f2f6;
   color: #6a6a72;

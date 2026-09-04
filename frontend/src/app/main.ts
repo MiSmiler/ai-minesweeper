@@ -6,7 +6,7 @@
 // mounts a fresh composition. The initial mode comes from `?mode=` (default
 // `single`) so dev/screenshots/acceptance can boot straight into either mode.
 
-import type { AiApi, GuideEvent } from "../ai/api";
+import { createAiApi } from "../ai/api";
 import { captureBoardImage } from "../ai/screenshot";
 import {
   mountMode,
@@ -30,36 +30,12 @@ function readInitialMode(): PlayModeName {
     : "single";
 }
 
-/** A stub `AiApi` for this shell ticket: it emits a short placeholder analysis
- * (`reasoning` → `content` → `sse_done`) so the analyze/interrupt button and the
- * dialog can be exercised without the backend. The real SSE consumer is a
- * later ticket. */
-function makeStubAiApi(): AiApi {
-  return {
-    startGuide(_sessionId, _req, onEvent: (e: GuideEvent) => void) {
-      window.setTimeout(() => {
-        onEvent({ kind: "reasoning", text: "（stub）正在分析棋盘…" });
-      }, 60);
-      window.setTimeout(() => {
-        onEvent({
-          kind: "content",
-          text: "分析功能将在后续 ticket 接入真实后端。（stub）",
-        });
-      }, 120);
-      window.setTimeout(() => {
-        onEvent({ kind: "sse_done" });
-      }, 180);
-    },
-    interrupt_by_user(_sessionId) {
-      return Promise.resolve();
-    },
-  };
-}
-
 const app = document.getElementById("app")!;
 const deps: AppDeps = {
   getPlayMode: readInitialMode,
-  aiApi: makeStubAiApi(),
+  // The real AI guide transport: consumes the backend `/ai/guide` SSE stream
+  // (issue #119).
+  aiApi: createAiApi(),
   captureBoardImage,
 };
 
