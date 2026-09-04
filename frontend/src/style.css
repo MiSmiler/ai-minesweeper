@@ -28,6 +28,49 @@ body {
 #app {
   display: flex;
   flex-direction: column;
+  align-items: center;
+}
+
+/* The top-bar mode switcher (SinglePlay / AiGuide). Switching modes abandons
+   the current Game and mounts a fresh composition (ADR-0012). */
+.mode-switcher {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 10px;
+  background: var(--face);
+  border-radius: 8px;
+  box-shadow:
+    inset 1px 1px 0 var(--hidden-light),
+    inset -1px -1px 0 var(--hidden-dark);
+}
+
+.mode-btn {
+  padding: 4px 12px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: none;
+  color: #3a3a42;
+  background: transparent;
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.mode-btn:hover {
+  background: var(--hidden-light);
+}
+
+.mode-btn.active {
+  background: #3a3a42;
+  color: #fff;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+#mode-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .difficulty-row {
@@ -64,7 +107,7 @@ body {
     0 0 24px rgba(0, 0, 0, 0.06);
 }
 
-.top-bar {
+.game-top-bar {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
@@ -101,7 +144,8 @@ body {
   border-right: 2px solid var(--hidden-light);
 }
 
-#timer.led {
+#timer.led,
+.led[data-role="timer"] {
   justify-self: end;
 }
 
@@ -254,4 +298,207 @@ button:hover {
 }
 .n8 {
   color: #606060;
+}
+
+/* --- game area --- */
+
+/* One game area (difficulty row + frame). Centered like the former flat
+   layout; the mode content region centers it. */
+.game-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* The Board host container the client renders `.board` into. Kept as a
+   separate element from `.board` (which is re-created on every render) so the
+   axis labels can sit around it without entering a `.board` screenshot. */
+.board-host {
+  width: max-content;
+}
+
+/* --- AiGuide composition --- */
+
+.guide-layout {
+  display: grid;
+  grid-template-columns: auto auto;
+  /* Single row: the left cell (game + dashboard) and the dialog are sibling
+     grid items. Keeping the dialog out of the left cell's rows means a taller
+     dialog never shifts the dashboard down (issue #119). */
+  grid-template-rows: auto;
+  gap: 12px;
+  align-items: start;
+}
+
+/* The left cell stacks game above dashboard; the gap mirrors the old row gap. */
+.guide-left {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.guide-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 200px;
+  padding: 10px;
+  background: var(--face);
+  border-radius: 8px;
+  box-shadow:
+    inset 1px 1px 0 var(--hidden-light),
+    inset -1px -1px 0 var(--hidden-dark);
+}
+
+.guide-dashboard select,
+.guide-dashboard .analysis-btn {
+  width: max-content;
+}
+
+.analysis-btn.running {
+  background: var(--mine-bg);
+  color: #fff;
+}
+
+.guide-dash-label {
+  font-size: 12px;
+  color: #3a3a42;
+}
+
+.axis-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.history h3,
+.guide-dialog h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.history-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.history-list.locked {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.history-entry {
+  padding: 2px 4px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.history-entry:hover {
+  background: var(--hidden-light);
+}
+
+.history-empty {
+  font-size: 12px;
+  color: #6a6a72;
+  padding: 2px 4px;
+}
+
+.guide-dialog {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  width: 460px;
+  /* Bound the dialog to the viewport (body 16px padding + mode-switcher
+     chrome ≈ 57px + bottom margin) so `.dialog-stream` scrolls internally
+     instead of stretching the page (issue #119). */
+  max-height: calc(100vh - 73px);
+  padding: 10px;
+  background: var(--face);
+  border-radius: 8px;
+  box-shadow:
+    inset 1px 1px 0 var(--hidden-light),
+    inset -1px -1px 0 var(--hidden-dark);
+}
+
+.dialog-stream {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 200px;
+  padding: 8px;
+  background: #fff;
+  border-radius: 4px;
+}
+
+.dialog-block {
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+/* Reasoning: light, smaller, collapsible (user story #10). The whole block is
+   one <details>/<summary> (issue #119); the body is .dialog-reasoning. */
+.dialog-collapse {
+  border-radius: 4px;
+}
+.dialog-collapse summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: #6a6a72;
+  user-select: none;
+  padding: 2px 4px;
+}
+.dialog-reasoning {
+  background: #f2f2f6;
+  color: #6a6a72;
+  font-size: 12px;
+}
+
+.dialog-content {
+  background: #eaeaf0;
+}
+
+.dialog-interrupt {
+  color: #cc0000;
+  background: transparent;
+}
+
+/* --- board axis (user stories #15-#19) --- */
+
+/* The axis zone wraps the board; the label layer is absolutely positioned
+   around it, pointer-events:none so it never intercepts a click and never
+   appears in a screenshot of `.board` (labels are outside `#board`). */
+.board-axis-zone {
+  position: relative;
+  width: max-content;
+}
+
+.axis-label-layer {
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  overflow: visible;
+  font-family: "Consolas", "Menlo", monospace;
+  font-size: 11px;
+  color: #6a6a72;
+  user-select: none;
+}
+
+.axis-label-layer.hidden {
+  display: none;
 }
