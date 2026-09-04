@@ -6,16 +6,20 @@
 
 ## Development habits
 
-### Before modifying code
+### Before touching files: present first, then confirm
 
-When investigating a problem (debugging, diagnosing an error, exploring the codebase), **report findings first and wait for confirmation** before making any changes. Do not jump from investigation directly into editing.
+Before you edit any file, present what you're about to do and **wait for the
+user's confirmation**. The form of that presentation depends on what the user
+asked:
 
-### Interface design alignment
-
-Before implementing any feature or fix — any change to `src/` or `frontend/`
-that writes code — **align the interface design with the user**: lay out the
-interfaces and the shape of the change, and wait for confirmation before
-touching a file. The implementation is not underway until the design is agreed.
+- **A question** ("what do you think?" / "why?" / any `?`): it is a request for
+  analysis and explanation, **not** a cue to edit. Give the analysis first; edit
+  only after the user confirms they want the change made.
+- **Investigating a problem** (debugging, diagnosing, exploring the codebase):
+  report your findings first; do not jump from investigation straight to editing.
+- **Implementing a feature/fix** (a change to `src/` or `frontend/`): lay out
+  the interface design and the shape of the change first; the implementation is
+  not underway until the design is agreed.
 
 ### After a coding round
 
