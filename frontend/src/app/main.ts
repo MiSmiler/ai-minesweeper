@@ -30,6 +30,15 @@ function readInitialMode(): PlayModeName {
     : "single";
 }
 
+/** Persists the chosen PlayMode into `?mode=` so a refresh keeps the current
+ * mode. `replaceState` avoids a reload and doesn't add history entries
+ * (ADR-0012: modes are exclusive, switching abandons the Game). */
+function persistMode(mode: PlayModeName): void {
+  const params = new URLSearchParams(window.location.search);
+  params.set("mode", mode);
+  history.replaceState(null, "", `?${params.toString()}`);
+}
+
 const app = document.getElementById("app")!;
 const deps: AppDeps = {
   getPlayMode: readInitialMode,
@@ -54,6 +63,7 @@ function refreshSwitcher(): void {
     if (next === current) return;
     disposeCurrent();
     current = next;
+    persistMode(current);
     disposeCurrent = mountMode(current, content, deps);
     refreshSwitcher();
   });
