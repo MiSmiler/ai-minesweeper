@@ -29,7 +29,7 @@ beforeEach(() => {
       <button data-difficulty="intermediate">Intermediate</button>
       <button data-difficulty="expert">Expert</button>
     </div>
-    <div class="top-bar">
+    <div class="game-top-bar">
       <div id="counter" class="led"></div>
       <button id="smiley" class="smiley"></button>
       <div id="timer" class="led"></div>
