@@ -14,7 +14,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::ai::agent::{Agent, ProviderSet, Session};
 use crate::ai::protocol::{ContentBlock, Message};
-use crate::ai::provider::MockProvider;
+use crate::ai::provider::{DeepSeek, DeepSeekConfig};
 use crate::core::{Difficulty, Features, Game, GameConfig, Seed};
 
 /// Command-line options for the game server.
@@ -43,10 +43,11 @@ struct Cli {
     #[arg(long, default_value = "127.0.0.1")]
     host: String,
 
-    /// Run the AI runtime self-check (issue #113): build a mock `Provider`,
-    /// send one `User` message through `complete_once`, and print the
-    /// Assistant reply. Exits immediately afterwards and never starts the
-    /// server. Mutually exclusive with every server option.
+    /// Run the AI runtime self-check (issue #116): build a real `DeepSeek`
+    /// `Provider`, send one `User` message through `complete_once`, and print
+    /// the Assistant reply (content + reasoning). Requires `DEEPSEEK_API_KEY`.
+    /// Exits immediately afterwards and never starts the server. Mutually
+    /// exclusive with every server option.
     #[arg(long, conflicts_with_all = ["prank", "seed", "port", "host"])]
     test_ai_chat: Option<String>,
 }
@@ -64,9 +65,9 @@ async fn main() {
     let cli = Cli::parse();
 
     // `--test-ai-chat` is a self-contained runtime self-check: it exits before
-    // the normal server flow, using a mock Provider so no real API key is
-    // required at this layer (issue #113). A failure here is a hard error — it
-    // never falls through into the product.
+    // the normal server flow, using a real DeepSeek Provider so the network
+    // path is actually exercised (issue #116). A failure here is a hard error
+    // — it never falls through into the product.
     if let Some(prompt) = cli.test_ai_chat {
         match run_test_ai_chat(&prompt).await {
             Ok(()) => return,
@@ -115,18 +116,25 @@ async fn main() {
     axum::serve(listener, router).await.expect("server error");
 }
 
-/// The `--test-ai-chat` self-check: a mock `Provider` exercises the
-/// `complete_once` path — one `User` message in, one `Assistant` reply out
-/// (issue #113). Offline by design; the real DeepSeek provider arrives in a
-/// later ticket, at which point a missing API key becomes a hard error here.
+/// The default model name used by the `--test-ai-chat` self-check. It is an
+/// app-level string choice (like `ai_adapter::DEFAULT_MODEL`), not a model
+/// name the provider owns; `DeepSeek` validates it against `GET /models`.
+const TEST_AI_MODEL: &str = "deepseek-v4-flash";
+
+/// The `--test-ai-chat` self-check (issue #116): a real `DeepSeek` provider
+/// exercises the `complete_once` path — one `User` message in, one `Assistant`
+/// reply out (content + reasoning). Requires `DEEPSEEK_API_KEY`; absent it, AI
+/// is not configured and this is a hard error.
 async fn run_test_ai_chat(prompt: &str) -> Result<(), String> {
+    let config = DeepSeekConfig::from_env()
+        .ok_or_else(|| "DEEPSEEK_API_KEY is not set; AI is not configured".to_string())?;
     let mut providers = ProviderSet::new();
-    providers.insert("mock".to_string(), Box::new(MockProvider::new()));
+    providers.insert("deepseek".to_string(), Box::new(DeepSeek::new(config)));
     let mut agent = Agent::new(providers);
-    agent.set_model("mock-model".to_string(), Some("mock"));
+    agent.set_model(TEST_AI_MODEL.to_string(), Some("deepseek"));
 
     let mut session = Session::new(Message::System {
-        content: "You are a self-test assistant (issue #113).".to_string(),
+        content: "You are a helpful assistant. Reply concisely to the user's message.".to_string(),
     });
     session.push(Message::User {
         content: vec![ContentBlock::Text(prompt.to_string())],

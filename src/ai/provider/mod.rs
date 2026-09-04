@@ -6,9 +6,10 @@
 //! Provider` can be held boxed in a [`ProviderSet`](crate::ai::agent::ProviderSet).
 //!
 //! The module owns only the seam. Concrete providers live next to it:
-//! [`mock`] (the self-test/unit-test backend) and, in a later ticket, a real
-//! DeepSeek implementation.
+//! [`deepseek`] (the real OpenAI-compatible backend, issue #116) and [`mock`]
+//! (the offline self-test / unit-test backend).
 
+pub mod deepseek;
 pub mod mock;
 
 use std::pin::Pin;
@@ -19,6 +20,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ai::protocol::{ChatRequest, ProviderError, StreamChunk};
 
+pub use deepseek::{DeepSeek, DeepSeekConfig};
+// The mock provider is only referenced by unit tests (the product uses
+// DeepSeek); keep the re-export available without tripping `unused_imports`
+// in a non-test `cargo build`.
+#[allow(unused_imports)]
 pub use mock::MockProvider;
 
 /// A stream of [`StreamChunk`]s, each possibly failing with a
