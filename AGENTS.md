@@ -46,12 +46,6 @@ Skip a side's steps when the round touched no files of that side; skip everythin
 
 Before executing `git commit`, **show the proposed commit message and wait for confirmation**. Use Conventional Commits format (`feat:`, `fix:`, `docs:`, `chore:`, etc.).
 
-## Rust conventions
-
-Write a constructor — `fn foo(...) -> SomeType` that builds `SomeType` — as an associated
-function on `SomeType`, placed next to its definition (e.g. `game_config(...) -> GameConfig`
-is `GameConfig::new(...)`). Before writing any free function, ask: "what type is this about?"
-
 ## Agent skills
 
 ### Issue tracker
