@@ -20,6 +20,9 @@ asked:
 - **Implementing a feature/fix** (a change to `src/` or `frontend/`): lay out
   the interface design and the shape of the change first; the implementation is
   not underway until the design is agreed.
+  - Present interface design as **pseudocode in fenced code blocks**, each block
+    labelled with its language (`ts`, `rust`, `css`) — read the shape as code,
+    not as prose or bulleted markdown.
 
 ### After a coding round
 
