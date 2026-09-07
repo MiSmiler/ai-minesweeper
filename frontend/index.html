@@ -6,23 +6,9 @@
     <title>Minesweeper</title>
   </head>
   <body>
-    <div id="app">
-      <div class="difficulty-row">
-        <button class="difficulty" data-difficulty="beginner">Beginner</button>
-        <button class="difficulty" data-difficulty="intermediate">
-          Intermediate
-        </button>
-        <button class="difficulty" data-difficulty="expert">Expert</button>
-      </div>
-      <div class="game-frame">
-        <div class="top-bar">
-          <div id="counter" class="led"></div>
-          <button id="smiley" class="smiley" aria-label="New game">🙂</button>
-          <div id="timer" class="led"></div>
-        </div>
-        <div id="board"></div>
-      </div>
-    </div>
+    <!-- The mode-switcher bar and the mode content are built by
+         src/app/main.ts from the initial PlayMode (ADR-0012). -->
+    <div id="app"></div>
     <script type="module" src="/src/app/main.ts"></script>
   </body>
 </html>

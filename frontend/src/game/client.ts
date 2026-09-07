@@ -43,6 +43,11 @@ export interface GameClientDeps {
   topBarEls: TopBarEls;
   post: (action: Action) => Promise<GameSnapshot>;
   fetchSnapshot: () => Promise<GameSnapshot>;
+  /** Called after the Board is re-rendered with a fresh snapshot (the initial
+   * load and every applied action response). The composition layer uses it to
+   * keep overlay state in sync with the live Board — e.g. the guide's axis
+   * labels, which are keyed by `rows`/`cols`. */
+  onRender?: (snapshot: GameSnapshot) => void;
 }
 
 /** The client module: the frontend's view of the game. It owns the cached
@@ -64,7 +69,7 @@ export interface GameClient {
 }
 
 export function createGameClient(deps: GameClientDeps): GameClient {
-  const { boardEl, topBarEls, post, fetchSnapshot } = deps;
+  const { boardEl, topBarEls, post, fetchSnapshot, onRender } = deps;
 
   const gesture = createGestureMachine();
   const previewRenderer = createPreviewRenderer(boardEl);
@@ -123,6 +128,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
       boardPressed = gated.boardPressed;
       renderBoard(snapshot, boardEl);
       renderTopBar(snapshot, topBarEls);
+      onRender?.(snapshot);
       // Re-assert the gesture-driven face: a response re-rendering the top
       // bar must not wipe the surprise while a press is still held.
       renderSmiley(snapshot);
@@ -226,6 +232,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
     snapshot = await fetchSnapshot();
     renderBoard(snapshot, boardEl);
     renderTopBar(snapshot, topBarEls);
+    onRender?.(snapshot);
   };
 
   return { init, handleInput, newGame, pollTimer };

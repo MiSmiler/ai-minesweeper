@@ -4,8 +4,10 @@
 //! logic module with no serde or server dependencies; this module owns the
 //! axum handlers and maps core types to the wire DTOs in [`wire`].
 
+mod ai_routes;
 pub mod wire;
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::Json;
@@ -13,11 +15,25 @@ use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use crate::ai_adapter::Guide;
 use crate::core::{Difficulty, Game, GameState, Position};
 
 use self::wire::{ActionDto, ActionKind, GameSnapshot};
+
+/// The shared server state: the single `Game`, the AI advisor, and the set of
+/// live analysis sessions keyed by the frontend-generated `sessionId`. The
+/// `/ai/...` routes only read the board (never write `Game`).
+pub(crate) struct AppState {
+    pub(crate) game: Arc<Mutex<Game>>,
+    pub(crate) guide: Guide,
+    /// Active `Guide::suggest` cancel tokens, keyed by the `{id}` path segment
+    /// (= the frontend `sessionId`). The interrupt route cancels the matching
+    /// token to abort the upstream generation and drive the SSE event.
+    pub(crate) ai_sessions: Arc<Mutex<HashMap<String, CancellationToken>>>,
+}
 
 /// The outcome of applying a player action to the human game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,13 +47,14 @@ pub(crate) enum ActionOutcome {
     Applied,
 }
 
-/// Assembles the API routes onto a `Router`, given the shared game state. The
+/// Assembles the full API onto a `Router`, given the shared `AppState`. The
 /// static `/frontend/dist` fallback is attached by `main.rs`.
-pub fn routes(state: Arc<Mutex<Game>>) -> Router {
-    Router::new()
+pub fn routes(state: Arc<AppState>) -> Router {
+    let game_router = Router::new()
         .route("/state", get(get_state))
         .route("/action", post(post_action))
-        .with_state(state)
+        .with_state(state.clone());
+    game_router.merge(ai_routes::ai_routes(state))
 }
 
 /// Applies an action to the game, replacing it for a new-game. Returns the
@@ -84,9 +101,9 @@ pub fn log_new_game(game: &Game, source: &str) {
 // --- Handlers ---
 
 pub(crate) async fn get_state(
-    State(game): State<Arc<Mutex<Game>>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<GameSnapshot>, (StatusCode, String)> {
-    let game = game.lock().map_err(|_| {
+    let game = state.game.lock().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             "game state poisoned".to_string(),
@@ -96,10 +113,10 @@ pub(crate) async fn get_state(
 }
 
 pub(crate) async fn post_action(
-    State(game): State<Arc<Mutex<Game>>>,
+    State(state): State<Arc<AppState>>,
     Json(action): Json<ActionDto>,
 ) -> Result<Json<GameSnapshot>, (StatusCode, String)> {
-    let mut game = game.lock().map_err(|_| {
+    let mut game = state.game.lock().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             "game state poisoned".to_string(),
