@@ -20,6 +20,7 @@
     "vitest": "^4.1.11"
   },
   "dependencies": {
+    "html-to-image": "^1.11.13",
     "tslog": "^5.1.0"
   }
 }

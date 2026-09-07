@@ -1,16 +1,31 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { captureBoardImage } from "./screenshot";
+import { toPng } from "html-to-image";
+
+// jsdom cannot run a real html-to-image capture (no layout/canvas), so the
+// browser-only `toPng` is mocked and we assert the forwarding contract.
+vi.mock("html-to-image", () => ({
+  toPng: vi.fn(),
+}));
+
+afterEach(() => {
+  vi.mocked(toPng).mockReset();
+});
 
 describe("captureBoardImage", () => {
-  it("returns a PNG data URL", async () => {
-    const url = await captureBoardImage(document.createElement("div"));
+  it("returns the PNG data URL produced by html-to-image, defaulting pixelRatio to 1", async () => {
+    const el = document.createElement("div");
+    vi.mocked(toPng).mockResolvedValue("data:image/png;base64,AAAA");
+    const url = await captureBoardImage(el);
     expect(url.startsWith("data:image/png;base64,")).toBe(true);
+    expect(toPng).toHaveBeenCalledWith(el, { pixelRatio: 1 });
   });
 
-  it("honors the pixelRatio option (signature contract)", async () => {
-    await expect(
-      captureBoardImage(document.createElement("div"), { pixelRatio: 2 }),
-    ).resolves.toBeTypeOf("string");
+  it("honors a caller-supplied pixelRatio", async () => {
+    const el = document.createElement("div");
+    vi.mocked(toPng).mockResolvedValue("data:image/png;base64,BBBB");
+    await captureBoardImage(el, { pixelRatio: 2 });
+    expect(toPng).toHaveBeenCalledWith(el, { pixelRatio: 2 });
   });
 });

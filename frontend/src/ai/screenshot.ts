@@ -1,24 +1,19 @@
-// Board screenshot capture for the image presentation form (issue #114).
+// Board screenshot capture for the image presentation form (issue #120).
 //
-// The real capture uses `html-to-image` (`toPng`) to screenshot `boardEl`
-// into a PNG data URL for form D (image). This ticket is the shell only:
-// the image data is collected into `GuideRequest.imageDataUrl` by the `app/`
-// composition, and the analyzer is a stub. The actual `html-to-image` capture
-// is deferred; `captureBoardImage` here returns a valid (empty) PNG data URL
-// so the stub flow can exercise the contract. It is injected through
-// `AppDeps.captureBoardImage` precisely so jsdom tests can substitute it (the
-// browser-only capture never runs under jsdom).
+// `captureBoardImage` screenshots `boardEl` into a PNG data URL for form D
+// (image) using `html-to-image`'s `toPng`. It honors the caller's `pixelRatio`
+// (the image-form analyze flow passes `1` so the board is not enlarged, keeping
+// the image token budget low); the default is also `1` (no upscaling). The
+// browser-only capture never runs under jsdom — the compositions receive it via
+// `AppDeps.captureBoardImage`, so jsdom tests substitute a stub.
 
-const PLACEHOLDER_PNG =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+import { toPng } from "html-to-image";
 
 /** Screenshots `boardEl` into a PNG data URL (`data:image/png;base64,`).
- * Stub for the shell ticket: returns a valid placeholder. */
+ * `pixelRatio` defaults to `1` so the returned image is not enlarged. */
 export async function captureBoardImage(
-  _boardEl: HTMLElement,
-  _opts?: { pixelRatio?: number },
+  boardEl: HTMLElement,
+  opts?: { pixelRatio?: number },
 ): Promise<string> {
-  // TODO(#118): use html-to-image's `toPng` (pixelRatio honored) to capture
-  // the real board.
-  return PLACEHOLDER_PNG;
+  return toPng(boardEl, { pixelRatio: opts?.pixelRatio ?? 1 });
 }

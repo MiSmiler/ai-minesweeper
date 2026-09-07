@@ -78,10 +78,14 @@ enum ContentWire {
     ImageUrl { image_url: ImageUrlWire },
 }
 
-/// The inner `{url}` object of an `image_url` content block.
+/// The inner `{url}` object of an `image_url` content block. `detail: "low"`
+/// asks the vision model for a low-resolution rendering, capping each image at
+/// a small token budget (issue #120: every image ≤384 tokens).
 #[derive(Debug, Serialize)]
 struct ImageUrlWire {
     url: String,
+    /// OpenAI-compatible low-detail vision rendering (≈85 tokens per image).
+    detail: &'static str,
 }
 
 impl Serialize for ContentBlock {
@@ -94,7 +98,10 @@ impl Serialize for ContentBlock {
                 ContentWire::Text { text: text.clone() }.serialize(serializer)
             }
             ContentBlock::ImageUrl(url) => ContentWire::ImageUrl {
-                image_url: ImageUrlWire { url: url.clone() },
+                image_url: ImageUrlWire {
+                    url: url.clone(),
+                    detail: "low",
+                },
             }
             .serialize(serializer),
         }
@@ -235,11 +242,11 @@ mod tests {
     }
 
     #[test]
-    fn content_block_image_nests_the_url() {
+    fn content_block_image_nests_the_url_with_low_detail() {
         let block = ContentBlock::ImageUrl("data:...png".into());
         assert_eq!(
             serde_json::to_value(&block).unwrap(),
-            serde_json::json!({"type": "image_url", "image_url": {"url": "data:...png"}})
+            serde_json::json!({"type": "image_url", "image_url": {"url": "data:...png", "detail": "low"}})
         );
     }
 
