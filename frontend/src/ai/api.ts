@@ -23,10 +23,12 @@ export type InterruptReason =
   "user_interrupt" | "rate_limit" | "timeout" | "upstream_error" | "unknown";
 
 /** A frontend-consumed wire event. `sse_done` is synthesized locally when the
- * SSE `[DONE]` is read; the wire never emits it. */
+ * SSE `[DONE]` is read; the wire never emits it. `user` is the backend echo of
+ * the player's message (issue #124), emitted first on the stream. */
 export type GuideEvent =
   | { kind: "reasoning"; text: string }
   | { kind: "content"; text: string }
+  | { kind: "user"; text: string }
   | { kind: "sse_done" }
   | { kind: "interrupt"; reason: InterruptReason };
 

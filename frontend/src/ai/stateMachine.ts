@@ -22,13 +22,19 @@ export type GuidePhase =
   "idle" | "running" | "done" | "interrupted" | "preflight-failed";
 
 /** The accumulated state of the current analysis. `reasoning` and `content`
- * are the two streams, accumulated across `reasoning` / `content` events. */
+ * are the two AI streams, accumulated across `reasoning` / `content` events;
+ * `user` is the verbatim player message echoed by the backend (issue #124),
+ * and `userImageUrl` is the player's screenshot for the image form. */
 export interface GuideState {
   phase: GuidePhase;
   /** Accumulated reasoning stream (light, collapsible in the dialog). */
   reasoning: string;
   /** Accumulated content stream (normal font, not collapsible). */
   content: string;
+  /** The verbatim player message (the `role: user` turn), echoed by the backend. */
+  user: string;
+  /** Present for the image form: the screenshot the player sent (data URL). */
+  userImageUrl?: string;
   /** Set only when `phase === "interrupted"`. */
   interruptReason?: InterruptReason;
   /** Set only when `phase === "preflight-failed"`. */
@@ -52,7 +58,12 @@ export function createGuideMachine(deps: {
   api: AiApi;
   newSessionId: () => string;
 }): GuideMachine {
-  let state: GuideState = { phase: "idle", reasoning: "", content: "" };
+  let state: GuideState = {
+    phase: "idle",
+    reasoning: "",
+    content: "",
+    user: "",
+  };
   let generation = 0;
   let sessionId = deps.newSessionId();
   const listeners = new Set<(s: GuideState) => void>();
@@ -70,6 +81,9 @@ export function createGuideMachine(deps: {
         break;
       case "content":
         state = { ...state, content: state.content + e.text };
+        break;
+      case "user":
+        state = { ...state, user: e.text };
         break;
       case "sse_done":
         state = { ...state, phase: "done" };
@@ -91,7 +105,13 @@ export function createGuideMachine(deps: {
     start(req) {
       const g = ++generation;
       sessionId = deps.newSessionId();
-      state = { phase: "running", reasoning: "", content: "" };
+      state = {
+        phase: "running",
+        reasoning: "",
+        content: "",
+        user: "",
+        userImageUrl: req.imageDataUrl,
+      };
       emit();
       deps.api.startGuide(
         sessionId,
@@ -105,7 +125,7 @@ export function createGuideMachine(deps: {
     },
     reset() {
       generation++; // invalidate any in-flight stream
-      state = { phase: "idle", reasoning: "", content: "" };
+      state = { phase: "idle", reasoning: "", content: "", user: "" };
       emit();
     },
     onState(cb) {

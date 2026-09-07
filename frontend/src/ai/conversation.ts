@@ -35,9 +35,66 @@ export function createConversation(container: HTMLElement): Conversation {
   const interruptBlock = document.createElement("div");
   interruptBlock.className = "dialog-interrupt";
 
-  container.replaceChildren(collapse, contentBlock, interruptBlock);
+  // The player's message is wrapped in the only boxed turn (issue #124): a
+  // deeper panel, distinct from the unboxed AI reasoning/content text.
+  const userBlock = document.createElement("div");
+  userBlock.className = "dialog-block dialog-user";
+  const userText = document.createElement("div");
+  userText.className = "dialog-user-text";
+  const userImage = document.createElement("img");
+  userImage.className = "dialog-user-image";
+  userImage.alt = "玩家发送的棋盘截图";
+  userImage.hidden = true;
+  userBlock.append(userText, userImage);
+
+  // A full-size overlay for the image form's thumbnail (issue #124). It lives
+  // inside `.dialog-stream` with `position: fixed`, so it overlays the viewport
+  // and is torn down with the dialog container on dispose. Visibility is driven
+  // by `style.display` (not the `hidden` attribute) because the CSS
+  // `display: flex` would otherwise override `hidden`.
+  const lightbox = document.createElement("div");
+  lightbox.className = "dialog-lightbox";
+  lightbox.style.display = "none";
+  const lightboxImg = document.createElement("img");
+  lightbox.append(lightboxImg);
+  userImage.addEventListener("click", () => {
+    lightboxImg.src = userImage.src;
+    lightbox.style.display = "flex";
+  });
+  lightbox.addEventListener("click", () => {
+    lightbox.style.display = "none";
+  });
+
+  container.replaceChildren(
+    userBlock,
+    collapse,
+    contentBlock,
+    interruptBlock,
+    lightbox,
+  );
 
   const render = (state: GuideState): void => {
+    // The player's boxed turn: show only when there is text or a screenshot.
+    const hasUser = state.user !== "" || state.userImageUrl !== undefined;
+    if (hasUser) {
+      userText.textContent = state.user;
+      if (state.userImageUrl !== undefined) {
+        userImage.src = state.userImageUrl;
+        userImage.hidden = false;
+      } else {
+        userImage.removeAttribute("src");
+        userImage.hidden = true;
+      }
+      userBlock.style.display = "";
+    } else {
+      // A new run / format change cleared the exchange; drop any lingering box
+      // and close an open lightbox.
+      userText.textContent = "";
+      userImage.removeAttribute("src");
+      userImage.hidden = true;
+      userBlock.style.display = "none";
+      lightbox.style.display = "none";
+    }
     if (state.reasoning) {
       reasoningBlock.textContent = state.reasoning;
       collapse.style.display = "";
@@ -62,7 +119,7 @@ export function createConversation(container: HTMLElement): Conversation {
     container.scrollTop = container.scrollHeight;
   };
 
-  render({ phase: "idle", reasoning: "", content: "" });
+  render({ phase: "idle", reasoning: "", content: "", user: "" });
 
   return { render };
 }

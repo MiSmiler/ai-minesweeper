@@ -154,4 +154,28 @@ describe("createGuideMachine phase transitions", () => {
     h.machine.start({ format: "emoji" });
     expect(h.states).toHaveLength(0);
   });
+
+  it("captures the user message event into state.user", () => {
+    const h = setup();
+    h.machine.start({ format: "emoji" });
+    h.handlers[0]!.onEvent({ kind: "user", text: "Difficulty: Beginner" });
+    expect(h.states.at(-1)!.user).toBe("Difficulty: Beginner");
+  });
+
+  it("seeds userImageUrl from the request for the image form", () => {
+    const h = setup();
+    h.machine.start({
+      format: "image",
+      imageDataUrl: "data:image/png;base64,AAAA",
+    });
+    const s = h.states.at(-1)!;
+    expect(s.userImageUrl).toBe("data:image/png;base64,AAAA");
+    expect(s.user).toBe("");
+  });
+
+  it("leaves userImageUrl unset for a text form", () => {
+    const h = setup();
+    h.machine.start({ format: "emoji" });
+    expect(h.states.at(-1)!.userImageUrl).toBeUndefined();
+  });
 });

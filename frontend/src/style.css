@@ -461,13 +461,48 @@ button:hover {
   padding: 2px 4px;
 }
 .dialog-reasoning {
-  background: #f2f2f6;
+  /* Issue #124: assistant reasoning is plain light small text, no box. */
   color: #6a6a72;
   font-size: 12px;
 }
 
 .dialog-content {
-  background: #eaeaf0;
+  /* Issue #124: assistant content is plain normal text (inherits the
+     .dialog-block 13px), no box. */
+}
+
+/* Issue #124: the player message is the only boxed turn — a deeper panel that
+   clearly separates the user's half from the unboxed AI text. */
+.dialog-user {
+  background: #cfd8ea;
+}
+
+.dialog-user-text {
+  white-space: pre-wrap;
+}
+
+.dialog-user-image {
+  max-width: 100%;
+  max-height: 120px;
+  border-radius: 3px;
+  cursor: zoom-in;
+  margin-top: 4px;
+}
+
+.dialog-lightbox {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  cursor: zoom-out;
+  z-index: 1000;
+}
+
+.dialog-lightbox img {
+  max-width: 90vw;
+  max-height: 90vh;
 }
 
 .dialog-interrupt {

@@ -228,6 +228,35 @@ describe("composeGuideMode analysis flow", () => {
     expect(alertSpy).toHaveBeenCalled();
     expect(btn.textContent).toBe("分析");
   });
+
+  it("streams the user message into the dialog box", () => {
+    mockFetch();
+    const root = mount();
+    const h = makeHarness();
+    composeGuideMode(root, h.deps);
+    const btn = root.querySelector<HTMLButtonElement>(".analysis-btn")!;
+    btn.click();
+    h.onEventCalls[0]!({ kind: "user", text: "Difficulty: Beginner" });
+    expect($(root, ".dialog-user-text").textContent).toBe(
+      "Difficulty: Beginner",
+    );
+  });
+
+  it("shows an image thumbnail in the dialog for the image form", async () => {
+    mockFetch();
+    const root = mount();
+    const h = makeHarness();
+    composeGuideMode(root, h.deps);
+    const select = root.querySelector<HTMLSelectElement>(".format-select")!;
+    select.value = "image";
+    select.dispatchEvent(new Event("change"));
+    const btn = root.querySelector<HTMLButtonElement>(".analysis-btn")!;
+    btn.click();
+    await flush(); // let captureBoardImage resolve; start seeds userImageUrl
+    const img = root.querySelector(".dialog-user-image") as HTMLImageElement;
+    expect(img.hidden).toBe(false);
+    expect(img.src).toBe("data:image/png;base64,xxx");
+  });
 });
 
 describe("composeGuideMode history binding", () => {

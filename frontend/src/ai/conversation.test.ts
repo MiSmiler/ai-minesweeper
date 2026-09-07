@@ -23,7 +23,12 @@ function render(
 
 describe("createConversation", () => {
   it("renders reasoning and content into their blocks", () => {
-    render({ phase: "running", reasoning: "think", content: "SUGGEST null" });
+    render({
+      phase: "running",
+      reasoning: "think",
+      content: "SUGGEST null",
+      user: "",
+    });
     expect(container.querySelector(".dialog-reasoning")!.textContent).toBe(
       "think",
     );
@@ -33,7 +38,7 @@ describe("createConversation", () => {
   });
 
   it("makes the reasoning block a collapsible details, content not", () => {
-    render({ phase: "running", reasoning: "think", content: "hi" });
+    render({ phase: "running", reasoning: "think", content: "hi", user: "" });
     // The reasoning block is inside a <details> collapsible.
     expect(container.querySelector(".dialog-collapse")).toBeTruthy();
     expect(
@@ -53,9 +58,9 @@ describe("createConversation", () => {
     expect(details.open).toBe(true);
 
     // The user-visible `open` state is preserved when streaming updates arrive.
-    c.render({ phase: "running", reasoning: "更多", content: "x" });
+    c.render({ phase: "running", reasoning: "更多", content: "x", user: "" });
     expect(details.open).toBe(true);
-    c.render({ phase: "done", reasoning: "结论", content: "y" });
+    c.render({ phase: "done", reasoning: "结论", content: "y", user: "" });
     expect(details.open).toBe(true);
   });
 
@@ -64,6 +69,7 @@ describe("createConversation", () => {
       phase: "interrupted",
       reasoning: "r",
       content: "c",
+      user: "",
       interruptReason: "user_interrupt",
     });
     expect(container.querySelector(".dialog-interrupt")!.textContent).toBe(
@@ -76,6 +82,7 @@ describe("createConversation", () => {
       phase: "done",
       reasoning: "",
       content: 'SUGGEST {"row":2,"col":3}',
+      user: "",
     });
     const content = container.querySelector(".dialog-content")!;
     expect(content.textContent).toBe('SUGGEST {"row":2,"col":3}');
@@ -84,7 +91,7 @@ describe("createConversation", () => {
   });
 
   it("hides the empty reasoning/content/interrupt blocks", () => {
-    render({ phase: "idle", reasoning: "", content: "" });
+    render({ phase: "idle", reasoning: "", content: "", user: "" });
     const collapse = container.querySelector(".dialog-collapse") as HTMLElement;
     const content = container.querySelector(".dialog-content") as HTMLElement;
     const interrupt = container.querySelector(
@@ -97,13 +104,69 @@ describe("createConversation", () => {
 
   it("shows interleaved reasoning and content as accumulated blocks", () => {
     const c = createConversation(container);
-    c.render({ phase: "running", reasoning: "思考", content: "" });
-    c.render({ phase: "running", reasoning: "思考中", content: "答案出来" });
+    c.render({ phase: "running", reasoning: "思考", content: "", user: "" });
+    c.render({
+      phase: "running",
+      reasoning: "思考中",
+      content: "答案出来",
+      user: "",
+    });
     expect(container.querySelector(".dialog-reasoning")!.textContent).toBe(
       "思考中",
     );
     expect(container.querySelector(".dialog-content")!.textContent).toBe(
       "答案出来",
     );
+  });
+
+  it("renders the player message boxed, before the AI reasoning block", () => {
+    render({
+      phase: "done",
+      reasoning: "think",
+      content: "SUGGEST null",
+      user: "Difficulty: Beginner\n0 F\n2 .",
+    });
+    const user = container.querySelector(".dialog-user")!;
+    const userText = container.querySelector(".dialog-user-text")!;
+    expect(user.classList.contains("dialog-block")).toBe(true);
+    expect(userText.textContent).toBe("Difficulty: Beginner\n0 F\n2 .");
+    // The user box appears before the reasoning collapse.
+    expect(user.nextElementSibling!.classList.contains("dialog-collapse")).toBe(
+      true,
+    );
+  });
+
+  it("hides the player box when the exchange carries no message", () => {
+    const c = createConversation(container);
+    c.render({ phase: "idle", reasoning: "", content: "", user: "" });
+    const user = container.querySelector(".dialog-user") as HTMLElement;
+    expect(user.style.display).toBe("none");
+    c.render({ phase: "running", reasoning: "", content: "", user: "hi" });
+    expect(user.style.display).toBe("");
+  });
+
+  it("renders an image thumbnail and opens/closes the lightbox on click", () => {
+    const c = createConversation(container);
+    c.render({
+      phase: "done",
+      reasoning: "",
+      content: "",
+      user: "棋盘：下面是一张棋盘截图",
+      userImageUrl: "data:image/png;base64,AAAA",
+    });
+    const img = container.querySelector(
+      ".dialog-user-image",
+    ) as HTMLImageElement;
+    expect(img.hidden).toBe(false);
+    expect(img.src).toBe("data:image/png;base64,AAAA");
+
+    const lightbox = container.querySelector(".dialog-lightbox") as HTMLElement;
+    const lightboxImg = lightbox.querySelector("img")! as HTMLImageElement;
+    expect(lightbox.style.display).toBe("none");
+    img.click();
+    expect(lightbox.style.display).toBe("flex");
+    expect(lightboxImg.src).toBe("data:image/png;base64,AAAA");
+    lightbox.click();
+    expect(lightbox.style.display).toBe("none");
   });
 });

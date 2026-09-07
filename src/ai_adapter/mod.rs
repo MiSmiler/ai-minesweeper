@@ -206,7 +206,10 @@ impl Guide {
 
     /// Injects the board, runs one round, and returns the streamed analysis.
     ///
-    /// `Ok(StreamChunk)` advances the analysis, `Ok(Done)` closes it;
+    /// The first tuple element is the verbatim player message (the `role: user`
+    /// turn) — the board in the chosen format — echoed back so the frontend can
+    /// render the player's half of the exchange (issue #124). The second is the
+    /// analysis stream: `Ok(StreamChunk)` advances it, `Ok(Done)` closes it;
     /// a mid-stream break is `Err(InterruptReason)`; a pre-flight failure
     /// (before any content blocks stream) is `Err(SuggestPreFlightError)`.
     pub async fn suggest(
@@ -215,7 +218,10 @@ impl Guide {
         req: GuideRequest,
         cancel: CancellationToken,
     ) -> Result<
-        impl Stream<Item = Result<StreamChunk, InterruptReason>> + Send + use<>,
+        (
+            String,
+            impl Stream<Item = Result<StreamChunk, InterruptReason>> + Send + use<>,
+        ),
         SuggestPreFlightError,
     > {
         let view = BoardView::from_game(game);
@@ -237,6 +243,15 @@ impl Guide {
             build_text_blocks(&view, req.format)
         };
 
+        // The verbatim player message: the first text block's body. Text forms
+        // are a single Text block; the image form is a text preamble + an
+        // image, so this is the preamble (the screenshot reaches the player via
+        // the frontend's own captured data URL).
+        let user_text = match &blocks[..] {
+            [ContentBlock::Text(t), ..] => t.clone(),
+            _ => String::new(),
+        };
+
         let mut session = Session::new(Message::System {
             content: system_prompt(),
         });
@@ -247,12 +262,15 @@ impl Guide {
             .await
             .map_err(SuggestPreFlightError)?;
 
-        Ok(stream.map(|item| match item {
-            Ok(chunk) => Ok(chunk),
-            Err(AgentError::Cancelled) => Err(InterruptReason::UserInterrupt),
-            Err(AgentError::Provider(pe)) => Err(refract_provider_error(&pe)),
-            Err(AgentError::NoProvider) => Err(InterruptReason::Unknown),
-        }))
+        Ok((
+            user_text,
+            stream.map(|item| match item {
+                Ok(chunk) => Ok(chunk),
+                Err(AgentError::Cancelled) => Err(InterruptReason::UserInterrupt),
+                Err(AgentError::Provider(pe)) => Err(refract_provider_error(&pe)),
+                Err(AgentError::NoProvider) => Err(InterruptReason::Unknown),
+            }),
+        ))
     }
 }
 
@@ -816,10 +834,13 @@ mod tests {
             format: BoardFormat::SimpleText,
             image_data_url: None,
         };
-        let mut stream = guide
+        let (user_text, mut stream) = guide
             .suggest(&game, req, CancellationToken::new())
             .await
             .unwrap();
+        // The verbatim player message is the board body, not the system prompt.
+        assert!(user_text.starts_with("Difficulty: Beginner"));
+        assert!(user_text.contains("我该点哪一格？"));
         assert_eq!(
             stream.next().await,
             Some(Ok(StreamChunk::ReasoningDelta("Mock reasoning.".into())))
@@ -849,10 +870,13 @@ mod tests {
             // Deliberately not valid base64: persist fails, and must not block.
             image_data_url: Some("data:image/png;base64,not-valid!!!".to_string()),
         };
-        let mut stream = guide
+        let (user_text, mut stream) = guide
             .suggest(&game, req, CancellationToken::new())
             .await
             .unwrap();
+        // The image echo is the text preamble only; the screenshot stays with
+        // the frontend. It still reads as the player's message.
+        assert!(user_text.contains("棋盘：下面是一张棋盘截图"));
         while stream.next().await.is_some() {}
         assert_eq!(mock.last_request().unwrap().model, VISION_MODEL);
     }
@@ -868,7 +892,7 @@ mod tests {
             format: BoardFormat::SimpleText,
             image_data_url: None,
         };
-        let mut stream = guide.suggest(&game, req, cancel).await.unwrap();
+        let (_user_text, mut stream) = guide.suggest(&game, req, cancel).await.unwrap();
         assert_eq!(
             stream.next().await,
             Some(Err(InterruptReason::UserInterrupt))
@@ -895,7 +919,7 @@ mod tests {
             format: BoardFormat::SimpleText,
             image_data_url: None,
         };
-        let mut stream = guide
+        let (_user_text, mut stream) = guide
             .suggest(&game, req, CancellationToken::new())
             .await
             .unwrap();
@@ -922,7 +946,7 @@ mod tests {
             format: BoardFormat::SimpleText,
             image_data_url: None,
         };
-        let mut stream = guide
+        let (_user_text, mut stream) = guide
             .suggest(&game, req, CancellationToken::new())
             .await
             .unwrap();
@@ -949,7 +973,7 @@ mod tests {
             format: BoardFormat::SimpleText,
             image_data_url: None,
         };
-        let mut stream = guide
+        let (_user_text, mut stream) = guide
             .suggest(&game, req, CancellationToken::new())
             .await
             .unwrap();
@@ -979,7 +1003,7 @@ mod tests {
             format: BoardFormat::SimpleText,
             image_data_url: None,
         };
-        let mut stream = guide
+        let (_user_text, mut stream) = guide
             .suggest(&game, req, CancellationToken::new())
             .await
             .unwrap();
@@ -1021,7 +1045,7 @@ mod tests {
             format: BoardFormat::FullCoordinates,
             image_data_url: None,
         };
-        let mut stream = guide
+        let (_user_text, mut stream) = guide
             .suggest(&game, req, CancellationToken::new())
             .await
             .unwrap();

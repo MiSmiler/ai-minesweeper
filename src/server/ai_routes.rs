@@ -43,9 +43,20 @@ use super::AppState;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum GuideEventDto {
-    Reasoning { text: String },
-    Content { text: String },
-    Interrupt { reason: InterruptReason },
+    Reasoning {
+        text: String,
+    },
+    Content {
+        text: String,
+    },
+    Interrupt {
+        reason: InterruptReason,
+    },
+    /// The verbatim player message (the `role: user` turn), emitted first so
+    /// the frontend can render the player's half of the exchange (issue #124).
+    User {
+        text: String,
+    },
 }
 
 /// Assembles the `/ai/...` routes onto a `Router`, given the `AppState`.
@@ -83,9 +94,15 @@ async fn handle_guide(
     let game = state.game.lock().expect("game state poisoned").clone();
 
     match state.guide.suggest(&game, req, cancel).await {
-        Ok(stream) => {
+        Ok((user_text, stream)) => {
             let guard = SessionGuard::new(state.ai_sessions.clone(), id);
-            Sse::new(guard_stream(stream.map(to_event), guard)).into_response()
+            // Emit the player's message first, then the agent's stream (issue
+            // #124). `once` and `map(to_event)` share the same item type
+            // (`Result<Event, axum::Error>`) so `.chain` composes them into one
+            // SSE stream; `position: fixed` is the frontend's concern.
+            let user_event = Event::default().json_data(GuideEventDto::User { text: user_text });
+            let sse = stream::once(async move { user_event }).chain(stream.map(to_event));
+            Sse::new(guard_stream(sse, guard)).into_response()
         }
         Err(preflight) => {
             state
@@ -298,6 +315,12 @@ mod tests {
         );
     }
 
+    #[test]
+    fn user_serializes_to_kind_and_text() {
+        let value = serde_json::to_value(GuideEventDto::User { text: "hi".into() }).unwrap();
+        assert_eq!(value, serde_json::json!({"kind": "user", "text": "hi"}));
+    }
+
     // --- pre-flight failure mapping ---
 
     #[tokio::test]
@@ -345,6 +368,8 @@ mod tests {
         assert!(body.contains("Mock reasoning."));
         assert!(body.contains("\"kind\":\"content\""));
         assert!(body.contains("Difficulty: Beginner"));
+        // The player's message is emitted first (issue #124).
+        assert!(body.contains("\"kind\":\"user\""));
         assert!(body.contains("data: [DONE]"));
         // A completed analysis leaves no stale session entry.
         assert!(state.ai_sessions.lock().unwrap().is_empty());
