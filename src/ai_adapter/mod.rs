@@ -417,9 +417,18 @@ fn build_full_coordinates(view: &BoardView) -> String {
 
 /// Maps a mid-stream `ProviderError` to the #97 reason kind. A rate limit
 /// (`429`) is `RateLimit`; a transport failure (no HTTP code) or a `408` is
-/// `Timeout`; an upstream `5xx` is `UpstreamError`; configuration errors
-/// (which should have failed pre-flight, but may surface mid-stream) fall to
-/// `Unknown`.
+/// `Timeout`; an upstream `5xx` is `UpstreamError`.
+///
+/// `ProviderErrorKind` is *not* redundant (issue #123): it is a real consumer
+/// signal on the pre-flight path, where `config` / `upstream` reach the
+/// frontend intact (see `ai_routes::preflight_response`). Here, on the
+/// mid-stream path, `Config` is a defensive fallback **only** — in practice
+/// DeepSeek never streams one (unknown-model / serialization failures are
+/// returned pre-flight from `validate_model`, and `SseState` only ever emits
+/// `Upstream`). The `Config -> Unknown` arm below is tested
+/// (`config_error_refracts_to_unknown`) and intentionally reports a
+/// should-never-surface config error as `Unknown`; it is a contract, not dead
+/// code.
 fn refract_provider_error(pe: &ProviderError) -> InterruptReason {
     if pe.code == Some(429) {
         return InterruptReason::RateLimit;

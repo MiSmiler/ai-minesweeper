@@ -30,7 +30,13 @@ const STRATEGIES: ReadonlyArray<{
 
 /** Buckets a `preflight-failed` error into a human alert message (issue #97 ①).
  * 4xx/5xx surface via the HTTP status / provider kind; the alert blocks
- * (synchronous `window.alert`). */
+ * (synchronous `window.alert`).
+ *
+ * This is the pre-flight consumer of the `kind` field on the backend
+ * `ProviderError` body (issue #123): `config` ("AI 未配置") and `upstream`
+ * ("AI 服务异常") must stay distinct, and they are *not* derivable from `code`
+ * when the error carries no HTTP status (no provider / bad key / transport
+ * failure all have `code: null`). Do not remove the `kind` field. */
 function providerAlertMessage(e: ProviderError): string {
   if (e.kind === "config") return `AI 未配置：${e.message}`;
   if (e.code === 429) return "AI 请求过于频繁（429），请稍后再试。";
