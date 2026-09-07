@@ -16,7 +16,6 @@
 #![allow(dead_code)] // whole public surface is a seam awaiting the /ai/guide route (#117)
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 
 use base64::Engine as _;
@@ -436,10 +435,8 @@ fn refract_provider_error(pe: &ProviderError) -> InterruptReason {
 
 // --- Image persistence (best-effort side effect) ---
 
-static BASE64_SEQ: AtomicU64 = AtomicU64::new(0);
-
 /// Persists a `data:image/png;base64,<payload>` data URL to
-/// `<exe_dir>/base64_img/YYYYMMDD_<seed>_<seq>.png`, best-effort: a failure
+/// `<exe_dir>/base64_img/YYYYMMDD_HHMMSS_<seed>.png`, best-effort: a failure
 /// returns `Err` and must never block the send. This is an internal side
 /// effect of `Guide::suggest`, not a public interface.
 fn persist_image(data_url: &str) -> Result<(), String> {
@@ -453,8 +450,7 @@ fn persist_image(data_url: &str) -> Result<(), String> {
     let dir = exe_dir()?.join("base64_img");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let seed: u32 = rand::random();
-    let seq = BASE64_SEQ.fetch_add(1, Ordering::Relaxed);
-    let path = dir.join(format!("{}_{}_{}.png", current_yyyymmdd(), seed, seq));
+    let path = dir.join(format!("{}_{}.png", current_timestamp(), seed));
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -465,13 +461,19 @@ fn exe_dir() -> Result<std::path::PathBuf, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Today's date as `YYYYMMDD`, via the Proleptic Gregorian day count.
-fn current_yyyymmdd() -> String {
+/// Today's date + time as `YYYYMMDD_HHMMSS`, via the Proleptic Gregorian day
+/// count (date) and the seconds since epoch (clock time, local-independent).
+fn current_timestamp() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let days = (now.as_secs() / 86_400) as i64;
-    civil_from_days(days)
+        .unwrap_or_default()
+        .as_secs();
+    let date = civil_from_days((now / 86_400) as i64);
+    let secs = now % 86_400;
+    let h = secs / 3_600;
+    let m = (secs % 3_600) / 60;
+    let s = secs % 60;
+    format!("{date}_{h:02}{m:02}{s:02}")
 }
 
 /// Howard Hinnant's `civil_from_days`: converts days since the Unix epoch to
@@ -1045,5 +1047,17 @@ mod tests {
     #[test]
     fn civil_from_days_matches_the_unix_epoch() {
         assert_eq!(civil_from_days(0), "19700101");
+    }
+
+    #[test]
+    fn current_timestamp_is_yyyymmdd_hhmmss() {
+        let ts = current_timestamp();
+        // `YYYYMMDD_HHMMSS` = 8 digits + '_' + 6 digits.
+        assert_eq!(ts.len(), 15);
+        assert!(
+            ts.chars()
+                .enumerate()
+                .all(|(i, c)| { (i == 8 && c == '_') || (i != 8 && c.is_ascii_digit()) })
+        );
     }
 }
