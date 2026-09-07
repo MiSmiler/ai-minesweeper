@@ -2,7 +2,9 @@
 // smaller, whole-block collapsible; `content` is normal font and never
 // collapses; `SUGGEST {"row":N,"col":M}` / `SUGGEST null` are plain text —
 // never parsed, never highlighted (issue #95). A mid-stream interrupt renders
-// as a red `已中断:<reason>` tail line.
+// as a red `已中断:<reason>` tail line. The auto-scroll respects the user's
+// scrollbar (issue #128): it stays pinned to the bottom only while the user
+// is not scrolling away, and releases the moment they scroll up.
 
 import type { GuideState } from "./stateMachine";
 
@@ -14,6 +16,21 @@ export interface Conversation {
  * in place. The elements are kept across renders so the reasoning block's
  * collapse/expand state survives streaming. */
 export function createConversation(container: HTMLElement): Conversation {
+  // The auto-scroll lock (issue #128): `pinned` is derived from the container's
+  // own scroll position, so any `scroll` (user drag / wheel / keyboard, or our
+  // own programmatic scroll below) recomputes it. Dragging the scrollbar away
+  // releases the lock; dragging it back re-engages it.
+  const SCROLL_BOTTOM_TOL = 2; // 2px: absorbs sub-pixel / scrollbar-width jitter
+  let pinned = true; // a fresh dialog is pinned to the bottom
+  const isAtBottom = (): boolean =>
+    container.scrollHeight - container.scrollTop - container.clientHeight <=
+    SCROLL_BOTTOM_TOL;
+  // A render that pins to the bottom fires this with isAtBottom()===true, so
+  // `pinned` stays true — no feedback loop.
+  container.addEventListener("scroll", () => {
+    pinned = isAtBottom();
+  });
+
   // Reasoning: the whole block is one collapsible (<details>) whose body holds
   // the text. The `.dialog-reasoning` class stays on the text element so the
   // existing styling/test selectors keep working.
@@ -116,7 +133,24 @@ export function createConversation(container: HTMLElement): Conversation {
       interruptBlock.textContent = "";
       interruptBlock.style.display = "none";
     }
-    container.scrollTop = container.scrollHeight;
+
+    // A fresh run (issue #128): `start()` emits phase === "running" with both
+    // streams empty — the only render shape that means "a new analysis began" —
+    // so re-pin to the bottom to watch it stream. This relies on the
+    // stateMachine guarantee (stateMachine.ts start()); revisit it if start()
+    // ever stops emitting an empty running state.
+    if (
+      state.phase === "running" &&
+      state.reasoning === "" &&
+      state.content === ""
+    ) {
+      pinned = true;
+    }
+
+    // Only scroll when pinned; otherwise leave the scrollbar where the user put
+    // it (issue #128). An instant jump (no smooth animation) to avoid jank under
+    // token streaming.
+    if (pinned) container.scrollTop = container.scrollHeight;
   };
 
   render({ phase: "idle", reasoning: "", content: "", user: "" });
