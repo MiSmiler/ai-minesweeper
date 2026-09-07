@@ -62,6 +62,11 @@ export function composeGuideMode(
   let currentFormat: BoardFormat = "simple-text";
   let history: Array<{ format: BoardFormat; state: GuideState }> = [];
   let running = false;
+  // The axis overlay needs `boardEl`, so it is created after the game area;
+  // `onRender` may fire before the assignment below completes, but it only
+  // fires once the initial snapshot loads asynchronously, by which time the
+  // `createBoardAxis` call has run (issue #118).
+  let axis: AxisOverlay | null = null;
 
   const gameArea: GameArea = createGameArea(gameZone, {
     onNewGame: () => {
@@ -76,10 +81,15 @@ export function composeGuideMode(
     beforeNewGame: () =>
       history.length === 0 ||
       window.confirm("开始新游戏将清空 guide 历史，是否继续？"),
+    // Render the 0-based row/col labels for the live Board (issue #118). The
+    // axis is pure DOM and sits outside the Board, so it never affects the 4
+    // AI input forms.
+    onRender: (snapshot) => axis?.setRowsCols(snapshot.rows, snapshot.cols),
   });
   // Default off (user story #16): createBoardAxis starts hidden; the checkbox
-  // drives setVisible. The row/col labels themselves are #118's product.
-  const axis: AxisOverlay = createBoardAxis(gameArea.boardEl);
+  // drives setVisible. The 0-based row/col labels are #118's product — rendered
+  // here (backed by the same axis above) once the board loads.
+  axis = createBoardAxis(gameArea.boardEl);
 
   /** A fresh session id per analysis; the backend only needs uniqueness. */
   function newSessionId(): string {
@@ -243,7 +253,7 @@ export function composeGuideMode(
 
   const dispose = (): void => {
     unsubscribe();
-    axis.destroy();
+    axis?.destroy();
     gameArea.dispose();
     container.remove();
   };

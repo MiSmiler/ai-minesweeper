@@ -64,10 +64,85 @@ describe("createBoardAxis", () => {
     expect(layer.classList.contains("hidden")).toBe(true);
   });
 
-  it("setRowsCols is callable (reserved for #118)", () => {
+  it("setRowsCols renders 0-based row labels along the left edge", () => {
+    const host = makeBoard(3, 4);
+    const axis = createBoardAxis(host);
+    axis.setRowsCols(3, 4);
+    const rows = host.parentElement!.querySelectorAll<HTMLElement>(".axis-row");
+    expect(rows).toHaveLength(3);
+    expect(Array.from(rows).map((el) => el.textContent)).toEqual([
+      "0",
+      "1",
+      "2",
+    ]);
+    expect(Array.from(rows).map((el) => el.dataset.row)).toEqual([
+      "0",
+      "1",
+      "2",
+    ]);
+  });
+
+  it("setRowsCols renders 0-based col labels along the top edge", () => {
+    const host = makeBoard(3, 4);
+    const axis = createBoardAxis(host);
+    axis.setRowsCols(3, 4);
+    const cols = host.parentElement!.querySelectorAll<HTMLElement>(".axis-col");
+    expect(cols).toHaveLength(4);
+    expect(Array.from(cols).map((el) => el.textContent)).toEqual([
+      "0",
+      "1",
+      "2",
+      "3",
+    ]);
+    expect(Array.from(cols).map((el) => el.dataset.col)).toEqual([
+      "0",
+      "1",
+      "2",
+      "3",
+    ]);
+  });
+
+  it("setRowsCols lives inside the label layer, outside the board", () => {
     const host = makeBoard(2, 2);
     const axis = createBoardAxis(host);
-    expect(() => axis.setRowsCols(3, 4)).not.toThrow();
+    axis.setRowsCols(2, 2);
+    const zone = host.parentElement!;
+    expect(zone.querySelectorAll(".axis-label-layer .axis-row")).toHaveLength(
+      2,
+    );
+    expect(zone.querySelectorAll(".axis-label-layer .axis-col")).toHaveLength(
+      2,
+    );
+    // Never inside the board host (screenshot-safe).
+    expect(host.querySelector(".axis-row")).toBeNull();
+    expect(host.querySelector(".axis-col")).toBeNull();
+  });
+
+  it("setRowsCols re-renders on resize without stale labels", () => {
+    const host = makeBoard(2, 2);
+    const axis = createBoardAxis(host);
+    axis.setRowsCols(2, 2);
+    expect(host.parentElement!.querySelectorAll(".axis-row")).toHaveLength(2);
+    expect(host.parentElement!.querySelectorAll(".axis-col")).toHaveLength(2);
+
+    axis.setRowsCols(3, 5);
+    expect(host.parentElement!.querySelectorAll(".axis-row")).toHaveLength(3);
+    expect(host.parentElement!.querySelectorAll(".axis-col")).toHaveLength(5);
+    expect(
+      host.parentElement!.querySelectorAll(".axis-col")[4]!.textContent,
+    ).toBe("4");
+  });
+
+  it("label visibility follows setVisible", () => {
+    const host = makeBoard(2, 2);
+    const axis = createBoardAxis(host);
+    axis.setRowsCols(2, 2);
+    const layer =
+      host.parentElement!.querySelector<HTMLElement>(".axis-label-layer")!;
+    axis.setVisible(true);
+    expect(layer.classList.contains("hidden")).toBe(false);
+    axis.setVisible(false);
+    expect(layer.classList.contains("hidden")).toBe(true);
   });
 
   it("destroy removes the axis wrapper", () => {

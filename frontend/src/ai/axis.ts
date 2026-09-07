@@ -9,8 +9,10 @@
 // the API is stubbed to the contract shape so #118 fills in `setRowsCols`.
 
 export interface AxisOverlay {
-  /** Renders/refreshes the row/col labels for the given grid. Implemented by
-   * #118; the shell's `setRowsCols` is a no-op. */
+  /** Renders/refreshes the row/col labels for the given grid.
+   * Renders `rows` 0-based row labels along the left edge and `cols`
+   * 0-based col labels along the top edge. Re-renders on resize; a no-op
+   * when the grid size is unchanged. */
   setRowsCols(rows: number, cols: number): void;
   /** Shows or hides the axis label overlay (default off). */
   setVisible(visible: boolean): void;
@@ -50,9 +52,67 @@ export function createBoardAxis(
     labelLayer.classList.toggle("hidden", !visible);
   };
 
-  const setRowsCols = (_rows: number, _cols: number): void => {
-    // Row/col label rendering lands with #118; the shell only owns the overlay
-    // structure and the visibility toggle.
+  /** The rendered grid size, tracked so a same-size re-render (a Reveal,
+   * a Flag, a timer tick) doesn't churn the label DOM. */
+  let lastRows = -1;
+  let lastCols = -1;
+
+  /** The rendered grid cell pitch and total Board height, measured from the
+   * `.board` rect so the labels track the grid as laid out (gap included).
+   * Falls back to the CSS constants when the Board isn't laid out yet (jsdom,
+   * or a pre-render Board). */
+  const measure = (
+    rows: number,
+    cols: number,
+  ): { pitchX: number; pitchY: number; height: number } => {
+    const board = boardEl.querySelector<HTMLElement>(".board");
+    const rect = board?.getBoundingClientRect();
+    let pitchX = 25.5; // --cell-size (24px) + the 1.5px hairline.
+    let pitchY = 25.5;
+    let height = 0;
+    if (rect && Number.isFinite(rect.width) && rect.width > 0) {
+      pitchX = rect.width / cols;
+    }
+    if (rect && Number.isFinite(rect.height) && rect.height > 0) {
+      pitchY = rect.height / rows;
+      height = rect.height;
+    }
+    return { pitchX, pitchY, height };
+  };
+
+  const setRowsCols = (rows: number, cols: number): void => {
+    if (rows === lastRows && cols === lastCols) return;
+    lastRows = rows;
+    lastCols = cols;
+
+    labelLayer
+      .querySelectorAll(".axis-row, .axis-col")
+      .forEach((el) => el.remove());
+
+    const { pitchX, pitchY, height } = measure(rows, cols);
+
+    // Row labels run down the Board's left edge (issue #118: left + bottom
+    // axis), right-aligned toward it and centered on each Row's midline.
+    for (let r = 0; r < rows; r++) {
+      const row = document.createElement("div");
+      row.className = "axis-row";
+      row.dataset.row = String(r);
+      row.textContent = String(r);
+      row.style.top = `${r * pitchY + pitchY / 2}px`;
+      labelLayer.appendChild(row);
+    }
+
+    // Column labels run along the Board's bottom edge, just below it — so they
+    // never overlap the top bar or the Cells (issue #118: left + bottom axis).
+    for (let c = 0; c < cols; c++) {
+      const col = document.createElement("div");
+      col.className = "axis-col";
+      col.dataset.col = String(c);
+      col.textContent = String(c);
+      col.style.left = `${c * pitchX + pitchX / 2}px`;
+      col.style.top = `${height + 2}px`;
+      labelLayer.appendChild(col);
+    }
   };
 
   const destroy = (): void => {

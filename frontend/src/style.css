@@ -502,3 +502,28 @@ button:hover {
 .axis-label-layer.hidden {
   display: none;
 }
+
+/* Row labels sit just left of the Board's first Column, right-aligned toward
+   it; each Row label's `top` is set by createBoardAxis to center on its Row.
+   `right:100%` resolves against the 0-width layer, so the label's right edge
+   lands on the Board's left edge and the box extends leftward (outside the
+   Board, so never in a `.board` screenshot). */
+.axis-row {
+  position: absolute;
+  right: 100%;
+  margin-right: 2px;
+  width: 2ch;
+  text-align: right;
+  transform: translateY(-50%);
+}
+
+/* Col labels sit just below the Board's last Row, centered over their Column;
+   createBoardAxis sets each Col label's `left` (center on its Column) and `top`
+   (just below the Board's bottom edge) in px, so they never overlap the Cells or
+   the top bar. The label layer is outside `#board`, so a `.board` screenshot
+   never includes the axis. */
+.axis-col {
+  position: absolute;
+  text-align: center;
+  transform: translateX(-50%);
+}

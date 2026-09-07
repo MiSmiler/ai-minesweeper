@@ -45,6 +45,10 @@ export interface GameAreaOptions {
   /** Called before a new game (smiley / difficulty) is confirmed; return false
    * to cancel. The AiGuide mode uses it to guard a guide-history discard. */
   beforeNewGame?: () => boolean;
+  /** Called after the Board renders a fresh snapshot (initial load and every
+   * action response). The AiGuide mode uses it to keep its axis labels in sync
+   * with the live Board size. */
+  onRender?: (snapshot: GameSnapshot) => void;
 }
 
 const DIFFICULTIES = ["beginner", "intermediate", "expert"] as const;
@@ -102,7 +106,13 @@ export function createGameArea(
   };
   const fetchSnapshot = opts.fetchSnapshot ?? fetchSnapshotApi;
 
-  const client = createGameClient({ boardEl, topBarEls, post, fetchSnapshot });
+  const client = createGameClient({
+    boardEl,
+    topBarEls,
+    post,
+    fetchSnapshot,
+    onRender: opts.onRender,
+  });
 
   /** Tracks the last hit-tested Cell so pointer-move events are only dispatched
    * when the pointer actually crosses onto/off a Cell. */

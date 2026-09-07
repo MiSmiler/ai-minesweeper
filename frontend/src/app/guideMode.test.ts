@@ -131,6 +131,20 @@ describe("composeGuideMode layout", () => {
     const layer = root.querySelector(".axis-label-layer")!;
     expect(layer.classList.contains("hidden")).toBe(true);
   });
+
+  it("renders 0-based row/col labels for the loaded board (issue #118)", async () => {
+    mockFetch();
+    const root = mount();
+    composeGuideMode(root, makeHarness().deps);
+    await flush(); // let the board load, which fires onRender → setRowsCols
+    const layer = root.querySelector(".axis-label-layer")!;
+    const rows = layer.querySelectorAll(".axis-row");
+    const cols = layer.querySelectorAll(".axis-col");
+    expect(rows).toHaveLength(2); // makeGameSnapshot() is 2×2
+    expect(cols).toHaveLength(2);
+    expect(Array.from(rows).map((e) => e.textContent)).toEqual(["0", "1"]);
+    expect(Array.from(cols).map((e) => e.textContent)).toEqual(["0", "1"]);
+  });
 });
 
 describe("composeGuideMode analysis flow", () => {
