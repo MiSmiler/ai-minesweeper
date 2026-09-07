@@ -9,10 +9,69 @@ use std::task::Poll;
 
 use async_trait::async_trait;
 use futures::{Stream, StreamExt, stream};
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::ai::protocol::{ChatRequest, Message, ProviderError, StreamChunk, ToolCall, ToolDecl};
+use crate::ai::protocol::{
+    ChatRequest, Message, ProviderError, ReasoningEffort, StreamChunk, ThinkingMode,
+    ThinkingToggle, ToolCall, ToolDecl,
+};
 use crate::ai::provider::Provider;
+
+/// The reasoning depth the agent should use for a turn (issue #122). Owned by
+/// the `Agent` — the engine decides how deep to think — and translated onto the
+/// provider-agnostic `ChatRequest` fields (`reasoning_effort` / `thinking`).
+/// `Off` disables thinking mode; the rest set the effort. `low` is the default.
+/// It is also the `GuideRequest.thinking_level` wire value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThinkingLevel {
+    Off,
+    Low,
+    High,
+    Max,
+}
+
+impl Default for ThinkingLevel {
+    fn default() -> Self {
+        Self::Low
+    }
+}
+
+/// Maps the agent's reasoning depth onto the provider-agnostic `ChatRequest`
+/// fields. `Off` disables thinking (no effort); the rest enable it at the
+/// matching effort; `None` leaves the provider default.
+fn thinking_to_wire(
+    level: Option<ThinkingLevel>,
+) -> (Option<ReasoningEffort>, Option<ThinkingToggle>) {
+    match level {
+        Some(ThinkingLevel::Off) => (
+            None,
+            Some(ThinkingToggle {
+                r#type: ThinkingMode::Disabled,
+            }),
+        ),
+        Some(ThinkingLevel::Low) => (
+            Some(ReasoningEffort::Low),
+            Some(ThinkingToggle {
+                r#type: ThinkingMode::Enabled,
+            }),
+        ),
+        Some(ThinkingLevel::High) => (
+            Some(ReasoningEffort::High),
+            Some(ThinkingToggle {
+                r#type: ThinkingMode::Enabled,
+            }),
+        ),
+        Some(ThinkingLevel::Max) => (
+            Some(ReasoningEffort::Max),
+            Some(ThinkingToggle {
+                r#type: ThinkingMode::Enabled,
+            }),
+        ),
+        None => (None, None),
+    }
+}
 
 /// A tool the `Agent` can call on the model's behalf (a Minesweeper action in
 /// the adapter layer). `decl` is what the model sees; `call` executes it.
@@ -107,6 +166,10 @@ pub struct Agent {
     current_provider: String,
     current_model: String,
     tools: Vec<Arc<dyn Tool>>,
+    /// The reasoning depth for turns; `None` leaves the provider default.
+    /// Owned as the agent's semantic `ThinkingLevel` and translated onto the
+    /// `ChatRequest` fields in [`Agent::stream`] (issue #122).
+    thinking_level: Option<ThinkingLevel>,
 }
 
 impl Agent {
@@ -118,6 +181,7 @@ impl Agent {
             current_provider: String::new(),
             current_model: String::new(),
             tools: Vec::new(),
+            thinking_level: None,
         }
     }
 
@@ -128,6 +192,13 @@ impl Agent {
         if let Some(provider) = provider {
             self.current_provider = provider.to_string();
         }
+    }
+
+    /// Sets the reasoning depth for subsequent [`Agent::stream`] calls; `None`
+    /// leaves the provider default. Mirrors [`Agent::set_model`]: the `Guide`
+    /// locks the agent and sets it once per request.
+    pub fn set_thinking_level(&mut self, level: Option<ThinkingLevel>) {
+        self.thinking_level = level;
     }
 
     /// The currently selected provider name.
@@ -162,11 +233,14 @@ impl Agent {
             .providers
             .get(&self.current_provider)
             .ok_or(AgentError::NoProvider)?;
+        let (reasoning_effort, thinking) = thinking_to_wire(self.thinking_level);
         let req = ChatRequest {
             messages: session.messages().to_vec(),
             model: self.current_model.clone(),
             stream: true,
             tools: self.tools.iter().map(|t| t.decl()).collect(),
+            reasoning_effort,
+            thinking,
         };
         let inner = provider
             .stream_chat(req, cancel.clone())
@@ -415,5 +489,46 @@ mod tests {
         // Re-inserting a known name replaces it in place, keeping position.
         set.insert("b", Box::new(MockProvider::new()));
         assert_eq!(set.names(), vec!["b", "a"]);
+    }
+
+    #[tokio::test]
+    async fn set_thinking_level_threads_into_the_request() {
+        let (mut agent, mock) = agent_with_mock("m", "mock");
+        agent.set_thinking_level(Some(ThinkingLevel::Low));
+        let mut stream = agent
+            .stream(&user_session("hi"), CancellationToken::new())
+            .await
+            .unwrap();
+        while stream.next().await.is_some() {}
+        let req = mock.last_request().expect("mock recorded a request");
+        assert_eq!(req.reasoning_effort, Some(ReasoningEffort::Low));
+        assert_eq!(
+            req.thinking,
+            Some(ThinkingToggle {
+                r#type: ThinkingMode::Enabled
+            })
+        );
+        // The default agent carries no level, so the provider sees None.
+        let (agent, _mock) = agent_with_mock("m", "mock");
+        assert!(agent.thinking_level.is_none());
+    }
+
+    #[tokio::test]
+    async fn off_disables_thinking_with_no_effort() {
+        let (mut agent, mock) = agent_with_mock("m", "mock");
+        agent.set_thinking_level(Some(ThinkingLevel::Off));
+        let mut stream = agent
+            .stream(&user_session("hi"), CancellationToken::new())
+            .await
+            .unwrap();
+        while stream.next().await.is_some() {}
+        let req = mock.last_request().expect("mock recorded a request");
+        assert_eq!(req.reasoning_effort, None);
+        assert_eq!(
+            req.thinking,
+            Some(ThinkingToggle {
+                r#type: ThinkingMode::Disabled
+            })
+        );
     }
 }

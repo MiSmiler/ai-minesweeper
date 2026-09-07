@@ -124,6 +124,38 @@ pub struct ToolDecl {
     pub parameters: serde_json::Value,
 }
 
+/// The chain-of-thought depth the provider should use, when thinking mode is
+/// on. Values are the non-collapsing subset of DeepSeek's `reasoning_effort`:
+/// `medium`/`xhigh` map to `high` upstream, so only `low`/`high`/`max` are
+/// distinct. Provider-agnostic: a provider that has no notion of effort simply
+/// ignores it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Low,
+    High,
+    Max,
+}
+
+/// Whether the model should produce a chain-of-thought (`reasoning_content`)
+/// before answering. An `Option::None` leaves it at the provider default
+/// (DeepSeek defaults to thinking on, effort `high`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThinkingMode {
+    Enabled,
+    Disabled,
+}
+
+/// The wire shape of DeepSeek's `thinking` parameter: a JSON object
+/// `{"type": "enabled"|"disabled"}` (not a bare string). `type` is a Rust
+/// keyword, hence `r#type` in source, renamed back on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ThinkingToggle {
+    #[serde(rename = "type")]
+    pub r#type: ThinkingMode,
+}
+
 /// The request sent to a provider. `model` is required and is filled by the
 /// [`crate::ai::agent::Agent`]'s `current_model`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -132,6 +164,15 @@ pub struct ChatRequest {
     pub model: String,
     pub stream: bool,
     pub tools: Vec<ToolDecl>,
+    /// The reasoning depth, when thinking mode is on; omitted from the wire
+    /// when `None`. Mirrors DeepSeek's `reasoning_effort`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
+    /// The thinking toggle; omitted from the wire when `None` (leaves the
+    /// provider default). `Off` is `Disabled`; an enabled level carries both
+    /// this and `reasoning_effort`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<ThinkingToggle>,
 }
 
 /// One cell of a streaming chat response.
@@ -279,8 +320,47 @@ mod tests {
             model: "m".into(),
             stream: true,
             tools: vec![],
+            reasoning_effort: None,
+            thinking: None,
         };
         let value = serde_json::to_value(&req).unwrap();
         assert_eq!(value["tools"], serde_json::json!([]));
+        // A None reasoning/thinking pair is omitted, not emitted as null.
+        assert!(value.get("reasoning_effort").is_none());
+        assert!(value.get("thinking").is_none());
+    }
+
+    #[test]
+    fn chat_request_serializes_thinking_and_reasoning_effort() {
+        let req = ChatRequest {
+            messages: vec![],
+            model: "m".into(),
+            stream: true,
+            tools: vec![],
+            reasoning_effort: Some(ReasoningEffort::Low),
+            thinking: Some(ThinkingToggle {
+                r#type: ThinkingMode::Enabled,
+            }),
+        };
+        let value = serde_json::to_value(&req).unwrap();
+        assert_eq!(value["reasoning_effort"], serde_json::json!("low"));
+        assert_eq!(value["thinking"], serde_json::json!({ "type": "enabled" }));
+    }
+
+    #[test]
+    fn chat_request_serializes_thinking_disabled_with_no_effort() {
+        let req = ChatRequest {
+            messages: vec![],
+            model: "m".into(),
+            stream: true,
+            tools: vec![],
+            thinking: Some(ThinkingToggle {
+                r#type: ThinkingMode::Disabled,
+            }),
+            reasoning_effort: None,
+        };
+        let value = serde_json::to_value(&req).unwrap();
+        assert_eq!(value["thinking"], serde_json::json!({ "type": "disabled" }));
+        assert!(value.get("reasoning_effort").is_none());
     }
 }

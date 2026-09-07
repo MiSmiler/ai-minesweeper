@@ -23,7 +23,7 @@ use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::ai::agent::{Agent, AgentError, Session, Tool};
+use crate::ai::agent::{Agent, AgentError, Session, ThinkingLevel, Tool};
 use crate::ai::protocol::{ContentBlock, Message, ProviderError, ProviderErrorKind, StreamChunk};
 use crate::core::{CellContent, CellState, CellView, Difficulty, Game, GameState, Position};
 
@@ -173,6 +173,9 @@ impl SuggestPreFlightError {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuideRequest {
     pub format: BoardFormat,
+    /// The reasoning depth; `low` default. `off` disables thinking mode.
+    #[serde(default)]
+    pub thinking_level: ThinkingLevel,
     /// Image form only: a frontend `html-to-image` PNG data URL (with the
     /// `data:image/png;base64,` prefix).
     #[serde(default)]
@@ -233,6 +236,9 @@ impl Guide {
         } else {
             agent.set_model(DEFAULT_MODEL.to_string(), None);
         }
+        // Set the player's reasoning depth (issue #122); the agent translates
+        // it onto the request's `reasoning_effort` / `thinking` fields.
+        agent.set_thinking_level(Some(req.thinking_level));
 
         let blocks = if image {
             // Persist the screenshot for audit; a failure never blocks sending.
@@ -525,6 +531,7 @@ mod tests {
     use super::*;
     use crate::ai::agent::ProviderSet;
     use crate::ai::protocol::ChatRequest;
+    use crate::ai::protocol::{ReasoningEffort, ThinkingMode, ThinkingToggle};
     use crate::ai::provider::{MockProvider, Provider, ProviderStream};
     use crate::core::{Features, GameConfig};
     use async_trait::async_trait;
@@ -800,6 +807,17 @@ mod tests {
     }
 
     #[test]
+    fn guide_request_defaults_thinking_level_to_low() {
+        // A wire body without `thinking_level` defaults to Low (issue #122).
+        let req: GuideRequest = serde_json::from_str(r#"{"format":"emoji"}"#).unwrap();
+        assert_eq!(req.thinking_level, ThinkingLevel::Low);
+        // And a present value parses.
+        let req: GuideRequest =
+            serde_json::from_str(r#"{"format":"emoji","thinking_level":"off"}"#).unwrap();
+        assert_eq!(req.thinking_level, ThinkingLevel::Off);
+    }
+
+    #[test]
     fn interrupt_reason_serializes_snake_case() {
         assert_eq!(
             serde_json::to_string(&InterruptReason::UserInterrupt).unwrap(),
@@ -832,6 +850,7 @@ mod tests {
         let game = fresh_game();
         let req = GuideRequest {
             format: BoardFormat::SimpleText,
+            thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
         let (user_text, mut stream) = guide
@@ -858,6 +877,40 @@ mod tests {
         assert_eq!(stream.next().await, None);
         // The default model was selected for a text format.
         assert_eq!(mock.last_request().unwrap().model, DEFAULT_MODEL);
+        // The default thinking level (Low) threads onto the request.
+        let req = mock.last_request().unwrap();
+        assert_eq!(req.reasoning_effort, Some(ReasoningEffort::Low));
+        assert_eq!(
+            req.thinking,
+            Some(ThinkingToggle {
+                r#type: ThinkingMode::Enabled
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn suggest_threads_off_into_the_request() {
+        let (agent, mock) = mock_agent();
+        let guide = Guide::new(Arc::new(Mutex::new(agent)));
+        let game = fresh_game();
+        let req = GuideRequest {
+            format: BoardFormat::SimpleText,
+            thinking_level: ThinkingLevel::Off,
+            image_data_url: None,
+        };
+        let (_user_text, mut stream) = guide
+            .suggest(&game, req, CancellationToken::new())
+            .await
+            .unwrap();
+        while stream.next().await.is_some() {}
+        let req = mock.last_request().expect("mock recorded a request");
+        assert_eq!(req.reasoning_effort, None);
+        assert_eq!(
+            req.thinking,
+            Some(ThinkingToggle {
+                r#type: ThinkingMode::Disabled
+            })
+        );
     }
 
     #[tokio::test]
@@ -867,6 +920,7 @@ mod tests {
         let game = fresh_game();
         let req = GuideRequest {
             format: BoardFormat::Image,
+            thinking_level: ThinkingLevel::Low,
             // Deliberately not valid base64: persist fails, and must not block.
             image_data_url: Some("data:image/png;base64,not-valid!!!".to_string()),
         };
@@ -890,6 +944,7 @@ mod tests {
         cancel.cancel();
         let req = GuideRequest {
             format: BoardFormat::SimpleText,
+            thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
         let (_user_text, mut stream) = guide.suggest(&game, req, cancel).await.unwrap();
@@ -917,6 +972,7 @@ mod tests {
         let game = fresh_game();
         let req = GuideRequest {
             format: BoardFormat::SimpleText,
+            thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
         let (_user_text, mut stream) = guide
@@ -944,6 +1000,7 @@ mod tests {
         let game = fresh_game();
         let req = GuideRequest {
             format: BoardFormat::SimpleText,
+            thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
         let (_user_text, mut stream) = guide
@@ -971,6 +1028,7 @@ mod tests {
         let game = fresh_game();
         let req = GuideRequest {
             format: BoardFormat::SimpleText,
+            thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
         let (_user_text, mut stream) = guide
@@ -1001,6 +1059,7 @@ mod tests {
         let game = fresh_game();
         let req = GuideRequest {
             format: BoardFormat::SimpleText,
+            thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
         let (_user_text, mut stream) = guide
@@ -1018,6 +1077,7 @@ mod tests {
         let game = fresh_game();
         let req = GuideRequest {
             format: BoardFormat::SimpleText,
+            thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
         // `impl Stream` has no `Debug`; match instead of `unwrap_err`.
@@ -1043,6 +1103,7 @@ mod tests {
         assert_eq!(game.game_state(), GameState::Playing);
         let req = GuideRequest {
             format: BoardFormat::FullCoordinates,
+            thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
         let (_user_text, mut stream) = guide

@@ -150,6 +150,22 @@ describe("createAiApi.startGuide (SSE consumer)", () => {
     });
   });
 
+  it("maps the camelCase thinkingLevel to the snake_case wire field", async () => {
+    const api = createAiApi();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(okResponse(["data: [DONE]\n\n"])),
+    );
+
+    await collect(api, "s1", { format: "emoji", thinkingLevel: "high" });
+
+    const [, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(JSON.parse(init!.body as string)).toEqual({
+      format: "emoji",
+      thinking_level: "high",
+    });
+  });
+
   it("parses an interrupt event with its reason", async () => {
     const api = createAiApi();
     vi.stubGlobal(

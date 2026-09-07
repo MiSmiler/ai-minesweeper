@@ -5,7 +5,12 @@
 // `GuideMachine` (issue #119) which consumes the real SSE stream; the dialog is
 // rendered by `createConversation`.
 
-import type { BoardFormat, GuideRequest, ProviderError } from "../ai/api";
+import type {
+  BoardFormat,
+  GuideRequest,
+  ProviderError,
+  ThinkingLevel,
+} from "../ai/api";
 import { createConversation } from "../ai/conversation";
 import { createBoardAxis, type AxisOverlay } from "../ai/axis";
 import { createGuideMachine, type GuideState } from "../ai/stateMachine";
@@ -17,6 +22,13 @@ const FORMATS: ReadonlyArray<{ value: BoardFormat; label: string }> = [
   { value: "emoji", label: "B Emoji (emoji)" },
   { value: "full-coordinates", label: "C 完整坐标 (full-coordinates)" },
   { value: "image", label: "D 图像 (image)" },
+];
+
+const LEVELS: ReadonlyArray<{ value: ThinkingLevel; label: string }> = [
+  { value: "off", label: "off" },
+  { value: "low", label: "low" },
+  { value: "high", label: "high" },
+  { value: "max", label: "max" },
 ];
 
 const STRATEGIES: ReadonlyArray<{
@@ -66,6 +78,9 @@ export function composeGuideMode(
   left.appendChild(gameZone);
 
   let currentFormat: BoardFormat = "simple-text";
+  // The reasoning depth (issue #122): default low, session-persistent, and
+  // independent of format — changing it never clears the guide history.
+  let currentLevel: ThinkingLevel = "low";
   let history: Array<{ format: BoardFormat; state: GuideState }> = [];
   let running = false;
   // The axis overlay needs `boardEl`, so it is created after the game area;
@@ -139,6 +154,23 @@ export function composeGuideMode(
     history = [];
     machine.reset();
     renderHistory();
+  });
+
+  // Thinking-level dropdown (issue #122: off/low/high/max, default low). The
+  // level is an analysis-strength setting, not a board view — changing it never
+  // invalidates or clears the guide history (unlike the format select).
+  const levelSelect = document.createElement("select");
+  levelSelect.className = "level-select";
+  for (const l of LEVELS) {
+    const opt = document.createElement("option");
+    opt.value = l.value;
+    opt.textContent = l.label;
+    levelSelect.appendChild(opt);
+  }
+  levelSelect.value = currentLevel;
+  dashboard.appendChild(levelSelect);
+  levelSelect.addEventListener("change", () => {
+    currentLevel = levelSelect.value as ThinkingLevel;
   });
 
   // Session-strategy dropdown (user story / issue #96: per-analysis usable,
@@ -248,7 +280,11 @@ export function composeGuideMode(
         return;
       }
     }
-    const req: GuideRequest = { format, imageDataUrl };
+    const req: GuideRequest = {
+      format,
+      thinkingLevel: currentLevel,
+      imageDataUrl,
+    };
     machine.start(req);
   }
 

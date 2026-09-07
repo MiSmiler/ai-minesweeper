@@ -114,6 +114,22 @@ describe("composeGuideMode layout", () => {
     expect(opts[1].textContent).toContain("(未实现)");
   });
 
+  it("level select offers the four levels, default low", () => {
+    mockFetch();
+    const root = mount();
+    composeGuideMode(root, makeHarness().deps);
+    const select = $(root, ".level-select") as HTMLSelectElement;
+    const opts = select.querySelectorAll("option");
+    expect(opts).toHaveLength(4);
+    expect(Array.from(opts).map((o) => o.value)).toEqual([
+      "off",
+      "low",
+      "high",
+      "max",
+    ]);
+    expect(select.value).toBe("low");
+  });
+
   it("history starts empty", () => {
     mockFetch();
     const root = mount();
@@ -210,6 +226,39 @@ describe("composeGuideMode analysis flow", () => {
     };
     expect(req.format).toBe("image");
     expect(req.imageDataUrl).toBeTruthy();
+  });
+
+  it("sends the selected thinking level and keeps history on change", async () => {
+    mockFetch();
+    const root = mount();
+    const h = makeHarness();
+    composeGuideMode(root, h.deps);
+
+    // Default level is low on the first request.
+    const btn = root.querySelector<HTMLButtonElement>(".analysis-btn")!;
+    btn.click();
+    let req = h.aiApi.startGuide.mock.calls[0][1] as {
+      format: string;
+      thinkingLevel: string;
+    };
+    expect(req.thinkingLevel).toBe("low");
+    // End the first analysis so a second run can start.
+    h.onEventCalls[0]!({ kind: "sse_done" });
+    expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
+
+    // Switch the level: no confirm, history kept.
+    const level = root.querySelector<HTMLSelectElement>(".level-select")!;
+    level.value = "max";
+    level.dispatchEvent(new Event("change"));
+    expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
+
+    // The next request carries the new level.
+    btn.click();
+    req = h.aiApi.startGuide.mock.calls[1][1] as {
+      format: string;
+      thinkingLevel: string;
+    };
+    expect(req.thinkingLevel).toBe("max");
   });
 
   it("a provider error alerts and reverts the button", () => {

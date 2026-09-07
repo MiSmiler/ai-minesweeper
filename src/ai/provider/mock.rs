@@ -122,6 +122,8 @@ mod tests {
             model: "m".into(),
             stream: true,
             tools: vec![],
+            reasoning_effort: None,
+            thinking: None,
         };
         assert_eq!(last_user_text(&req), "hello world");
         // No user message -> empty string.

@@ -18,6 +18,10 @@ import { log } from "../infra/log";
 export type BoardFormat =
   "simple-text" | "emoji" | "full-coordinates" | "image";
 
+/** The #122 reasoning-depth control: `off` disables thinking mode; the rest
+ * set the `reasoning_effort`. Mirrored from `ai_adapter::ThinkingLevel`. */
+export type ThinkingLevel = "off" | "low" | "high" | "max";
+
 /** The termination reason (#97); the backend decides the final state. */
 export type InterruptReason =
   "user_interrupt" | "rate_limit" | "timeout" | "upstream_error" | "unknown";
@@ -43,6 +47,8 @@ export type ProviderError = {
  * the image form. No model is sent — the backend picks its DeepSeek default. */
 export interface GuideRequest {
   format: BoardFormat;
+  /** #122 reasoning depth; the backend defaults to `low` when absent. */
+  thinkingLevel?: ThinkingLevel;
   imageDataUrl?: string;
 }
 
@@ -92,7 +98,11 @@ export function createAiApi(): AiApi {
  * camelCase `imageDataUrl` (issue #114), but the backend
  * `ai_adapter::GuideRequest` field is snake_case `image_data_url`. */
 function wireRequest(req: GuideRequest): Record<string, unknown> {
-  return { format: req.format, image_data_url: req.imageDataUrl };
+  return {
+    format: req.format,
+    thinking_level: req.thinkingLevel,
+    image_data_url: req.imageDataUrl,
+  };
 }
 
 /** POSTs the guide request and forwards the SSE stream to `onEvent`. */

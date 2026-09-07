@@ -373,6 +373,8 @@ mod tests {
             model: model.into(),
             stream: true,
             tools: vec![],
+            reasoning_effort: None,
+            thinking: None,
         }
     }
 

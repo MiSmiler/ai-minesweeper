@@ -231,6 +231,7 @@ fn preflight_response(err: SuggestPreFlightError) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::agent::ThinkingLevel;
     use crate::ai::agent::{Agent, ProviderSet};
     use crate::ai::provider::MockProvider;
     use crate::ai_adapter::{BoardFormat, Guide};
@@ -274,6 +275,7 @@ mod tests {
     fn guide_request() -> GuideRequest {
         GuideRequest {
             format: BoardFormat::SimpleText,
+            thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         }
     }
