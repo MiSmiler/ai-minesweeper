@@ -40,6 +40,17 @@ const STRATEGIES: ReadonlyArray<{
   { value: "per-game", label: "per-game (未实现)", disabled: true },
 ];
 
+/** Wraps a dropdown with a left-side caption explaining what it does. */
+function labeledField(caption: string, control: HTMLElement): HTMLElement {
+  const row = document.createElement("label");
+  row.className = "field-row";
+  const text = document.createElement("span");
+  text.className = "guide-dash-label";
+  text.textContent = caption;
+  row.append(text, control);
+  return row;
+}
+
 /** Buckets a `preflight-failed` error into a human alert message (issue #97 ①).
  * 4xx/5xx surface via the HTTP status / provider kind; the alert blocks
  * (synchronous `window.alert`).
@@ -138,7 +149,7 @@ export function composeGuideMode(
     opt.textContent = f.label;
     formatSelect.appendChild(opt);
   }
-  dashboard.appendChild(formatSelect);
+  dashboard.appendChild(labeledField("输入格式", formatSelect));
   formatSelect.addEventListener("change", () => {
     const next = formatSelect.value as BoardFormat;
     if (next === currentFormat) return;
@@ -168,7 +179,7 @@ export function composeGuideMode(
     levelSelect.appendChild(opt);
   }
   levelSelect.value = currentLevel;
-  dashboard.appendChild(levelSelect);
+  dashboard.appendChild(labeledField("思考深度", levelSelect));
   levelSelect.addEventListener("change", () => {
     currentLevel = levelSelect.value as ThinkingLevel;
   });
@@ -184,7 +195,7 @@ export function composeGuideMode(
     opt.disabled = s.disabled;
     strategySelect.appendChild(opt);
   }
-  dashboard.appendChild(strategySelect);
+  dashboard.appendChild(labeledField("会话策略", strategySelect));
 
   // Row/col axis checkbox (user story #16–#19).
   const axisCheckbox = document.createElement("input");

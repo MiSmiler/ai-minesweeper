@@ -367,6 +367,15 @@ button:hover {
   color: #3a3a42;
 }
 
+/* A dashboard setting row: caption to the left, dropdown control to the right.
+   Clicking the caption focuses the control (native <label> behavior). */
+.guide-dashboard .field-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
 .axis-toggle {
   display: flex;
   align-items: center;
