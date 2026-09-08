@@ -88,28 +88,36 @@ impl BoardView {
 /// The shared #94/#95 system prompt: coordinates are 0-based, the model sees
 /// only the player-visible board, and the reply must end with the `SUGGEST`
 /// contract line (`{"row":N,"col":M}` / `null`). Pure.
+///
+/// Live text lives in `prompts/system.md` (a repo-level content file, embedded
+/// at compile time via `include_str!`); the binary stays self-contained and
+/// never reads a prompt file at runtime.
+pub const SYSTEM_PROMPT: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts/system.md"));
+
+/// The shared system prompt rendered to a `String` (the caller-owned form).
+/// The template carries a trailing newline from the file, which is trimmed so
+/// the model sees exactly the contract text.
 pub fn system_prompt() -> String {
-    "你是扫雷顾问。玩家给你看当前棋盘，你要推荐他下一步点哪格（或标哪格）。\n\
-     坐标系（0-based）：\n\
-     - 行和列都从 0 开始编号：row 0 是最顶行，col 0 是最左列；(0,0) 是左上角。\n\
-     - 坐标一律用 0-based，不要输出 1-based。\n\
-     \n\
-     输入说明：\n\
-     - 每次你会收到一个**头部** + 一份当前棋盘。\n\
-     - 头部含：Difficulty（难度预设）、Rows/Cols（行列数）、Mine count（固定总雷数，始终等于开局 Flag Budget）、\n\
-       Flags remaining（总雷数 - 已放旗数，为负表示玩家 over-flag）、Game state（Playing/Won/Lost）。\n\
-     - 棋盘只含玩家可见状态：hidden、flagged、revealed 的数字。你**永远看不到真正的雷布局**。\n\
-     - 请根据已揭数字 + Mine count 推理，不要臆测看不见的雷。\n\
-     \n\
-     输出契约：\n\
-     - 先给一段简短、可读的推理（说明判断依据）。\n\
-     - 然后在**末尾单独一行**给出建议格，格式必须精确如下：\n\
-       SUGGEST {\"row\":<r>,\"col\":<c>}\n\
-     - 建议格必须是 hidden 格（不要建议已 reveal 或已 flag 的格）。能保证安全就优先安全；\n\
-       如果每格都只能靠猜，选概率最高的一格，并在推理里说明\"这是猜、有风险\"。\n\
-     - 若棋盘已无法给出任何建议，写：SUGGEST null"
-        .to_string()
+    SYSTEM_PROMPT.trim_end().to_string()
 }
+
+/// Prompt template for the simple-text board form (A). Content in
+/// `prompts/simple-text.md`; placeholders are substituted at runtime.
+const SIMPLE_TEXT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/prompts/simple-text.md"
+));
+/// Prompt template for the emoji board form (B). Content in `prompts/emoji.md`.
+const EMOJI: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts/emoji.md"));
+/// Prompt template for the full-coordinates board form (C). Content in
+/// `prompts/full-coordinates.md`.
+const FULL_COORDINATES: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/prompts/full-coordinates.md"
+));
+/// Prompt template for the image board form (D). Content in `prompts/image.md`.
+const IMAGE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts/image.md"));
 
 /// A user-message body for a text form (A/B/C). Pure.
 pub fn build_text_blocks(view: &BoardView, format: BoardFormat) -> Vec<ContentBlock> {
@@ -127,15 +135,7 @@ pub fn build_text_blocks(view: &BoardView, format: BoardFormat) -> Vec<ContentBl
 /// A user-message body for the image form (D) = header text + the screenshot
 /// data URL. Pure.
 pub fn build_image_blocks(view: &BoardView, image_data_url: &str) -> Vec<ContentBlock> {
-    let legend = "棋盘：下面是一张棋盘截图，图中每个格子就是棋盘一格；hidden=未翻开、flag=旗、数字=已翻开的邻雷数。";
-    let geometry = "坐标请按你从图上看到的格子，0-based 换算（最顶行是 row 0，最左列是 col 0）。";
-    let body = format!(
-        "{}\n\n{}\n{}\n\n{}",
-        header(view),
-        legend,
-        geometry,
-        "我该点哪一格？"
-    );
+    let body = IMAGE.trim_end().replace("{{HEADER}}", &header(view));
     vec![
         ContentBlock::Text(body),
         ContentBlock::ImageUrl(image_data_url.to_string()),
@@ -386,55 +386,37 @@ where
 }
 
 fn build_simple_text(view: &BoardView) -> String {
-    let legend =
-        "棋盘（Legend）：`.`=hidden，`*`=revealed mine（仅 Lost），`F`=flag，`0-8`=revealed 数字。";
-    let geometry = format!(
-        "每行代表一行：第 1 行是 row 0，最后一行是 row {}。行内每个字符代表一格：第 1 个字符是 col 0，最后一个是 col {}。",
-        view.rows - 1,
-        view.cols - 1,
-    );
-    let board = render_rows(view, |_, _, c| simple_char(c).to_string(), " ");
-    format!(
-        "{}\n\n{}\n{}\n\n{}\n\n{}",
-        header(view),
-        legend,
-        geometry,
-        board,
-        "我该点哪一格？"
-    )
+    SIMPLE_TEXT
+        .trim_end()
+        .replace("{{HEADER}}", &header(view))
+        .replace("{{LAST_ROW_INDEX}}", &(view.rows - 1).to_string())
+        .replace("{{LAST_COL_INDEX}}", &(view.cols - 1).to_string())
+        .replace(
+            "{{BOARD}}",
+            &render_rows(view, |_, _, c| simple_char(c).to_string(), " "),
+        )
 }
 
 fn build_emoji(view: &BoardView) -> String {
-    let legend = "棋盘（Legend）：`⬛`=hidden，`💣`=revealed mine（仅 Lost），`🚩`=flag，`⬜`=revealed 无雷(0)，`1️⃣`-`8️⃣`=revealed 有雷。";
-    let geometry = format!(
-        "每个格子是一个 emoji（不是按字符数拆），每行从左到右第 1 个 emoji 是 col 0，最后一个是 col {}。",
-        view.cols - 1,
-    );
-    let board = render_rows(view, |_, _, c| emoji_cell(c), "");
-    format!(
-        "{}\n\n{}\n{}\n\n{}\n\n{}",
-        header(view),
-        legend,
-        geometry,
-        board,
-        "我该点哪一格？"
-    )
+    EMOJI
+        .trim_end()
+        .replace("{{HEADER}}", &header(view))
+        .replace("{{LAST_COL_INDEX}}", &(view.cols - 1).to_string())
+        .replace("{{BOARD}}", &render_rows(view, |_, _, c| emoji_cell(c), ""))
 }
 
 fn build_full_coordinates(view: &BoardView) -> String {
-    let legend = "棋盘：每个 cell 写成 `[row][col]:x`，x 取值同简单字符（`.`/`*`/`F`/`0-8`）。每格自报坐标，无需数行/列。";
-    let board = render_rows(
-        view,
-        |r, c, cell| format!("[{}][{}]:{}", r, c, simple_char(cell)),
-        " ",
-    );
-    format!(
-        "{}\n\n{}\n\n{}\n\n{}",
-        header(view),
-        legend,
-        board,
-        "我该点哪一格？"
-    )
+    FULL_COORDINATES
+        .trim_end()
+        .replace("{{HEADER}}", &header(view))
+        .replace(
+            "{{BOARD}}",
+            &render_rows(
+                view,
+                |r, c, cell| format!("[{}][{}]:{}", r, c, simple_char(cell)),
+                " ",
+            ),
+        )
 }
 
 // --- Interrupt refraction (private) ---
@@ -658,12 +640,32 @@ mod tests {
     // --- system_prompt ---
 
     #[test]
-    fn system_prompt_contains_the_contract() {
+    fn system_prompt_is_the_exact_contract_text() {
+        // The prompt is committed content (issue #127): lock it byte-for-byte so
+        // an accidental edit of `prompts/system.md` (or a stray trailing
+        // newline) fails the build. The `\n\` continuations reproduce the
+        // delivered text, which is flush-left (Rust strips leading whitespace).
         let p = system_prompt();
-        assert!(p.contains("0-based"));
-        assert!(p.contains("SUGGEST"));
-        assert!(p.contains("\"row\""));
-        assert!(p.contains("null"));
+        let expected = "你是扫雷顾问。玩家给你看当前棋盘，你要推荐他下一步点哪格（或标哪格）。\n\
+            坐标系（0-based）：\n\
+            - 行和列都从 0 开始编号：row 0 是最顶行，col 0 是最左列；(0,0) 是左上角。\n\
+            - 坐标一律用 0-based，不要输出 1-based。\n\
+            \n\
+            输入说明：\n\
+            - 每次你会收到一个**头部** + 一份当前棋盘。\n\
+            - 头部含：Difficulty（难度预设）、Rows/Cols（行列数）、Mine count（固定总雷数，始终等于开局 Flag Budget）、\n\
+            Flags remaining（总雷数 - 已放旗数，为负表示玩家 over-flag）、Game state（Playing/Won/Lost）。\n\
+            - 棋盘只含玩家可见状态：hidden、flagged、revealed 的数字。你**永远看不到真正的雷布局**。\n\
+            - 请根据已揭数字 + Mine count 推理，不要臆测看不见的雷。\n\
+            \n\
+            输出契约：\n\
+            - 先给一段简短、可读的推理（说明判断依据）。\n\
+            - 然后在**末尾单独一行**给出建议格，格式必须精确如下：\n\
+            SUGGEST {\"row\":<r>,\"col\":<c>}\n\
+            - 建议格必须是 hidden 格（不要建议已 reveal 或已 flag 的格）。能保证安全就优先安全；\n\
+            如果每格都只能靠猜，选概率最高的一格，并在推理里说明\"这是猜、有风险\"。\n\
+            - 若棋盘已无法给出任何建议，写：SUGGEST null";
+        assert_eq!(p, expected);
     }
 
     // --- build_text_blocks / build_image_blocks ---
