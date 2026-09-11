@@ -1,12 +1,12 @@
 // The `AiGuide` composition (ADR-0012): the top-left game area (a full copy
 // of SinglePlay with its own independent game client), the bottom-left
-// dashboard (analyze/interrupt, input format, session strategy, row/col axis,
+// dashboard (analyze/interrupt, input mode, session strategy, row/col axis,
 // history), and the right dialog shell. The "Analyze" button drives the
 // `GuideMachine` (issue #119) which consumes the real SSE stream; the dialog is
 // rendered by `createConversation`.
 
 import type {
-  BoardFormat,
+  InputMode,
   GuideRequest,
   ProviderError,
   ThinkingLevel,
@@ -17,11 +17,10 @@ import { createGuideMachine, type GuideState } from "../ai/stateMachine";
 import { createGameArea, type GameArea } from "./gameArea";
 import type { AppDeps, Composition, SessionStrategy } from "./mode";
 
-const FORMATS: ReadonlyArray<{ value: BoardFormat; label: string }> = [
-  { value: "simple-text", label: "A 简单字符 (simple-text)" },
-  { value: "emoji", label: "B Emoji (emoji)" },
-  { value: "full-coordinates", label: "C 完整坐标 (full-coordinates)" },
-  { value: "image", label: "D 图像 (image)" },
+const MODES: ReadonlyArray<{ value: InputMode; label: string }> = [
+  { value: "plain", label: "plain" },
+  { value: "emoji", label: "emoji" },
+  { value: "image", label: "image" },
 ];
 
 const LEVELS: ReadonlyArray<{ value: ThinkingLevel; label: string }> = [
@@ -88,11 +87,11 @@ export function composeGuideMode(
   gameZone.className = "guide-game";
   left.appendChild(gameZone);
 
-  let currentFormat: BoardFormat = "simple-text";
+  let currentMode: InputMode = "plain";
   // The reasoning depth (issue #122): default low, session-persistent, and
-  // independent of format — changing it never clears the guide history.
+  // independent of the input mode — changing it never clears the guide history.
   let currentLevel: ThinkingLevel = "low";
-  let history: Array<{ format: BoardFormat; state: GuideState }> = [];
+  let history: Array<{ mode: InputMode; state: GuideState }> = [];
   let running = false;
   // The axis overlay needs `boardEl`, so it is created after the game area;
   // `onRender` may fire before the assignment below completes, but it only
@@ -140,28 +139,28 @@ export function composeGuideMode(
   analysisBtn.textContent = "分析";
   dashboard.appendChild(analysisBtn);
 
-  // Input-format dropdown (4 forms, user story #20/#21).
-  const formatSelect = document.createElement("select");
-  formatSelect.className = "format-select";
-  for (const f of FORMATS) {
+  // Input-mode dropdown (3 modes, user story #20/#21).
+  const modeSelect = document.createElement("select");
+  modeSelect.className = "input-mode-select";
+  for (const m of MODES) {
     const opt = document.createElement("option");
-    opt.value = f.value;
-    opt.textContent = f.label;
-    formatSelect.appendChild(opt);
+    opt.value = m.value;
+    opt.textContent = m.label;
+    modeSelect.appendChild(opt);
   }
-  dashboard.appendChild(labeledField("输入格式", formatSelect));
-  formatSelect.addEventListener("change", () => {
-    const next = formatSelect.value as BoardFormat;
-    if (next === currentFormat) return;
-    // Changing format invalidates old analyses: confirm + clear (user story
+  dashboard.appendChild(labeledField("输入模式", modeSelect));
+  modeSelect.addEventListener("change", () => {
+    const next = modeSelect.value as InputMode;
+    if (next === currentMode) return;
+    // Changing mode invalidates old analyses: confirm + clear (user story
     // #32; the decision lives in the assembly layer).
     if (history.length > 0) {
-      if (!window.confirm("更改输入格式将清空历史，是否继续？")) {
-        formatSelect.value = currentFormat; // decline: revert the selection
+      if (!window.confirm("更改输入模式将清空历史，是否继续？")) {
+        modeSelect.value = currentMode; // decline: revert the selection
         return;
       }
     }
-    currentFormat = next;
+    currentMode = next;
     history = [];
     machine.reset();
     renderHistory();
@@ -169,7 +168,7 @@ export function composeGuideMode(
 
   // Thinking-level dropdown (issue #122: off/low/high/max, default low). The
   // level is an analysis-strength setting, not a board view — changing it never
-  // invalidates or clears the guide history (unlike the format select).
+  // invalidates or clears the guide history (unlike the mode select).
   const levelSelect = document.createElement("select");
   levelSelect.className = "level-select";
   for (const l of LEVELS) {
@@ -245,7 +244,7 @@ export function composeGuideMode(
     // A completed analysis is recorded in history; interrupted / pre-flight
     // failures are not (partial / absent output, issue #97).
     if (state.phase === "done") {
-      history.push({ format: currentFormat, state: { ...state } });
+      history.push({ mode: currentMode, state: { ...state } });
       renderHistory();
     }
     if (state.phase === "preflight-failed" && state.providerError) {
@@ -266,7 +265,7 @@ export function composeGuideMode(
       const li = document.createElement("li");
       li.className = "history-entry";
       li.dataset.index = String(i);
-      li.textContent = `分析 #${i + 1} (${entry.format})`;
+      li.textContent = `分析 #${i + 1} (${entry.mode})`;
       li.addEventListener("click", () => {
         if (running) return; // Not clickable while an analysis is running (user story #31)
         conversation.render(entry.state);
@@ -278,9 +277,9 @@ export function composeGuideMode(
 
   async function startAnalysis(): Promise<void> {
     if (running) return;
-    const format = currentFormat;
+    const mode = currentMode;
     let imageDataUrl: string | undefined;
-    if (format === "image") {
+    if (mode === "image") {
       try {
         imageDataUrl = await deps.captureBoardImage(gameArea.boardEl, {
           pixelRatio: 1,
@@ -292,7 +291,7 @@ export function composeGuideMode(
       }
     }
     const req: GuideRequest = {
-      format,
+      inputMode: mode,
       thinkingLevel: currentLevel,
       imageDataUrl,
     };

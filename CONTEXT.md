@@ -129,3 +129,7 @@ _Avoid_: Prank mode, trick mode, joke mode, jinx mode
 **PlayMode**:
 The perspective a single Game is shown from, independent of the rule set and of which Features are on: `SinglePlay` — the player plays unaided; `AiHelpMePlay` — the player plays while DeepSeek watches and suggests. The set is open and may grow (e.g. `AiPlay`, `AiPlayWithMe`); a Game has exactly one PlayMode at a time.
 _Avoid_: PlaySurface, view, perspective (when meaning the mode)
+
+**InputMode**:
+The way the Board is put in front of DeepSeek: `Plain` (the character grid), `Emoji`, or `Image` (a screenshot of the Board). Distinct from **PlayMode**, which is the perspective the player sees.
+_Avoid_: BoardFormat, format, input format

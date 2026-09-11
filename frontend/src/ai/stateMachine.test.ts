@@ -50,7 +50,7 @@ beforeEach(() => {
 describe("createGuideMachine phase transitions", () => {
   it("start moves to running and clears prior text", () => {
     const h = setup();
-    h.machine.start({ format: "emoji" });
+    h.machine.start({ inputMode: "emoji" });
     const s = h.states.at(-1)!;
     expect(s.phase).toBe("running");
     expect(s.reasoning).toBe("");
@@ -58,7 +58,7 @@ describe("createGuideMachine phase transitions", () => {
     expect(h.api.startGuide).toHaveBeenCalledTimes(1);
     expect(h.api.startGuide).toHaveBeenCalledWith(
       expect.stringMatching(/^session-/),
-      { format: "emoji" },
+      { inputMode: "emoji" },
       expect.any(Function),
       expect.any(Function),
     );
@@ -66,28 +66,28 @@ describe("createGuideMachine phase transitions", () => {
 
   it("accumulates reasoning and content streams", () => {
     const h = setup();
-    h.machine.start({ format: "emoji" });
+    h.machine.start({ inputMode: "emoji" });
     h.handlers[0]!.onEvent({ kind: "reasoning", text: "a" });
     h.handlers[0]!.onEvent({ kind: "content", text: "hi" });
     h.handlers[0]!.onEvent({ kind: "reasoning", text: "b" });
-    h.handlers[0]!.onEvent({ kind: "content", text: " SUGGEST null" });
+    h.handlers[0]!.onEvent({ kind: "content", text: " (2,3)" });
 
     const s = h.states.at(-1)!;
     expect(s.phase).toBe("running");
     expect(s.reasoning).toBe("ab");
-    expect(s.content).toBe("hi SUGGEST null");
+    expect(s.content).toBe("hi (2,3)");
   });
 
   it("sse_done completes the run", () => {
     const h = setup();
-    h.machine.start({ format: "emoji" });
+    h.machine.start({ inputMode: "emoji" });
     h.handlers[0]!.onEvent({ kind: "sse_done" });
     expect(h.states.at(-1)!.phase).toBe("done");
   });
 
   it("interrupt enters interrupted with the reason", () => {
     const h = setup();
-    h.machine.start({ format: "emoji" });
+    h.machine.start({ inputMode: "emoji" });
     h.handlers[0]!.onEvent({ kind: "interrupt", reason: "rate_limit" });
     const s = h.states.at(-1)!;
     expect(s.phase).toBe("interrupted");
@@ -96,7 +96,7 @@ describe("createGuideMachine phase transitions", () => {
 
   it("a provider error enters preflight-failed with the error", () => {
     const h = setup();
-    h.machine.start({ format: "emoji" });
+    h.machine.start({ inputMode: "emoji" });
     h.handlers[0]!.onProviderError({
       kind: "config",
       code: null,
@@ -113,7 +113,7 @@ describe("createGuideMachine phase transitions", () => {
 
   it("reset returns to idle and invalidates a stale in-flight stream", () => {
     const h = setup();
-    h.machine.start({ format: "emoji" });
+    h.machine.start({ inputMode: "emoji" });
     h.handlers[0]!.onEvent({ kind: "content", text: "early" });
     h.machine.reset();
     expect(h.states.at(-1)!.phase).toBe("idle");
@@ -133,16 +133,16 @@ describe("createGuideMachine phase transitions", () => {
 
   it("uses a fresh session id per start", () => {
     const h = setup();
-    h.machine.start({ format: "emoji" });
+    h.machine.start({ inputMode: "emoji" });
     const first = h.api.startGuide.mock.calls[0]![0] as string;
-    h.machine.start({ format: "emoji" });
+    h.machine.start({ inputMode: "emoji" });
     const second = h.api.startGuide.mock.calls[1]![0] as string;
     expect(first).not.toBe(second);
   });
 
   it("interrupt_by_user targets the current session", async () => {
     const h = setup();
-    h.machine.start({ format: "emoji" });
+    h.machine.start({ inputMode: "emoji" });
     const sid = h.api.startGuide.mock.calls[0]![0] as string;
     await h.machine.interrupt_by_user();
     expect(h.api.interrupt_by_user).toHaveBeenCalledWith(sid);
@@ -151,21 +151,21 @@ describe("createGuideMachine phase transitions", () => {
   it("onState unsubscribe stops notifications", () => {
     const h = setup();
     h.unsubscribe();
-    h.machine.start({ format: "emoji" });
+    h.machine.start({ inputMode: "emoji" });
     expect(h.states).toHaveLength(0);
   });
 
   it("captures the user message event into state.user", () => {
     const h = setup();
-    h.machine.start({ format: "emoji" });
-    h.handlers[0]!.onEvent({ kind: "user", text: "Difficulty: Beginner" });
-    expect(h.states.at(-1)!.user).toBe("Difficulty: Beginner");
+    h.machine.start({ inputMode: "emoji" });
+    h.handlers[0]!.onEvent({ kind: "user", text: "........." });
+    expect(h.states.at(-1)!.user).toBe(".........");
   });
 
-  it("seeds userImageUrl from the request for the image form", () => {
+  it("seeds userImageUrl from the request for the image mode", () => {
     const h = setup();
     h.machine.start({
-      format: "image",
+      inputMode: "image",
       imageDataUrl: "data:image/png;base64,AAAA",
     });
     const s = h.states.at(-1)!;
@@ -173,9 +173,9 @@ describe("createGuideMachine phase transitions", () => {
     expect(s.user).toBe("");
   });
 
-  it("leaves userImageUrl unset for a text form", () => {
+  it("leaves userImageUrl unset for a text mode", () => {
     const h = setup();
-    h.machine.start({ format: "emoji" });
+    h.machine.start({ inputMode: "emoji" });
     expect(h.states.at(-1)!.userImageUrl).toBeUndefined();
   });
 });

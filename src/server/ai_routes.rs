@@ -234,7 +234,7 @@ mod tests {
     use crate::ai::agent::ThinkingLevel;
     use crate::ai::agent::{Agent, ProviderSet};
     use crate::ai::provider::MockProvider;
-    use crate::ai_adapter::{BoardFormat, Guide};
+    use crate::ai_adapter::{Guide, InputMode};
     use crate::core::{Difficulty, Features, Game, GameConfig};
     use axum::body::to_bytes;
 
@@ -274,7 +274,7 @@ mod tests {
 
     fn guide_request() -> GuideRequest {
         GuideRequest {
-            format: BoardFormat::SimpleText,
+            input_mode: InputMode::Plain,
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         }
@@ -369,7 +369,9 @@ mod tests {
         assert!(body.contains("\"kind\":\"reasoning\""));
         assert!(body.contains("Mock reasoning."));
         assert!(body.contains("\"kind\":\"content\""));
-        assert!(body.contains("Difficulty: Beginner"));
+        // The content delta is the mock's echo of the player's board — the
+        // user turn is the bare board (ADR-0016), not a header-prefixed body.
+        assert!(body.contains("........."));
         // The player's message is emitted first (issue #124).
         assert!(body.contains("\"kind\":\"user\""));
         assert!(body.contains("data: [DONE]"));

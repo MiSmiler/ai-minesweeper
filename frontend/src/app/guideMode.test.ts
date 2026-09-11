@@ -78,28 +78,27 @@ describe("composeGuideMode layout", () => {
     expect(layout.querySelector(".guide-game .game-top-bar")).toBeTruthy();
   });
 
-  it("dashboard has analysis button, format select, strategy select, axis checkbox, history", () => {
+  it("dashboard has analysis button, input mode select, strategy select, axis checkbox, history", () => {
     mockFetch();
     const root = mount();
     composeGuideMode(root, makeHarness().deps);
     const dash = $(root, ".guide-dashboard");
     expect(dash.querySelector(".analysis-btn")).toBeTruthy();
-    expect(dash.querySelector(".format-select")).toBeTruthy();
+    expect(dash.querySelector(".input-mode-select")).toBeTruthy();
     expect(dash.querySelector(".strategy-select")).toBeTruthy();
     expect(dash.querySelector(".axis-checkbox")).toBeTruthy();
     expect(dash.querySelector(".history-list")).toBeTruthy();
   });
 
-  it("format select offers all four forms", () => {
+  it("input mode select offers all three modes", () => {
     mockFetch();
     const root = mount();
     composeGuideMode(root, makeHarness().deps);
-    const opts = $(root, ".format-select").querySelectorAll("option");
-    expect(opts).toHaveLength(4);
+    const opts = $(root, ".input-mode-select").querySelectorAll("option");
+    expect(opts).toHaveLength(3);
     expect(Array.from(opts).map((o) => o.value)).toEqual([
-      "simple-text",
+      "plain",
       "emoji",
-      "full-coordinates",
       "image",
     ]);
   });
@@ -176,16 +175,16 @@ describe("composeGuideMode analysis flow", () => {
     expect(btn.textContent).toBe("中断");
     expect(btn.classList.contains("running")).toBe(true);
     expect(h.aiApi.startGuide).toHaveBeenCalledTimes(1);
-    const req = h.aiApi.startGuide.mock.calls[0][1] as { format: string };
-    expect(req.format).toBe("simple-text");
+    const req = h.aiApi.startGuide.mock.calls[0][1] as { inputMode: string };
+    expect(req.inputMode).toBe("plain");
     const sid = h.aiApi.startGuide.mock.calls[0][0] as string;
     expect(sid.startsWith("session-")).toBe(true);
 
     const onEvent = h.onEventCalls[0]!;
     onEvent({ kind: "reasoning", text: "think" });
-    onEvent({ kind: "content", text: "SUGGEST null" });
+    onEvent({ kind: "content", text: "(2,3)" });
     expect($(root, ".dialog-reasoning").textContent).toBe("think");
-    expect($(root, ".dialog-content").textContent).toBe("SUGGEST null");
+    expect($(root, ".dialog-content").textContent).toBe("(2,3)");
 
     onEvent({ kind: "sse_done" });
     expect(btn.textContent).toBe("分析");
@@ -207,12 +206,12 @@ describe("composeGuideMode analysis flow", () => {
     expect($(root, ".dialog-interrupt").textContent).toContain("已中断");
   });
 
-  it("captures a screenshot for the image format", async () => {
+  it("captures a screenshot for the image mode", async () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
     composeGuideMode(root, h.deps);
-    const select = root.querySelector<HTMLSelectElement>(".format-select")!;
+    const select = root.querySelector<HTMLSelectElement>(".input-mode-select")!;
     select.value = "image";
     select.dispatchEvent(new Event("change"));
 
@@ -221,10 +220,10 @@ describe("composeGuideMode analysis flow", () => {
     await flush();
     expect(h.deps.captureBoardImage).toHaveBeenCalled();
     const req = h.aiApi.startGuide.mock.calls[0][1] as {
-      format: string;
+      inputMode: string;
       imageDataUrl?: string;
     };
-    expect(req.format).toBe("image");
+    expect(req.inputMode).toBe("image");
     expect(req.imageDataUrl).toBeTruthy();
   });
 
@@ -238,7 +237,7 @@ describe("composeGuideMode analysis flow", () => {
     const btn = root.querySelector<HTMLButtonElement>(".analysis-btn")!;
     btn.click();
     let req = h.aiApi.startGuide.mock.calls[0][1] as {
-      format: string;
+      inputMode: string;
       thinkingLevel: string;
     };
     expect(req.thinkingLevel).toBe("low");
@@ -255,7 +254,7 @@ describe("composeGuideMode analysis flow", () => {
     // The next request carries the new level.
     btn.click();
     req = h.aiApi.startGuide.mock.calls[1][1] as {
-      format: string;
+      inputMode: string;
       thinkingLevel: string;
     };
     expect(req.thinkingLevel).toBe("max");
@@ -285,10 +284,8 @@ describe("composeGuideMode analysis flow", () => {
     composeGuideMode(root, h.deps);
     const btn = root.querySelector<HTMLButtonElement>(".analysis-btn")!;
     btn.click();
-    h.onEventCalls[0]!({ kind: "user", text: "Difficulty: Beginner" });
-    expect($(root, ".dialog-user-text").textContent).toBe(
-      "Difficulty: Beginner",
-    );
+    h.onEventCalls[0]!({ kind: "user", text: "........." });
+    expect($(root, ".dialog-user-text").textContent).toBe(".........");
   });
 
   it("shows an image thumbnail in the dialog for the image form", async () => {
@@ -296,7 +293,7 @@ describe("composeGuideMode analysis flow", () => {
     const root = mount();
     const h = makeHarness();
     composeGuideMode(root, h.deps);
-    const select = root.querySelector<HTMLSelectElement>(".format-select")!;
+    const select = root.querySelector<HTMLSelectElement>(".input-mode-select")!;
     select.value = "image";
     select.dispatchEvent(new Event("change"));
     const btn = root.querySelector<HTMLButtonElement>(".analysis-btn")!;
@@ -320,7 +317,7 @@ describe("composeGuideMode history binding", () => {
     await flush();
   }
 
-  it("confirming a format change clears history", async () => {
+  it("confirming an input-mode change clears history", async () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
@@ -329,14 +326,14 @@ describe("composeGuideMode history binding", () => {
     await seedOneHistoryEntry(root, h);
     expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
 
-    const select = root.querySelector<HTMLSelectElement>(".format-select")!;
+    const select = root.querySelector<HTMLSelectElement>(".input-mode-select")!;
     select.value = "emoji";
     select.dispatchEvent(new Event("change"));
     expect(root.querySelectorAll(".history-entry")).toHaveLength(0);
     expect($(root, ".history-empty")).toBeTruthy();
   });
 
-  it("declining a format change keeps history and reverts the selection", () => {
+  it("declining an input-mode change keeps history and reverts the selection", () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
@@ -348,11 +345,11 @@ describe("composeGuideMode history binding", () => {
     h.onEventCalls[0]!({ kind: "sse_done" });
     expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
 
-    const select = root.querySelector<HTMLSelectElement>(".format-select")!;
+    const select = root.querySelector<HTMLSelectElement>(".input-mode-select")!;
     select.value = "emoji";
     select.dispatchEvent(new Event("change"));
     expect(confirmSpy).toHaveBeenCalled();
-    expect(select.value).toBe("simple-text");
+    expect(select.value).toBe("plain");
     expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
   });
 

@@ -12,11 +12,10 @@ import { log } from "../infra/log";
 // shared `StreamChunk` (`Ok(StreamChunk)` = delta / Done; a mid-stream break
 // is `Err(InterruptReason)`).
 
-/** The #94 presentation forms of a board, mirrored from the backend kebab-case
- * (`ai_adapter::BoardFormat`). "model is a provider-specific name string, not
+/** The input modes, mirrored from the backend kebab-case
+ * (`ai_adapter::InputMode`). "model is a provider-specific name string, not
  * a literal union" — the model is never sent by the frontend. */
-export type BoardFormat =
-  "simple-text" | "emoji" | "full-coordinates" | "image";
+export type InputMode = "plain" | "emoji" | "image";
 
 /** The #122 reasoning-depth control: `off` disables thinking mode; the rest
  * set the `reasoning_effort`. Mirrored from `ai_adapter::ThinkingLevel`. */
@@ -43,10 +42,10 @@ export type ProviderError = {
   message: string;
 };
 
-/** The frontend's request: only `format` plus an optional `imageDataUrl` for
- * the image form. No model is sent — the backend picks its DeepSeek default. */
+/** The frontend's request: only `inputMode` plus an optional `imageDataUrl` for
+ * the image mode. No model is sent — the backend picks its DeepSeek default. */
 export interface GuideRequest {
-  format: BoardFormat;
+  inputMode: InputMode;
   /** #122 reasoning depth; the backend defaults to `low` when absent. */
   thinkingLevel?: ThinkingLevel;
   imageDataUrl?: string;
@@ -99,7 +98,7 @@ export function createAiApi(): AiApi {
  * `ai_adapter::GuideRequest` field is snake_case `image_data_url`. */
 function wireRequest(req: GuideRequest): Record<string, unknown> {
   return {
-    format: req.format,
+    input_mode: req.inputMode,
     thinking_level: req.thinkingLevel,
     image_data_url: req.imageDataUrl,
   };

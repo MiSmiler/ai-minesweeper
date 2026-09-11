@@ -1,10 +1,10 @@
 // The guide state machine (issue #119): owns the analysis run's phase and the
 // accumulated `reasoning` / `content` text. It is deliberately thin — the
-// phase + text accumulation only. History binding, format-change confirm, and
+// phase + text accumulation only. History binding, mode-change confirm, and
 // the pre-flight alert all live in the `app/` assembly layer.
 //
 // Generation tracking: each `start()` / `reset()` bumps a generation counter.
-// `reset()` (new game, format change) or a fresh `start()` may happen while a
+// `reset()` (new game, mode change) or a fresh `start()` may happen while a
 // previous SSE stream is still in flight (the frontend keeps the stream open on
 // interrupt, #97). Events from a superseded generation are dropped so a stale
 // stream can never corrupt the current state.
@@ -46,7 +46,7 @@ export interface GuideMachine {
   start(req: GuideRequest): void;
   /** User-initiated cancel: POST /ai/guide/:id/interrupt (the SSE stays open). */
   interrupt_by_user(): Promise<void>;
-  /** Clears the run (input-format change / new game / mode switch). */
+  /** Clears the run (input-mode change / new game / mode switch). */
   reset(): void;
   /** Subscribes to state changes; returns an unsubscribe. */
   onState(cb: (state: GuideState) => void): () => void;

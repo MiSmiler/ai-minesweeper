@@ -87,23 +87,23 @@ describe("createAiApi.startGuide (SSE consumer)", () => {
         .mockResolvedValue(
           okResponse([
             'data: {"kind":"reasoning","text":"think"}\n\n',
-            'data: {"kind":"content","text":"SUGGEST null"}\n\n',
+            'data: {"kind":"content","text":"(2,3)"}\n\n',
             "data: [DONE]\n\n",
           ]),
         ),
     );
 
-    const events = await collect(api, "s1", { format: "emoji" });
+    const events = await collect(api, "s1", { inputMode: "emoji" });
 
     expect(events).toEqual([
       { kind: "reasoning", text: "think" },
-      { kind: "content", text: "SUGGEST null" },
+      { kind: "content", text: "(2,3)" },
       { kind: "sse_done" },
     ]);
-    // The request POSTs to the session route with the format body.
+    // The request POSTs to the session route with the input_mode body.
     const [url, init] = vi.mocked(fetch).mock.calls[0]!;
     expect(url).toBe("/ai/guide/s1");
-    expect(JSON.parse(init!.body as string)).toEqual({ format: "emoji" });
+    expect(JSON.parse(init!.body as string)).toEqual({ input_mode: "emoji" });
   });
 
   it("parses events that straddle a chunk boundary", async () => {
@@ -123,7 +123,7 @@ describe("createAiApi.startGuide (SSE consumer)", () => {
         ),
     );
 
-    const events = await collect(api, "s1", { format: "emoji" });
+    const events = await collect(api, "s1", { inputMode: "emoji" });
     expect(events).toEqual([
       { kind: "reasoning", text: "think" },
       { kind: "content", text: "hello world" },
@@ -139,13 +139,13 @@ describe("createAiApi.startGuide (SSE consumer)", () => {
     );
 
     await collect(api, "s1", {
-      format: "image",
+      inputMode: "image",
       imageDataUrl: "data:image/png;base64,AAAA",
     });
 
     const [, init] = vi.mocked(fetch).mock.calls[0]!;
     expect(JSON.parse(init!.body as string)).toEqual({
-      format: "image",
+      input_mode: "image",
       image_data_url: "data:image/png;base64,AAAA",
     });
   });
@@ -157,11 +157,11 @@ describe("createAiApi.startGuide (SSE consumer)", () => {
       vi.fn().mockResolvedValue(okResponse(["data: [DONE]\n\n"])),
     );
 
-    await collect(api, "s1", { format: "emoji", thinkingLevel: "high" });
+    await collect(api, "s1", { inputMode: "emoji", thinkingLevel: "high" });
 
     const [, init] = vi.mocked(fetch).mock.calls[0]!;
     expect(JSON.parse(init!.body as string)).toEqual({
-      format: "emoji",
+      input_mode: "emoji",
       thinking_level: "high",
     });
   });
@@ -180,7 +180,7 @@ describe("createAiApi.startGuide (SSE consumer)", () => {
         ),
     );
 
-    const events = await collect(api, "s1", { format: "emoji" });
+    const events = await collect(api, "s1", { inputMode: "emoji" });
     expect(events[1]).toEqual({ kind: "interrupt", reason: "user_interrupt" });
   });
 
@@ -201,7 +201,7 @@ describe("createAiApi.startGuide (SSE consumer)", () => {
     const events = await collect(
       api,
       "s1",
-      { format: "emoji" },
+      { inputMode: "emoji" },
       providerErrors,
     );
     expect(events).toEqual([]);
@@ -215,7 +215,7 @@ describe("createAiApi.startGuide (SSE consumer)", () => {
     const providerErrors: ProviderError[] = [];
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("boom")));
 
-    await collect(api, "s1", { format: "emoji" }, providerErrors);
+    await collect(api, "s1", { inputMode: "emoji" }, providerErrors);
     expect(providerErrors[0]?.kind).toBe("upstream");
     expect(providerErrors[0]?.message).toBe("boom");
   });

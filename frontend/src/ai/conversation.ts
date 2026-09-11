@@ -1,7 +1,7 @@
 // The dual-stream dialog renderer (issue #119): `reasoning` is a light,
 // smaller, whole-block collapsible; `content` is normal font and never
-// collapses; `SUGGEST {"row":N,"col":M}` / `SUGGEST null` are plain text —
-// never parsed, never highlighted (issue #95). A mid-stream interrupt renders
+// collapses; the trailing `(row,col)` coordinate is plain text — never parsed,
+// never highlighted (issue #95). A mid-stream interrupt renders
 // as a red `已中断:<reason>` tail line. The auto-scroll respects the user's
 // scrollbar (issue #128): it stays pinned to the bottom only while the user
 // is not scrolling away, and releases the moment they scroll up.
@@ -104,7 +104,7 @@ export function createConversation(container: HTMLElement): Conversation {
       }
       userBlock.style.display = "";
     } else {
-      // A new run / format change cleared the exchange; drop any lingering box
+      // A new run / mode change cleared the exchange; drop any lingering box
       // and close an open lightbox.
       userText.textContent = "";
       userImage.removeAttribute("src");

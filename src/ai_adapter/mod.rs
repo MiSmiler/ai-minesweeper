@@ -1,10 +1,16 @@
 //! Minesweeper binding adapter for the generic AI runtime (ADR-0013).
 //!
 //! `ai_adapter` renders the player-visible side of a `core::Game` into the
-//! #94 presentation forms (simple-text / emoji / full-coordinates / image),
-//! builds the shared #94/#95 system prompt, and wires `Guide::suggest` — the
+//! board presentation (the [`InputMode`]), builds the system prompt (the
+//! shared core plus the mode's own section), and wires `Guide::suggest` — the
 //! advisor's "ask the AI" entry point — to a `ai::agent::Agent` round trip
 //! over a (mock, in this ticket) provider.
+//!
+//! The user turn carries the board alone (ADR-0016): every rule — the
+//! coordinate system, the symbol legend, the output contract — lives in the
+//! system prompt. The model is deliberately told neither the Mine count nor
+//! the Flag Budget; a tool that answers such questions on demand is future
+//! work.
 //!
 //! Privacy hard constraint: the payload sent to the model contains only
 //! player-visible state (hidden / flagged / revealed numbers). The Mine
@@ -27,19 +33,20 @@ use crate::ai::agent::{Agent, AgentError, Session, ThinkingLevel, Tool};
 use crate::ai::protocol::{ContentBlock, Message, ProviderError, ProviderErrorKind, StreamChunk};
 use crate::core::{CellContent, CellState, CellView, Difficulty, Game, GameState, Position};
 
-/// The #94 presentation forms of a board.
+/// How the board is put in front of the model: the rendering into the user
+/// turn, the system-prompt section that describes it, and the model that
+/// serves it. Not `core::PlayMode`, which is the player's view.
 ///
 /// Wire serialization is kebab-case (`#[serde(rename_all = "kebab-case")]`),
-/// aligned with the frontend `ai/api.ts` kebab literals: `SimpleText` →
-/// `simple-text`, `FullCoordinates` → `full-coordinates`. It is a `POST
-/// /ai/guide/:id` request-body field (sent back by the frontend), so it
-/// carries `Deserialize` — together with [`GuideRequest`].
+/// aligned with the frontend `ai/api.ts` literals: `Plain` → `plain`,
+/// `Emoji` → `emoji`, `Image` → `image`. It is a `POST /ai/guide/:id`
+/// request-body field (sent back by the frontend), so it carries
+/// `Deserialize` — together with [`GuideRequest`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum BoardFormat {
-    SimpleText,
+pub enum InputMode {
+    Plain,
     Emoji,
-    FullCoordinates,
     Image,
 }
 
@@ -85,61 +92,58 @@ impl BoardView {
     }
 }
 
-/// The shared #94/#95 system prompt: coordinates are 0-based, the model sees
-/// only the player-visible board, and the reply must end with the `SUGGEST`
-/// contract line (`{"row":N,"col":M}` / `null`). Pure.
+/// The system-prompt core, shared by every [`InputMode`]: the role, the
+/// coordinate system, the meaning of the Cell states, and the output
+/// contract. [`InputMode::system_prompt`] appends the mode's own section.
 ///
 /// Live text lives in `prompts/system.md` (a repo-level content file, embedded
 /// at compile time via `include_str!`); the binary stays self-contained and
 /// never reads a prompt file at runtime.
-pub const SYSTEM_PROMPT: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts/system.md"));
+const SYSTEM_CORE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts/system.md"));
 
-/// The shared system prompt rendered to a `String` (the caller-owned form).
-/// The template carries a trailing newline from the file, which is trimmed so
-/// the model sees exactly the contract text.
-pub fn system_prompt() -> String {
-    SYSTEM_PROMPT.trim_end().to_string()
-}
-
-/// Prompt template for the simple-text board form (A). Content in
-/// `prompts/simple-text.md`; placeholders are substituted at runtime.
-const SIMPLE_TEXT: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/prompts/simple-text.md"
-));
-/// Prompt template for the emoji board form (B). Content in `prompts/emoji.md`.
+/// The [`InputMode::Plain`] system-prompt section: the character legend. In
+/// `prompts/plain.md`.
+const PLAIN: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts/plain.md"));
+/// The [`InputMode::Emoji`] system-prompt section: the emoji legend. In
+/// `prompts/emoji.md`.
 const EMOJI: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts/emoji.md"));
-/// Prompt template for the full-coordinates board form (C). Content in
-/// `prompts/full-coordinates.md`.
-const FULL_COORDINATES: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/prompts/full-coordinates.md"
-));
-/// Prompt template for the image board form (D). Content in `prompts/image.md`.
+/// The [`InputMode::Image`] system-prompt section: the screenshot legend. In
+/// `prompts/image.md`.
 const IMAGE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prompts/image.md"));
 
-/// A user-message body for a text form (A/B/C). Pure.
-pub fn build_text_blocks(view: &BoardView, format: BoardFormat) -> Vec<ContentBlock> {
-    let body = match format {
-        BoardFormat::SimpleText => build_simple_text(view),
-        BoardFormat::Emoji => build_emoji(view),
-        BoardFormat::FullCoordinates => build_full_coordinates(view),
-        BoardFormat::Image => panic!(
-            "build_text_blocks must not be called with BoardFormat::Image; use build_image_blocks"
-        ),
-    };
-    vec![ContentBlock::Text(body)]
-}
+impl InputMode {
+    /// The system prompt for this mode: the shared core plus the mode's own
+    /// section, separated by a blank line. The prompt files carry a trailing
+    /// newline, trimmed so the model sees exactly the contract text. Pure.
+    pub fn system_prompt(self) -> String {
+        let section = match self {
+            Self::Plain => PLAIN,
+            Self::Emoji => EMOJI,
+            Self::Image => IMAGE,
+        };
+        format!("{}\n\n{}", SYSTEM_CORE.trim_end(), section.trim_end())
+    }
 
-/// A user-message body for the image form (D) = header text + the screenshot
-/// data URL. Pure.
-pub fn build_image_blocks(view: &BoardView, image_data_url: &str) -> Vec<ContentBlock> {
-    let body = IMAGE.trim_end().replace("{{HEADER}}", &header(view));
-    vec![
-        ContentBlock::Text(body),
-        ContentBlock::ImageUrl(image_data_url.to_string()),
-    ]
+    /// The user turn for this mode: the board, rendered into the mode's
+    /// symbols. [`InputMode::Image`] is the screenshot alone and carries no
+    /// text — the frontend renders its own copy of that screenshot in the
+    /// player's dialog bubble. Pure.
+    pub fn user_message(self, view: &BoardView, image_data_url: &str) -> Vec<ContentBlock> {
+        match self {
+            Self::Plain => vec![ContentBlock::Text(render_plain(view))],
+            Self::Emoji => vec![ContentBlock::Text(render_emoji(view))],
+            Self::Image => vec![ContentBlock::ImageUrl(image_data_url.to_string())],
+        }
+    }
+
+    /// The model that serves this mode: the vision model for
+    /// [`InputMode::Image`], the text default otherwise.
+    pub fn model(self) -> &'static str {
+        match self {
+            Self::Image => VISION_MODEL,
+            _ => DEFAULT_MODEL,
+        }
+    }
 }
 
 /// The termination reason (#97). Mirrored by the wire / frontend so the
@@ -167,12 +171,12 @@ impl SuggestPreFlightError {
     }
 }
 
-/// The frontend's request: only `format` (+ an optional `image_data_url` for
-/// the image form). The board for a text form is read by the backend from its
-/// own `Game`; **no model** is sent (the backend picks the DeepSeek default).
+/// The frontend's request: only `input_mode` (+ an optional `image_data_url`
+/// for the image mode). The board is read by the backend from its own `Game`;
+/// **no model** is sent (the backend picks the DeepSeek default per mode).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuideRequest {
-    pub format: BoardFormat,
+    pub input_mode: InputMode,
     /// The reasoning depth; `low` default. `off` disables thinking mode.
     #[serde(default)]
     pub thinking_level: ThinkingLevel,
@@ -182,9 +186,10 @@ pub struct GuideRequest {
     pub image_data_url: Option<String>,
 }
 
-/// Default model (text forms); `Guide::suggest` sets it per format.
+/// Default model (text modes); `InputMode::model` picks it for `Plain` and
+/// `Emoji`.
 pub(crate) const DEFAULT_MODEL: &str = "deepseek-v4-flash";
-/// Multimodal (vision) model — format D (Image) switches to it.
+/// Multimodal (vision) model — `InputMode::Image` picks it.
 const VISION_MODEL: &str = "deepseek-v4-flash-vision-exp";
 
 /// The one-shot advisor: inject a board, run one round, stream the result.
@@ -196,7 +201,7 @@ const VISION_MODEL: &str = "deepseek-v4-flash-vision-exp";
 /// `Send`-compatible with axum handlers. No concurrency design beyond the
 /// lock: the frontend's `GuidePhase.running` means at most one `suggest` runs
 /// at a time, and every call's `Session` is local with the model set per
-/// format.
+/// input mode.
 pub struct Guide {
     agent: Arc<Mutex<Agent>>,
 }
@@ -210,8 +215,8 @@ impl Guide {
     /// Injects the board, runs one round, and returns the streamed analysis.
     ///
     /// The first tuple element is the verbatim player message (the `role: user`
-    /// turn) — the board in the chosen format — echoed back so the frontend can
-    /// render the player's half of the exchange (issue #124). The second is the
+    /// turn) — the board in the chosen input mode — echoed back so the frontend
+    /// can render the player's half of the exchange (issue #124). The second is the
     /// analysis stream: `Ok(StreamChunk)` advances it, `Ok(Done)` closes it;
     /// a mid-stream break is `Err(InterruptReason)`; a pre-flight failure
     /// (before any content blocks stream) is `Err(SuggestPreFlightError)`.
@@ -228,38 +233,31 @@ impl Guide {
         SuggestPreFlightError,
     > {
         let view = BoardView::from_game(game);
-        let image = matches!(req.format, BoardFormat::Image);
+        let mode = req.input_mode;
+        let url = req.image_data_url.clone().unwrap_or_default();
 
         let mut agent = self.agent.lock().await;
-        if image {
-            agent.set_model(VISION_MODEL.to_string(), None);
-        } else {
-            agent.set_model(DEFAULT_MODEL.to_string(), None);
-        }
+        agent.set_model(mode.model().to_string(), None);
         // Set the player's reasoning depth (issue #122); the agent translates
         // it onto the request's `reasoning_effort` / `thinking` fields.
         agent.set_thinking_level(Some(req.thinking_level));
 
-        let blocks = if image {
-            // Persist the screenshot for audit; a failure never blocks sending.
-            let url = req.image_data_url.clone().unwrap_or_default();
+        // Persist the screenshot for audit; a failure never blocks sending.
+        if matches!(mode, InputMode::Image) {
             let _ = persist_image(&url);
-            build_image_blocks(&view, &url)
-        } else {
-            build_text_blocks(&view, req.format)
-        };
+        }
+        let blocks = mode.user_message(&view, &url);
 
-        // The verbatim player message: the first text block's body. Text forms
-        // are a single Text block; the image form is a text preamble + an
-        // image, so this is the preamble (the screenshot reaches the player via
-        // the frontend's own captured data URL).
+        // The verbatim player message: the board body. The image mode's user
+        // turn is the screenshot alone, so its echo is empty — the frontend
+        // renders its own captured copy in the player's bubble (issue #124).
         let user_text = match &blocks[..] {
-            [ContentBlock::Text(t), ..] => t.clone(),
+            [ContentBlock::Text(t)] => t.clone(),
             _ => String::new(),
         };
 
         let mut session = Session::new(Message::System {
-            content: system_prompt(),
+            content: mode.system_prompt(),
         });
         session.push(Message::User { content: blocks });
 
@@ -306,39 +304,9 @@ pub fn tools(_handle: &GameHandle) -> Vec<Arc<dyn Tool>> {
 
 // --- Rendering helpers (private) ---
 
-fn difficulty_label(d: Difficulty) -> &'static str {
-    match d {
-        Difficulty::Beginner => "Beginner",
-        Difficulty::Intermediate => "Intermediate",
-        Difficulty::Expert => "Expert",
-    }
-}
-
-fn state_label(s: GameState) -> &'static str {
-    match s {
-        GameState::Ready => "Ready",
-        GameState::Playing => "Playing",
-        GameState::Won => "Won",
-        GameState::Lost => "Lost",
-    }
-}
-
-/// The #94 header block, common to all four forms.
-fn header(view: &BoardView) -> String {
-    format!(
-        "Difficulty: {}\nRows: {}, Cols: {}\nMine count: {}\nFlags remaining: {}\nGame state: {}",
-        difficulty_label(view.difficulty),
-        view.rows,
-        view.cols,
-        view.mine_count,
-        view.flags_remaining,
-        state_label(view.state),
-    )
-}
-
-/// The simple-text representation of a Cell: `.` hidden, `F` flag,
-/// `*` revealed mine (Lost only), `0-8` revealed neighbor count.
-fn simple_char(cell: CellView) -> char {
+/// The plain representation of a Cell: `.` hidden, `F` flag, `*` revealed
+/// mine (Lost only), `0-8` revealed neighbor count.
+fn plain_char(cell: CellView) -> char {
     match cell.state {
         CellState::Hidden => '.',
         CellState::Flagged => 'F',
@@ -385,38 +353,14 @@ where
     rows.join("\n")
 }
 
-fn build_simple_text(view: &BoardView) -> String {
-    SIMPLE_TEXT
-        .trim_end()
-        .replace("{{HEADER}}", &header(view))
-        .replace("{{LAST_ROW_INDEX}}", &(view.rows - 1).to_string())
-        .replace("{{LAST_COL_INDEX}}", &(view.cols - 1).to_string())
-        .replace(
-            "{{BOARD}}",
-            &render_rows(view, |_, _, c| simple_char(c).to_string(), " "),
-        )
+/// The [`InputMode::Plain`] user turn: one character per Cell, no separator.
+fn render_plain(view: &BoardView) -> String {
+    render_rows(view, |_, _, c| plain_char(c).to_string(), "")
 }
 
-fn build_emoji(view: &BoardView) -> String {
-    EMOJI
-        .trim_end()
-        .replace("{{HEADER}}", &header(view))
-        .replace("{{LAST_COL_INDEX}}", &(view.cols - 1).to_string())
-        .replace("{{BOARD}}", &render_rows(view, |_, _, c| emoji_cell(c), ""))
-}
-
-fn build_full_coordinates(view: &BoardView) -> String {
-    FULL_COORDINATES
-        .trim_end()
-        .replace("{{HEADER}}", &header(view))
-        .replace(
-            "{{BOARD}}",
-            &render_rows(
-                view,
-                |r, c, cell| format!("[{}][{}]:{}", r, c, simple_char(cell)),
-                " ",
-            ),
-        )
+/// The [`InputMode::Emoji`] user turn: one emoji per Cell, no separator.
+fn render_emoji(view: &BoardView) -> String {
+    render_rows(view, |_, _, c| emoji_cell(c), "")
 }
 
 // --- Interrupt refraction (private) ---
@@ -555,6 +499,11 @@ mod tests {
         Game::with_config(GameConfig::new(Difficulty::Beginner, Features::NONE, None))
     }
 
+    /// A fresh Beginner board rendered in `plain`: nine hidden rows.
+    fn fresh_beginner_board() -> String {
+        ["........."; 9].join("\n")
+    }
+
     fn mock_agent() -> (Agent, MockProvider) {
         let mock = MockProvider::new();
         let mut set = ProviderSet::new();
@@ -637,171 +586,93 @@ mod tests {
         assert_eq!(view.cells[0 * 9 + 0].content, Some(CellContent::Number(2)));
     }
 
-    // --- system_prompt ---
+    // --- InputMode::system_prompt ---
 
     #[test]
-    fn system_prompt_is_the_exact_contract_text() {
-        // The prompt is committed content (issue #127): lock it byte-for-byte so
-        // an accidental edit of `prompts/system.md` (or a stray trailing
-        // newline) fails the build. The `\n\` continuations reproduce the
-        // delivered text, which is flush-left (Rust strips leading whitespace).
-        let p = system_prompt();
-        let expected = "你是扫雷顾问。玩家给你看当前棋盘，你要推荐他下一步点哪格（或标哪格）。\n\
-            坐标系（0-based）：\n\
-            - 行和列都从 0 开始编号：row 0 是最顶行，col 0 是最左列；(0,0) 是左上角。\n\
-            - 坐标一律用 0-based，不要输出 1-based。\n\
-            \n\
-            输入说明：\n\
-            - 每次你会收到一个**头部** + 一份当前棋盘。\n\
-            - 头部含：Difficulty（难度预设）、Rows/Cols（行列数）、Mine count（固定总雷数，始终等于开局 Flag Budget）、\n\
-            Flags remaining（总雷数 - 已放旗数，为负表示玩家 over-flag）、Game state（Playing/Won/Lost）。\n\
-            - 棋盘只含玩家可见状态：hidden、flagged、revealed 的数字。你**永远看不到真正的雷布局**。\n\
-            - 请根据已揭数字 + Mine count 推理，不要臆测看不见的雷。\n\
-            \n\
-            输出契约：\n\
-            - 先给一段简短、可读的推理（说明判断依据）。\n\
-            - 然后在**末尾单独一行**给出建议格，格式必须精确如下：\n\
-            SUGGEST {\"row\":<r>,\"col\":<c>}\n\
-            - 建议格必须是 hidden 格（不要建议已 reveal 或已 flag 的格）。能保证安全就优先安全；\n\
-            如果每格都只能靠猜，选概率最高的一格，并在推理里说明\"这是猜、有风险\"。\n\
-            - 若棋盘已无法给出任何建议，写：SUGGEST null";
-        assert_eq!(p, expected);
-    }
-
-    // --- build_text_blocks / build_image_blocks ---
-
-    #[test]
-    fn simple_text_body_has_header_legend_and_board() {
-        let blocks = build_text_blocks(&sample_view(), BoardFormat::SimpleText);
-        assert_eq!(blocks.len(), 1);
-        let ContentBlock::Text(body) = &blocks[0] else {
-            panic!("expected a text block");
-        };
-        let expected = "Difficulty: Beginner\n\
-            Rows: 2, Cols: 2\n\
-            Mine count: 10\n\
-            Flags remaining: 9\n\
-            Game state: Playing\n\
-            \n\
-            棋盘（Legend）：`.`=hidden，`*`=revealed mine（仅 Lost），`F`=flag，`0-8`=revealed 数字。\n\
-            每行代表一行：第 1 行是 row 0，最后一行是 row 1。行内每个字符代表一格：第 1 个字符是 col 0，最后一个是 col 1。\n\
-            \n\
-            0 F\n\
-            2 .\n\
-            \n\
-            我该点哪一格？";
-        assert_eq!(body, expected);
+    fn system_prompt_is_the_trimmed_core_plus_the_modes_own_section() {
+        for (mode, legend) in [
+            (InputMode::Plain, "- `.`：未开"),
+            (InputMode::Emoji, "- ⬛：未开"),
+            (InputMode::Image, "扫雷布局将以棋盘截图的形式展现给你。"),
+        ] {
+            let p = mode.system_prompt();
+            assert!(p.contains("坐标写作 (row,col)"), "core missing: {mode:?}");
+            assert!(p.contains(legend), "own section missing: {mode:?}");
+            assert!(!p.ends_with('\n'), "trailing newline: {mode:?}");
+            assert!(!p.contains("\n\n\n"), "extra blank line: {mode:?}");
+        }
     }
 
     #[test]
-    fn emoji_body_uses_emoji_cells_without_spaces() {
-        let blocks = build_text_blocks(&sample_view(), BoardFormat::Emoji);
-        let ContentBlock::Text(body) = &blocks[0] else {
-            panic!("expected a text block");
-        };
-        let expected = "Difficulty: Beginner\n\
-            Rows: 2, Cols: 2\n\
-            Mine count: 10\n\
-            Flags remaining: 9\n\
-            Game state: Playing\n\
-            \n\
-            棋盘（Legend）：`⬛`=hidden，`💣`=revealed mine（仅 Lost），`🚩`=flag，`⬜`=revealed 无雷(0)，`1️⃣`-`8️⃣`=revealed 有雷。\n\
-            每个格子是一个 emoji（不是按字符数拆），每行从左到右第 1 个 emoji 是 col 0，最后一个是 col 1。\n\
-            \n\
-            ⬜🚩\n\
-            2️⃣⬛\n\
-            \n\
-            我该点哪一格？";
-        assert_eq!(body, expected);
+    fn a_mode_carries_only_its_own_legend() {
+        let plain = InputMode::Plain.system_prompt();
+        let emoji = InputMode::Emoji.system_prompt();
+        let image = InputMode::Image.system_prompt();
+        assert!(plain.contains("- `F`：插旗"));
+        assert!(!plain.contains("- 🚩：插旗"));
+        assert!(emoji.contains("- 🚩：插旗"));
+        assert!(!emoji.contains("- `F`：插旗"));
+        assert!(!image.contains("- `F`：插旗"));
+        assert!(!image.contains("- 🚩：插旗"));
+    }
+
+    // --- InputMode::user_message ---
+
+    #[test]
+    fn plain_user_message_is_the_bare_board() {
+        let blocks = InputMode::Plain.user_message(&sample_view(), "");
+        assert_eq!(blocks, vec![ContentBlock::Text("0F\n2.".to_string())]);
     }
 
     #[test]
-    fn full_coordinates_body_wraps_each_cell_in_its_coordinates() {
-        let blocks = build_text_blocks(&sample_view(), BoardFormat::FullCoordinates);
-        let ContentBlock::Text(body) = &blocks[0] else {
-            panic!("expected a text block");
-        };
-        let expected = "Difficulty: Beginner\n\
-            Rows: 2, Cols: 2\n\
-            Mine count: 10\n\
-            Flags remaining: 9\n\
-            Game state: Playing\n\
-            \n\
-            棋盘：每个 cell 写成 `[row][col]:x`，x 取值同简单字符（`.`/`*`/`F`/`0-8`）。每格自报坐标，无需数行/列。\n\
-            \n\
-            [0][0]:0 [0][1]:F\n\
-            [1][0]:2 [1][1]:.\n\
-            \n\
-            我该点哪一格？";
-        assert_eq!(body, expected);
+    fn emoji_user_message_is_the_bare_board() {
+        let blocks = InputMode::Emoji.user_message(&sample_view(), "");
+        assert_eq!(blocks, vec![ContentBlock::Text("⬜🚩\n2️⃣⬛".to_string())]);
     }
 
     #[test]
-    fn image_body_is_a_text_preamble_plus_the_data_url() {
-        let blocks = build_image_blocks(&sample_view(), "data:image/png;base64,AAAA");
-        assert_eq!(blocks.len(), 2);
-        let ContentBlock::Text(body) = &blocks[0] else {
-            panic!("expected text preamble");
-        };
-        let expected = "Difficulty: Beginner\n\
-            Rows: 2, Cols: 2\n\
-            Mine count: 10\n\
-            Flags remaining: 9\n\
-            Game state: Playing\n\
-            \n\
-            棋盘：下面是一张棋盘截图，图中每个格子就是棋盘一格；hidden=未翻开、flag=旗、数字=已翻开的邻雷数。\n\
-            坐标请按你从图上看到的格子，0-based 换算（最顶行是 row 0，最左列是 col 0）。\n\
-            \n\
-            我该点哪一格？";
-        assert_eq!(body, expected);
+    fn image_user_message_is_the_screenshot_alone() {
+        let blocks = InputMode::Image.user_message(&sample_view(), "data:image/png;base64,AAAA");
         assert_eq!(
-            blocks[1],
-            ContentBlock::ImageUrl("data:image/png;base64,AAAA".to_string())
+            blocks,
+            vec![ContentBlock::ImageUrl(
+                "data:image/png;base64,AAAA".to_string()
+            )]
         );
-    }
-
-    #[test]
-    #[should_panic(expected = "build_text_blocks must not be called with BoardFormat::Image")]
-    fn build_text_blocks_rejects_the_image_variant() {
-        build_text_blocks(&sample_view(), BoardFormat::Image);
     }
 
     // --- wire serde ---
 
     #[test]
-    fn board_format_serializes_kebab_case_and_round_trips() {
+    fn input_mode_serializes_kebab_case_and_round_trips() {
         assert_eq!(
-            serde_json::to_string(&BoardFormat::SimpleText).unwrap(),
-            "\"simple-text\""
+            serde_json::to_string(&InputMode::Plain).unwrap(),
+            "\"plain\""
         );
         assert_eq!(
-            serde_json::to_string(&BoardFormat::Emoji).unwrap(),
+            serde_json::to_string(&InputMode::Emoji).unwrap(),
             "\"emoji\""
         );
         assert_eq!(
-            serde_json::to_string(&BoardFormat::FullCoordinates).unwrap(),
-            "\"full-coordinates\""
-        );
-        assert_eq!(
-            serde_json::to_string(&BoardFormat::Image).unwrap(),
+            serde_json::to_string(&InputMode::Image).unwrap(),
             "\"image\""
         );
-        let parsed: BoardFormat = serde_json::from_str("\"full-coordinates\"").unwrap();
-        assert_eq!(parsed, BoardFormat::FullCoordinates);
-        let parsed: BoardFormat = serde_json::from_str("\"simple-text\"").unwrap();
-        assert_eq!(parsed, BoardFormat::SimpleText);
+        let parsed: InputMode = serde_json::from_str("\"image\"").unwrap();
+        assert_eq!(parsed, InputMode::Image);
+        let parsed: InputMode = serde_json::from_str("\"plain\"").unwrap();
+        assert_eq!(parsed, InputMode::Plain);
     }
 
     #[test]
-    fn guide_request_deserializes_format_and_optional_image() {
-        let req: GuideRequest = serde_json::from_str(r#"{"format":"emoji"}"#).unwrap();
-        assert_eq!(req.format, BoardFormat::Emoji);
+    fn guide_request_deserializes_input_mode_and_optional_image() {
+        let req: GuideRequest = serde_json::from_str(r#"{"input_mode":"emoji"}"#).unwrap();
+        assert_eq!(req.input_mode, InputMode::Emoji);
         assert_eq!(req.image_data_url, None);
         let req: GuideRequest = serde_json::from_str(
-            r#"{"format":"image","image_data_url":"data:image/png;base64,AAAA"}"#,
+            r#"{"input_mode":"image","image_data_url":"data:image/png;base64,AAAA"}"#,
         )
         .unwrap();
-        assert_eq!(req.format, BoardFormat::Image);
+        assert_eq!(req.input_mode, InputMode::Image);
         assert_eq!(
             req.image_data_url.as_deref(),
             Some("data:image/png;base64,AAAA")
@@ -811,11 +682,11 @@ mod tests {
     #[test]
     fn guide_request_defaults_thinking_level_to_low() {
         // A wire body without `thinking_level` defaults to Low (issue #122).
-        let req: GuideRequest = serde_json::from_str(r#"{"format":"emoji"}"#).unwrap();
+        let req: GuideRequest = serde_json::from_str(r#"{"input_mode":"emoji"}"#).unwrap();
         assert_eq!(req.thinking_level, ThinkingLevel::Low);
         // And a present value parses.
         let req: GuideRequest =
-            serde_json::from_str(r#"{"format":"emoji","thinking_level":"off"}"#).unwrap();
+            serde_json::from_str(r#"{"input_mode":"emoji","thinking_level":"off"}"#).unwrap();
         assert_eq!(req.thinking_level, ThinkingLevel::Off);
     }
 
@@ -851,7 +722,7 @@ mod tests {
         let guide = Guide::new(Arc::new(Mutex::new(agent)));
         let game = fresh_game();
         let req = GuideRequest {
-            format: BoardFormat::SimpleText,
+            input_mode: InputMode::Plain,
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
@@ -860,8 +731,7 @@ mod tests {
             .await
             .unwrap();
         // The verbatim player message is the board body, not the system prompt.
-        assert!(user_text.starts_with("Difficulty: Beginner"));
-        assert!(user_text.contains("我该点哪一格？"));
+        assert_eq!(user_text, fresh_beginner_board());
         assert_eq!(
             stream.next().await,
             Some(Ok(StreamChunk::ReasoningDelta("Mock reasoning.".into())))
@@ -870,14 +740,13 @@ mod tests {
             // The mock echoes the last user text — our board body — as the
             // content delta, so it must be the rendered board, not the prompt.
             Some(Ok(StreamChunk::ContentDelta(text))) => {
-                assert!(text.starts_with("Difficulty: Beginner"));
-                assert!(text.contains("我该点哪一格？"));
+                assert_eq!(text, fresh_beginner_board());
             }
             other => panic!("expected a content delta, got {other:?}"),
         }
         assert_eq!(stream.next().await, Some(Ok(StreamChunk::Done)));
         assert_eq!(stream.next().await, None);
-        // The default model was selected for a text format.
+        // The default model was selected for a text input mode.
         assert_eq!(mock.last_request().unwrap().model, DEFAULT_MODEL);
         // The default thinking level (Low) threads onto the request.
         let req = mock.last_request().unwrap();
@@ -896,7 +765,7 @@ mod tests {
         let guide = Guide::new(Arc::new(Mutex::new(agent)));
         let game = fresh_game();
         let req = GuideRequest {
-            format: BoardFormat::SimpleText,
+            input_mode: InputMode::Plain,
             thinking_level: ThinkingLevel::Off,
             image_data_url: None,
         };
@@ -916,12 +785,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn image_format_selects_the_vision_model() {
+    async fn image_mode_selects_the_vision_model() {
         let (agent, mock) = mock_agent();
         let guide = Guide::new(Arc::new(Mutex::new(agent)));
         let game = fresh_game();
         let req = GuideRequest {
-            format: BoardFormat::Image,
+            input_mode: InputMode::Image,
             thinking_level: ThinkingLevel::Low,
             // Deliberately not valid base64: persist fails, and must not block.
             image_data_url: Some("data:image/png;base64,not-valid!!!".to_string()),
@@ -930,9 +799,9 @@ mod tests {
             .suggest(&game, req, CancellationToken::new())
             .await
             .unwrap();
-        // The image echo is the text preamble only; the screenshot stays with
-        // the frontend. It still reads as the player's message.
-        assert!(user_text.contains("棋盘：下面是一张棋盘截图"));
+        // The image user turn is the screenshot alone, so the echo is empty;
+        // the frontend renders its own captured copy in the player's bubble.
+        assert_eq!(user_text, "");
         while stream.next().await.is_some() {}
         assert_eq!(mock.last_request().unwrap().model, VISION_MODEL);
     }
@@ -945,7 +814,7 @@ mod tests {
         let cancel = CancellationToken::new();
         cancel.cancel();
         let req = GuideRequest {
-            format: BoardFormat::SimpleText,
+            input_mode: InputMode::Plain,
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
@@ -973,7 +842,7 @@ mod tests {
         let guide = Guide::new(Arc::new(Mutex::new(agent)));
         let game = fresh_game();
         let req = GuideRequest {
-            format: BoardFormat::SimpleText,
+            input_mode: InputMode::Plain,
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
@@ -1001,7 +870,7 @@ mod tests {
         let guide = Guide::new(Arc::new(Mutex::new(agent)));
         let game = fresh_game();
         let req = GuideRequest {
-            format: BoardFormat::SimpleText,
+            input_mode: InputMode::Plain,
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
@@ -1029,7 +898,7 @@ mod tests {
         let guide = Guide::new(Arc::new(Mutex::new(agent)));
         let game = fresh_game();
         let req = GuideRequest {
-            format: BoardFormat::SimpleText,
+            input_mode: InputMode::Plain,
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
@@ -1060,7 +929,7 @@ mod tests {
         let guide = Guide::new(Arc::new(Mutex::new(agent)));
         let game = fresh_game();
         let req = GuideRequest {
-            format: BoardFormat::SimpleText,
+            input_mode: InputMode::Plain,
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
@@ -1078,7 +947,7 @@ mod tests {
         let guide = Guide::new(Arc::new(Mutex::new(agent)));
         let game = fresh_game();
         let req = GuideRequest {
-            format: BoardFormat::SimpleText,
+            input_mode: InputMode::Plain,
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
@@ -1104,7 +973,7 @@ mod tests {
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Playing);
         let req = GuideRequest {
-            format: BoardFormat::FullCoordinates,
+            input_mode: InputMode::Plain,
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         };
@@ -1114,15 +983,18 @@ mod tests {
             .unwrap();
         while stream.next().await.is_some() {}
         let req = mock.last_request().expect("mock recorded a request");
-        let payload = serde_json::to_string(&req.messages).unwrap();
-        // The two hidden Mines (0,1) and (1,0) appear as hidden '.' in
-        // full-coordinates, never as a revealed mine '*'.
-        assert!(payload.contains("[0][1]:."));
-        assert!(!payload.contains("[0][1]:*"));
-        assert!(payload.contains("[1][0]:."));
-        assert!(!payload.contains("[1][0]:*"));
-        // And (0,0) is the player-visible revealed number, present.
-        assert!(payload.contains("[0][0]:2"));
+        // The user turn is the plain board alone. The two hidden Mines (0,1)
+        // and (1,0) render as hidden '.', never as a revealed mine '*'.
+        let Message::User { content } = &req.messages[1] else {
+            panic!("expected the user turn");
+        };
+        let ContentBlock::Text(board) = &content[0] else {
+            panic!("expected a text block");
+        };
+        // Row 0 is `2........`: only (0,0) is revealed, a player-visible 2.
+        let expected = format!("2........\n{}", ["........."; 8].join("\n"));
+        assert_eq!(board, &expected);
+        assert!(!board.contains('*'));
     }
 
     // --- image persistence (best-effort) ---

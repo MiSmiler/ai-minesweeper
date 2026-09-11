@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 // Tests for the dual-stream dialog renderer (issue #119): reasoning is
-// collapsible, content is plain, SUGGEST stays text, and an interrupt renders a
-// red tail line.
+// collapsible, content is plain, the coordinate stays text, and an interrupt
+// renders a red tail line.
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { createConversation } from "./conversation";
@@ -44,14 +44,14 @@ describe("createConversation", () => {
     render({
       phase: "running",
       reasoning: "think",
-      content: "SUGGEST null",
+      content: "(2,3)",
       user: "",
     });
     expect(container.querySelector(".dialog-reasoning")!.textContent).toBe(
       "think",
     );
     expect(container.querySelector(".dialog-content")!.textContent).toBe(
-      "SUGGEST null",
+      "(2,3)",
     );
   });
 
@@ -95,15 +95,15 @@ describe("createConversation", () => {
     );
   });
 
-  it("keeps SUGGEST as plain text (no parsing, no highlighting)", () => {
+  it("keeps the coordinate as plain text (no parsing, no highlighting)", () => {
     render({
       phase: "done",
       reasoning: "",
-      content: 'SUGGEST {"row":2,"col":3}',
+      content: "(2,3)",
       user: "",
     });
     const content = container.querySelector(".dialog-content")!;
-    expect(content.textContent).toBe('SUGGEST {"row":2,"col":3}');
+    expect(content.textContent).toBe("(2,3)");
     // Plain text: no child elements, no addresses parsed into markup.
     expect(content.querySelectorAll("*")).toHaveLength(0);
   });
@@ -141,13 +141,13 @@ describe("createConversation", () => {
     render({
       phase: "done",
       reasoning: "think",
-      content: "SUGGEST null",
-      user: "Difficulty: Beginner\n0 F\n2 .",
+      content: "(2,3)",
+      user: "0F\n2.",
     });
     const user = container.querySelector(".dialog-user")!;
     const userText = container.querySelector(".dialog-user-text")!;
     expect(user.classList.contains("dialog-block")).toBe(true);
-    expect(userText.textContent).toBe("Difficulty: Beginner\n0 F\n2 .");
+    expect(userText.textContent).toBe("0F\n2.");
     // The user box appears before the reasoning collapse.
     expect(user.nextElementSibling!.classList.contains("dialog-collapse")).toBe(
       true,
