@@ -34,8 +34,8 @@ use crate::ai::protocol::{ContentBlock, Message, ProviderError, ProviderErrorKin
 use crate::core::{CellContent, CellState, CellView, Difficulty, Game, GameState, Position};
 
 /// How the board is put in front of the model: the rendering into the user
-/// turn, the system-prompt section that describes it, and the model that
-/// serves it. Not `core::PlayMode`, which is the player's view.
+/// turn and the system-prompt section that describes it. Not
+/// `core::PlayMode`, which is the player's view.
 ///
 /// Wire serialization is kebab-case (`#[serde(rename_all = "kebab-case")]`),
 /// aligned with the frontend `ai/api.ts` literals: `Plain` → `plain`,
@@ -135,15 +135,6 @@ impl InputMode {
             Self::Image => vec![ContentBlock::ImageUrl(image_data_url.to_string())],
         }
     }
-
-    /// The model that serves this mode: the vision model for
-    /// [`InputMode::Image`], the text default otherwise.
-    pub fn model(self) -> &'static str {
-        match self {
-            Self::Image => VISION_MODEL,
-            _ => DEFAULT_MODEL,
-        }
-    }
 }
 
 /// The termination reason (#97). Mirrored by the wire / frontend so the
@@ -186,11 +177,12 @@ pub struct GuideRequest {
     pub image_data_url: Option<String>,
 }
 
-/// Default model (text modes); `InputMode::model` picks it for `Plain` and
-/// `Emoji`.
-pub(crate) const DEFAULT_MODEL: &str = "deepseek-v4-flash";
-/// Multimodal (vision) model — `InputMode::Image` picks it.
-const VISION_MODEL: &str = "deepseek-v4-flash-vision-exp";
+/// The DeepSeek model that serves every [`InputMode`]: the canonical
+/// `deepseek-flash` name. The legacy `deepseek-v4-flash` /
+/// `deepseek-v4-flash-vision-exp` names were retired with the V4.1-Flash
+/// release and only route there temporarily.
+/// <https://api-docs.deepseek.com/zh-cn/news/news260910>
+pub(crate) const MODEL: &str = "deepseek-flash";
 
 /// The one-shot advisor: inject a board, run one round, stream the result.
 ///
@@ -237,7 +229,7 @@ impl Guide {
         let url = req.image_data_url.clone().unwrap_or_default();
 
         let mut agent = self.agent.lock().await;
-        agent.set_model(mode.model().to_string(), None);
+        agent.set_model(MODEL.to_string(), None);
         // Set the player's reasoning depth (issue #122); the agent translates
         // it onto the request's `reasoning_effort` / `thinking` fields.
         agent.set_thinking_level(Some(req.thinking_level));
@@ -746,8 +738,8 @@ mod tests {
         }
         assert_eq!(stream.next().await, Some(Ok(StreamChunk::Done)));
         assert_eq!(stream.next().await, None);
-        // The default model was selected for a text input mode.
-        assert_eq!(mock.last_request().unwrap().model, DEFAULT_MODEL);
+        // The model is the same for every input mode.
+        assert_eq!(mock.last_request().unwrap().model, MODEL);
         // The default thinking level (Low) threads onto the request.
         let req = mock.last_request().unwrap();
         assert_eq!(req.reasoning_effort, Some(ReasoningEffort::Low));
@@ -785,7 +777,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn image_mode_selects_the_vision_model() {
+    async fn image_mode_sends_the_screenshot_turn() {
         let (agent, mock) = mock_agent();
         let guide = Guide::new(Arc::new(Mutex::new(agent)));
         let game = fresh_game();
@@ -803,7 +795,18 @@ mod tests {
         // the frontend renders its own captured copy in the player's bubble.
         assert_eq!(user_text, "");
         while stream.next().await.is_some() {}
-        assert_eq!(mock.last_request().unwrap().model, VISION_MODEL);
+        // The wired request carries the screenshot block itself, not just
+        // `user_message`'s return value.
+        let request = mock.last_request().expect("mock recorded a request");
+        match request.messages.last() {
+            Some(Message::User { content }) => {
+                let expected = vec![ContentBlock::ImageUrl(
+                    "data:image/png;base64,not-valid!!!".to_string(),
+                )];
+                assert_eq!(content, &expected);
+            }
+            other => panic!("expected a user message, got {other:?}"),
+        }
     }
 
     #[tokio::test]

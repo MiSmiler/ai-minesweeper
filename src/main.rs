@@ -16,7 +16,7 @@ use tracing_subscriber::EnvFilter;
 use crate::ai::agent::{Agent, ProviderSet, Session};
 use crate::ai::protocol::{ContentBlock, Message};
 use crate::ai::provider::{DeepSeek, DeepSeekConfig};
-use crate::ai_adapter::{DEFAULT_MODEL, Guide};
+use crate::ai_adapter::{Guide, MODEL};
 use crate::core::{Difficulty, Features, Game, GameConfig, Seed};
 
 /// Command-line options for the game server.
@@ -102,14 +102,14 @@ async fn main() {
     // AI assembly (issue #116/#117): a real DeepSeek Provider is registered
     // only when a key is present; absent it, the `/ai/...` routes still mount
     // and a `suggest` pre-flight fails cleanly with a `config` ProviderError.
-    // `Guide::suggest` picks the model per format, so the model here is a
-    // default and the provider is fixed to the DeepSeek entry.
+    // `Guide::suggest` sets the model on every call; the provider is fixed to
+    // the DeepSeek entry.
     let mut providers = ProviderSet::new();
     if let Some(config) = DeepSeekConfig::from_env() {
         providers.insert("deepseek".to_string(), Box::new(DeepSeek::new(config)));
     }
     let mut agent = Agent::new(providers);
-    agent.set_model(DEFAULT_MODEL.to_string(), Some("deepseek"));
+    agent.set_model(MODEL.to_string(), Some("deepseek"));
     // The `Guide` holds the agent behind a `tokio::sync::Mutex` so its guard
     // (held across the streaming network call) is `Send` for the axum handler.
     let guide = Guide::new(Arc::new(tokio::sync::Mutex::new(agent)));
@@ -139,11 +139,6 @@ async fn main() {
     axum::serve(listener, router).await.expect("server error");
 }
 
-/// The default model name used by the `--test-ai-chat` self-check. It is an
-/// app-level string choice (like `ai_adapter::DEFAULT_MODEL`), not a model
-/// name the provider owns; `DeepSeek` validates it against `GET /models`.
-const TEST_AI_MODEL: &str = "deepseek-v4-flash";
-
 /// The `--test-ai-chat` self-check (issue #116): a real `DeepSeek` provider
 /// exercises the `complete_once` path — one `User` message in, one `Assistant`
 /// reply out (content + reasoning). Requires `DEEPSEEK_API_KEY`; absent it, AI
@@ -154,7 +149,7 @@ async fn run_test_ai_chat(prompt: &str) -> Result<(), String> {
     let mut providers = ProviderSet::new();
     providers.insert("deepseek".to_string(), Box::new(DeepSeek::new(config)));
     let mut agent = Agent::new(providers);
-    agent.set_model(TEST_AI_MODEL.to_string(), Some("deepseek"));
+    agent.set_model(MODEL.to_string(), Some("deepseek"));
 
     let mut session = Session::new(Message::System {
         content: "You are a helpful assistant. Reply concisely to the user's message.".to_string(),

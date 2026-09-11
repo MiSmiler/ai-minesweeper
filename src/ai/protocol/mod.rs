@@ -79,12 +79,12 @@ enum ContentWire {
 }
 
 /// The inner `{url}` object of an `image_url` content block. `detail: "low"`
-/// asks the vision model for a low-resolution rendering, capping each image at
-/// a small token budget (issue #120: every image ≤384 tokens).
+/// asks DeepSeek to downscale the image to 512×512 before inference — the
+/// cheap rendering (issue #120), bounding each image at ≤1024 tokens.
 #[derive(Debug, Serialize)]
 struct ImageUrlWire {
     url: String,
-    /// OpenAI-compatible low-detail vision rendering (≈85 tokens per image).
+    /// DeepSeek low-detail rendering: the image is downscaled to 512×512.
     detail: &'static str,
 }
 
