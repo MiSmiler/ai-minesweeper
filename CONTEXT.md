@@ -103,7 +103,7 @@ The first Reveal of a game; the Timer starts at it, and it places the Mines for 
 _Avoid_: Initial click, opening move
 
 **pinned_seed**:
-The optional Seed fixed in `GameConfig` for a game's Mine layout: `Some` pins one Seed so the same Difficulty reproduces the same layout, `None` draws a fresh random Seed per game. Prank is mutually exclusive with a pinned Seed — a Prank game drops any passed Seed — so a pinned Seed is only ever a non-Prank channel. It is a backend detail, never shown to the player. It is the session's intent, set at launch and flowing into every GameConfig, distinct from a Game's committed Seed.
+The optional Seed fixed in `GameConfig` for a game's Mine layout: `Some` pins one Seed so the same Difficulty reproduces the same layout, `None` draws a fresh random Seed per game. Prank is mutually exclusive with a pinned Seed — a Prank game drops any passed Seed — so a pinned Seed is only ever a non-Prank channel. It is a backend detail, never shown to the player. It is the launch-time intent, fixed at launch and reused by every Game (flowing into every GameConfig), distinct from a Game's committed Seed.
 _Avoid_: Seed policy, pinned policy
 
 **committed_seed**:
@@ -133,3 +133,22 @@ _Avoid_: PlaySurface, view, perspective (when meaning the mode)
 **InputMode**:
 The way the Board is put in front of DeepSeek: `Plain` (the character grid), `Emoji`, or `Image` (a screenshot of the Board). Distinct from **PlayMode**, which is the perspective the player sees.
 _Avoid_: BoardFormat, format, input format
+
+**AI Session**:
+The conversation with the AI Agent bound to one Game: the accumulated
+`user` / `assistant` messages the advisor sees, spanning every Send of that
+Game. The backend owns it and creates it on request. A fresh AI Session is
+empty; its first committed Send binds the InputMode (the board legend in its
+system prompt), and a New Game ends it.
+_Avoid_: session, chat, context, conversation
+
+**Send**:
+The player action that appends the current Board to the AI Session as a `user`
+message and asks the AI Agent to reply. Its reply completes the Turn.
+_Avoid_: analysis, request, prompt
+
+**Turn**:
+One Send together with the AI Agent's reply: the committed `user` / `assistant`
+pair. A Turn enters the AI Session as a unit — an interrupted or failed Send
+adds no Turn.
+_Avoid_: round, exchange, message pair

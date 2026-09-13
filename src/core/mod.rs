@@ -175,7 +175,7 @@ pub struct GameConfig {
 }
 
 impl GameConfig {
-    /// Builds a `GameConfig` from a Difficulty, the session's Features, and
+    /// Builds a `GameConfig` from a Difficulty, the Game's Features, and
     /// the pinned Seed (issue #100). A `Some(pinned_seed)` pins that exact
     /// Seed for the layout; `None` makes a fresh Random game (a new Seed
     /// drawn per play). Prank is mutually exclusive with a pinned Seed: a
@@ -278,7 +278,7 @@ impl Game {
 
     /// Starts a fresh game from this game's config, optionally switching
     /// Difficulty. Reuses the same Features and pinned Seed set at creation,
-    /// so the session's launch-time intent is preserved. `None` keeps the
+    /// so the reused launch config is preserved. `None` keeps the
     /// current Difficulty.
     pub fn new_game(&mut self, difficulty: Option<Difficulty>) {
         let difficulty = difficulty.unwrap_or(self.config.difficulty);

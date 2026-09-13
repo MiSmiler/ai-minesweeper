@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn new_game_reuses_session_features_and_seed() {
+    fn new_game_reuses_its_features_and_seed() {
         let mut game = Game::with_config(GameConfig::new(
             Difficulty::Beginner,
             Features::prank(),

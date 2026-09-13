@@ -804,8 +804,8 @@ fn prank_config_first_click_is_always_a_mine() {
 }
 
 #[test]
-fn new_game_keeps_session_features_and_seed() {
-    // A Prank game's `new_game(None)` reuses the session config: the same
+fn new_game_keeps_its_features_and_seed() {
+    // A Prank game's `new_game(None)` reuses the launch config: the same
     // Features and the (dropped) Seed, so it stays an unseedable Prank.
     let mut game = Game::with_config(GameConfig::new(
         Difficulty::Beginner,

@@ -30,7 +30,7 @@ struct Cli {
     #[arg(long, conflicts_with = "seed")]
     prank: bool,
 
-    /// Pin one Seed for every game of this session: each Difficulty
+    /// Pin one Seed for every game in this server run: each Difficulty
     /// reproduces the same Mine layout. Absent, every New Game draws a
     /// fresh random Seed, printed to the terminal. Mutually exclusive with
     /// `--prank`.
@@ -91,8 +91,8 @@ async fn main() {
     // game per play (issue #100). The Seed is committed (and logged) at the
     // First Click for every game.
     //
-    // The session's launch-time intent is fixed here: one game at a time, with
-    // the Features and pinned Seed set once at launch (issue #103). The Game's
+    // The launch config is fixed here: one game at a time, with the Features
+    // and pinned Seed set once at launch (issue #103). The Game's
     // config is the single source of truth — every New Game reuses it, switching
     // only the Difficulty.
     let game = Game::with_config(GameConfig::new(Difficulty::Beginner, features, cli.seed));
