@@ -1,32 +1,42 @@
-// The guide state machine (issue #119): owns the analysis run's phase and the
-// accumulated `reasoning` / `content` text. It is deliberately thin — the
-// phase + text accumulation only. History binding, mode-change confirm, and
-// the pre-flight alert all live in the `app/` assembly layer.
+// The guide state machine (issue #119, #133): owns the Send run's phase, the
+// AI Session's `sessionState`, and the accumulated `reasoning` / `content`
+// text. It is deliberately thin — phase + text accumulation + session
+// lifecycle only. History binding, mode-change confirm, and the pre-flight
+// alert all live in the `app/` assembly layer.
 //
-// Generation tracking: each `start()` / `reset()` bumps a generation counter.
-// `reset()` (new game, mode change) or a fresh `start()` may happen while a
-// previous SSE stream is still in flight (the frontend keeps the stream open on
-// interrupt, #97). Events from a superseded generation are dropped so a stale
-// stream can never corrupt the current state.
+// Generation tracking: each `newSession()` / `endSession()` / `send()` bumps a
+// generation counter, and the event callbacks capture the generation they were
+// created in. A lifecycle change may happen while a previous SSE stream is
+// still in flight (the frontend keeps the stream open on interrupt, #97), so
+// events from a superseded generation are dropped and a stale stream can never
+// corrupt the current state.
+//
+// The AI Session itself is backend-owned (ADR-0017): `newSession()` asks the
+// backend for an id, `send()` appends to it, and `endSession()` drops it. The
+// machine holds only the id and the session's `empty` / `non-empty` predicate.
 
+import { isProviderError } from "./api";
 import type {
   AiApi,
   GuideEvent,
-  GuideRequest,
   InterruptReason,
   ProviderError,
+  SendRequest,
 } from "./api";
 
-/** The phase of a single guide analysis run. */
+/** The phase of a single Send run. */
 export type GuidePhase =
   "idle" | "running" | "done" | "interrupted" | "preflight-failed";
 
-/** The accumulated state of the current analysis. `reasoning` and `content`
- * are the two AI streams, accumulated across `reasoning` / `content` events;
- * `user` is the verbatim player message echoed by the backend (issue #124),
- * and `userImageUrl` is the player's screenshot for the image form. */
+/** Whether an AI Session is live: `none` (no session), `empty` (created, no
+ * committed Turn), `non-empty` (at least one committed Turn). The `empty` /
+ * `non-empty` split drives both the InputMode lock and the discard confirm. */
+export type SessionState = "none" | "empty" | "non-empty";
+
+/** The accumulated state of the current Send and its AI Session. */
 export interface GuideState {
   phase: GuidePhase;
+  sessionState: SessionState;
   /** Accumulated reasoning stream (light, collapsible in the dialog). */
   reasoning: string;
   /** Accumulated content stream (normal font, not collapsible). */
@@ -42,30 +52,35 @@ export interface GuideState {
 }
 
 export interface GuideMachine {
-  /** Starts one round of analysis; `GuideMachine.start()` 一次 = 一次 `Guide::suggest`. */
-  start(req: GuideRequest): void;
+  /** Loads the AI runtime and requests an empty AI Session from the backend. */
+  newSession(): Promise<void>;
+  /** Ends the live AI Session (New Game / PlayMode switch). */
+  endSession(): void;
+  /** Appends the current board to the live AI Session. */
+  send(req: SendRequest): void;
   /** User-initiated cancel: POST /ai/guide/:id/interrupt (the SSE stays open). */
   interrupt_by_user(): Promise<void>;
-  /** Clears the run (input-mode change / new game / mode switch). */
-  reset(): void;
   /** Subscribes to state changes; returns an unsubscribe. */
   onState(cb: (state: GuideState) => void): () => void;
 }
 
-/** Builds a `GuideMachine` over the given `AiApi`. `newSessionId` is called
- * once per `start()` so each analysis is independently cancelable. */
-export function createGuideMachine(deps: {
-  api: AiApi;
-  newSessionId: () => string;
-}): GuideMachine {
-  let state: GuideState = {
+/** An idle state with the given session state and no accumulated text. */
+function idleState(sessionState: SessionState): GuideState {
+  return {
     phase: "idle",
+    sessionState,
     reasoning: "",
     content: "",
     user: "",
   };
+}
+
+/** Builds a `GuideMachine` over the given `AiApi`. The session id is issued by
+ * the backend (`createSession`); the machine holds it for `send` / `interrupt`. */
+export function createGuideMachine(deps: { api: AiApi }): GuideMachine {
+  let state: GuideState = idleState("none");
   let generation = 0;
-  let sessionId = deps.newSessionId();
+  let sessionId: string | null = null;
   const listeners = new Set<(s: GuideState) => void>();
 
   const emit = (): void => {
@@ -86,7 +101,8 @@ export function createGuideMachine(deps: {
         state = { ...state, user: e.text };
         break;
       case "sse_done":
-        state = { ...state, phase: "done" };
+        // A committed Turn: an empty session becomes non-empty.
+        state = { ...state, phase: "done", sessionState: "non-empty" };
         break;
       case "interrupt":
         state = { ...state, phase: "interrupted", interruptReason: e.reason };
@@ -102,18 +118,53 @@ export function createGuideMachine(deps: {
   };
 
   return {
-    start(req) {
+    async newSession() {
       const g = ++generation;
-      sessionId = deps.newSessionId();
+      // The old session is being replaced: drop its id immediately so any
+      // in-flight Send becomes stale.
+      sessionId = null;
+      state = idleState("none");
+      emit();
+      let created: { sessionId: string };
+      try {
+        created = await deps.api.createSession();
+      } catch (err) {
+        if (g !== generation) return; // superseded while creating
+        const providerError: ProviderError = isProviderError(err)
+          ? err
+          : {
+              kind: "upstream",
+              code: null,
+              message: err instanceof Error ? err.message : String(err),
+            };
+        state = { ...state, phase: "preflight-failed", providerError };
+        emit();
+        return;
+      }
+      if (g !== generation) return; // superseded while creating
+      sessionId = created.sessionId;
+      state = { ...state, sessionState: "empty" };
+      emit();
+    },
+    endSession() {
+      generation++; // invalidate any in-flight stream
+      sessionId = null;
+      state = idleState("none");
+      emit();
+    },
+    send(req) {
+      if (sessionId === null) return; // no live session: a no-op
+      const g = ++generation;
       state = {
         phase: "running",
+        sessionState: state.sessionState,
         reasoning: "",
         content: "",
         user: "",
         userImageUrl: req.imageDataUrl,
       };
       emit();
-      deps.api.startGuide(
+      deps.api.send(
         sessionId,
         req,
         (e) => onEvent(g, e),
@@ -121,12 +172,8 @@ export function createGuideMachine(deps: {
       );
     },
     async interrupt_by_user() {
+      if (sessionId === null) return;
       await deps.api.interrupt_by_user(sessionId);
-    },
-    reset() {
-      generation++; // invalidate any in-flight stream
-      state = { phase: "idle", reasoning: "", content: "", user: "" };
-      emit();
     },
     onState(cb) {
       listeners.add(cb);

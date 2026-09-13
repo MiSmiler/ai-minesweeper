@@ -1,10 +1,10 @@
 import { log } from "../infra/log";
 
-// Frontend wire type contract for the AI guide transport (issue #114) and the
-// real SSE consumer (issue #119).
+// Frontend wire type contract for the AI Session transport (issue #114, #131)
+// and the real SSE consumer (issue #119).
 //
 // The backend wire events are isomorphic to the server's `GuideEventDto`
-// ([src/server/ai_routes.rs](/src/server/ai_routes.rs)). `startGuide` POSTs
+// ([src/server/ai_routes.rs](/src/server/ai_routes.rs)). `send` POSTs
 // `/ai/guide/:id` and parses the SSE stream: each `data:` payload is either
 // `[DONE]` (synthesized locally as `{kind:"sse_done"}` — the backend
 // `GuideEventDto` has no `Done` variant, a finished stream just ends as
@@ -42,9 +42,10 @@ export type ProviderError = {
   message: string;
 };
 
-/** The frontend's request: only `inputMode` plus an optional `imageDataUrl` for
- * the image mode. No model is sent — the backend picks its DeepSeek default. */
-export interface GuideRequest {
+/** The frontend's Send request: only `inputMode` plus an optional
+ * `imageDataUrl` for the image mode. No model is sent — the backend picks its
+ * DeepSeek default. */
+export interface SendRequest {
   inputMode: InputMode;
   /** #122 reasoning depth; the backend defaults to `low` when absent. */
   thinkingLevel?: ThinkingLevel;
@@ -52,26 +53,46 @@ export interface GuideRequest {
 }
 
 /** The AI slice entry point, injected via `AppDeps`. The real implementation
- * (`createAiApi`) consumes the backend `/ai/guide` SSE transport (issue #119).
- */
+ * (`createAiApi`) talks to the backend AI Session routes: `createSession`
+ * POSTs `/ai/session`, `send` POSTs `/ai/guide/{id}` (issue #131, #133). */
 export interface AiApi {
-  /** Starts one analysis (the "Analyze" button): streams `GuideEvent`s as they arrive. */
-  startGuide(
+  /** Loads the AI runtime, then creates an EMPTY AI Session (no InputMode
+   * bound yet) and returns its id. A load failure rejects with a
+   * `ProviderError` (see `isProviderError`). */
+  createSession(): Promise<{ sessionId: string }>;
+  /** Appends the current board; the first committed Send binds the InputMode. */
+  send(
     sessionId: string,
-    req: GuideRequest,
+    req: SendRequest,
     onEvent: (e: GuideEvent) => void,
     onProviderError: (e: ProviderError) => void,
   ): void;
-  /** Cancels the running analysis for a session (the "Interrupt" button). */
+  /** Cancels the in-flight Send of that AI Session. */
   interrupt_by_user(sessionId: string): Promise<unknown>;
 }
 
-/** Builds the real `AiApi` that talks to the backend `/ai/guide` SSE routes.
- * `startGuide` does not `abort` the SSE on interrupt — the backend emits the
+/** Builds the real `AiApi` that talks to the backend AI Session routes.
+ * `send` does not `abort` the SSE on interrupt — the backend emits the
  * `interrupt` event on the open stream (issue #97, #119). */
 export function createAiApi(): AiApi {
   return {
-    startGuide(sessionId, req, onEvent, onProviderError) {
+    async createSession() {
+      let res: Response;
+      try {
+        res = await fetch("/ai/session", { method: "POST" });
+      } catch (err) {
+        log.error("POST /ai/session failed", err);
+        throw asProviderError(err);
+      }
+      if (!res.ok) {
+        const providerError = await readProviderError(res);
+        log.error(`POST /ai/session failed: ${res.status}`);
+        throw providerError;
+      }
+      const body = (await res.json()) as { session_id: string };
+      return { sessionId: body.session_id };
+    },
+    send(sessionId, req, onEvent, onProviderError) {
       void consumeGuide(sessionId, req, onEvent, onProviderError);
     },
     async interrupt_by_user(sessionId) {
@@ -95,8 +116,8 @@ export function createAiApi(): AiApi {
 
 /** The frontend request body on the wire. The frontend type keeps the
  * camelCase `imageDataUrl` (issue #114), but the backend
- * `ai_adapter::GuideRequest` field is snake_case `image_data_url`. */
-function wireRequest(req: GuideRequest): Record<string, unknown> {
+ * `ai_adapter::SendRequest` field is snake_case `image_data_url`. */
+function wireRequest(req: SendRequest): Record<string, unknown> {
   return {
     input_mode: req.inputMode,
     thinking_level: req.thinkingLevel,
@@ -104,10 +125,10 @@ function wireRequest(req: GuideRequest): Record<string, unknown> {
   };
 }
 
-/** POSTs the guide request and forwards the SSE stream to `onEvent`. */
+/** POSTs the Send request and forwards the SSE stream to `onEvent`. */
 async function consumeGuide(
   sessionId: string,
-  req: GuideRequest,
+  req: SendRequest,
   onEvent: (e: GuideEvent) => void,
   onProviderError: (e: ProviderError) => void,
 ): Promise<void> {
@@ -128,6 +149,26 @@ async function consumeGuide(
     return;
   }
   await consumeSse(res, onEvent);
+}
+
+/** Shapes an unknown failure as an `upstream` `ProviderError`, so the machine
+ * can alert it through the same path as a Send pre-flight. */
+function asProviderError(err: unknown): ProviderError {
+  return {
+    kind: "upstream",
+    code: null,
+    message: err instanceof Error ? err.message : String(err),
+  };
+}
+
+/** Narrows an unknown thrown value to a `ProviderError`. */
+export function isProviderError(value: unknown): value is ProviderError {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "kind" in value &&
+    "message" in value
+  );
 }
 
 /** Parses a non-OK guide response into a `ProviderError` (or a fallback). */

@@ -294,6 +294,13 @@ impl DeepSeek {
 
 #[async_trait]
 impl Provider for DeepSeek {
+    /// Loads the provider for `model`: fetches/caches `GET /models` and checks
+    /// the model is in it. A missing/invalid key or an unknown model surfaces
+    /// here, before any Turn starts. Pure delegation to [`Self::validate_model`].
+    async fn load(&self, model: &str) -> Result<(), ProviderError> {
+        self.validate_model(model).await
+    }
+
     async fn stream_chat(
         &self,
         req: ChatRequest,
@@ -495,6 +502,21 @@ mod tests {
         let err = provider(&server).validate_model("nope").await.unwrap_err();
         assert_eq!(err.kind, ProviderErrorKind::Config);
         assert_eq!(err.code, None);
+    }
+
+    #[tokio::test]
+    async fn load_delegates_to_validate_model() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(models_template(&["deepseek-chat"]))
+            .mount(&server)
+            .await;
+        let ds = provider(&server);
+        assert!(ds.load("deepseek-chat").await.is_ok());
+        // The cached list rejects an unknown model with a Config error.
+        let err = ds.load("nope").await.unwrap_err();
+        assert_eq!(err.kind, ProviderErrorKind::Config);
     }
 
     // --- stream_chat ---

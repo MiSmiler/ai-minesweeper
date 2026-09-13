@@ -44,4 +44,11 @@ pub trait Provider: Send + Sync {
         req: ChatRequest,
         cancel: CancellationToken,
     ) -> Result<ProviderStream, ProviderError>;
+
+    /// Loads the provider for `model`: verifies its config and that the model
+    /// is reachable before any Turn starts (see `Guide::create_session`). The
+    /// default is a no-op for providers with no external config (the mock).
+    async fn load(&self, _model: &str) -> Result<(), ProviderError> {
+        Ok(())
+    }
 }

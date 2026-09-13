@@ -1,21 +1,30 @@
 // The `AiGuide` composition (ADR-0012): the top-left game area (a full copy
 // of SinglePlay with its own independent game client), the bottom-left
-// dashboard (analyze/interrupt, input mode, session strategy, row/col axis,
-// history), and the right dialog shell. The "Analyze" button drives the
-// `GuideMachine` (issue #119) which consumes the real SSE stream; the dialog is
-// rendered by `createConversation`.
+// dashboard (send/interrupt, new session, input mode, row/col axis, history),
+// and the right dialog shell. The "发送" button drives the `GuideMachine`
+// (issue #119) which consumes the real SSE stream; the dialog is rendered by
+// `createConversation`.
+//
+// The dashboard follows the AI Session (issue #133): Send is disabled while
+// there is no session, the InputMode select locks while a Send runs / the
+// session is non-empty, and the discard confirms fire exactly when the session
+// is `non-empty`.
 
 import type {
   InputMode,
-  GuideRequest,
   ProviderError,
+  SendRequest,
   ThinkingLevel,
 } from "../ai/api";
 import { createConversation } from "../ai/conversation";
 import { createBoardAxis, type AxisOverlay } from "../ai/axis";
-import { createGuideMachine, type GuideState } from "../ai/stateMachine";
+import {
+  createGuideMachine,
+  type GuideState,
+  type SessionState,
+} from "../ai/stateMachine";
 import { createGameArea, type GameArea } from "./gameArea";
-import type { AppDeps, Composition, SessionStrategy } from "./mode";
+import type { AppDeps, Composition } from "./mode";
 
 const MODES: ReadonlyArray<{ value: InputMode; label: string }> = [
   { value: "plain", label: "plain" },
@@ -28,15 +37,6 @@ const LEVELS: ReadonlyArray<{ value: ThinkingLevel; label: string }> = [
   { value: "low", label: "low" },
   { value: "high", label: "high" },
   { value: "max", label: "max" },
-];
-
-const STRATEGIES: ReadonlyArray<{
-  value: SessionStrategy;
-  label: string;
-  disabled: boolean;
-}> = [
-  { value: "per-analysis", label: "per-analysis", disabled: false },
-  { value: "per-game", label: "per-game (未实现)", disabled: true },
 ];
 
 /** Wraps a dropdown with a left-side caption explaining what it does. */
@@ -89,10 +89,13 @@ export function composeGuideMode(
 
   let currentMode: InputMode = "plain";
   // The reasoning depth (issue #122): default low, session-persistent, and
-  // independent of the input mode — changing it never clears the guide history.
+  // independent of the input mode — changing it never invalidates a session.
   let currentLevel: ThinkingLevel = "low";
   let history: Array<{ mode: InputMode; state: GuideState }> = [];
   let running = false;
+  // Mirrors the machine's `sessionState` so the synchronous predicates
+  // (`beforeNewGame`, `confirmDiscard`) can read it without a subscription.
+  let sessionState: SessionState = "none";
   // The axis overlay needs `boardEl`, so it is created after the game area;
   // `onRender` may fire before the assignment below completes, but it only
   // fires once the initial snapshot loads asynchronously, by which time the
@@ -101,17 +104,25 @@ export function composeGuideMode(
 
   const gameArea: GameArea = createGameArea(gameZone, {
     onNewGame: () => {
-      // A new game abandons the current board: reset the per-game session and
-      // history (issue #114: history binds to the current game).
+      // A new game ends the AI Session (the backend's new-game action already
+      // ended it); the history list is per-game and resets with it (issue #133).
       history = [];
-      machine.reset();
+      machine.endSession();
       renderHistory();
     },
-    // Any new game (smiley or difficulty) discards the per-game history; ask
-    // first when there is history to lose (issue #112 US-32 spirit).
-    beforeNewGame: () =>
-      history.length === 0 ||
-      window.confirm("开始新游戏将清空 guide 历史，是否继续？"),
+    // A new game discards a non-empty AI Session; ask first exactly when the
+    // session is non-empty (issue #133). Pressing New Game during an in-flight
+    // Send interrupts it first.
+    beforeNewGame: () => {
+      if (
+        sessionState === "non-empty" &&
+        !window.confirm("开始新游戏将结束当前 AI 会话，是否继续？")
+      ) {
+        return false;
+      }
+      if (running) void machine.interrupt_by_user();
+      return true;
+    },
     // Render the 0-based row/col labels for the live Board (issue #118). The
     // axis is pure DOM and sits outside the Board, so it never affects the 4
     // AI input forms.
@@ -122,22 +133,30 @@ export function composeGuideMode(
   // here (backed by the same axis above) once the board loads.
   axis = createBoardAxis(gameArea.boardEl);
 
-  /** A fresh session id per analysis; the backend only needs uniqueness. */
-  function newSessionId(): string {
-    return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  }
-
   // --- Bottom-left dashboard ---
   const dashboard = document.createElement("div");
   dashboard.className = "guide-dashboard";
   left.appendChild(dashboard);
 
-  // Analyze / interrupt button (dual state, user story #34).
-  const analysisBtn = document.createElement("button");
-  analysisBtn.type = "button";
-  analysisBtn.className = "analysis-btn";
-  analysisBtn.textContent = "分析";
-  dashboard.appendChild(analysisBtn);
+  // Send / interrupt button (dual state, user story #34) next to the new
+  // session button (issue #133).
+  const buttonRow = document.createElement("div");
+  buttonRow.className = "button-row";
+  dashboard.appendChild(buttonRow);
+
+  const sendBtn = document.createElement("button");
+  sendBtn.type = "button";
+  sendBtn.className = "send-btn";
+  sendBtn.textContent = "发送";
+  sendBtn.disabled = true; // no AI Session yet
+
+  const newSessionBtn = document.createElement("button");
+  newSessionBtn.type = "button";
+  newSessionBtn.className = "new-session-btn";
+  newSessionBtn.textContent = "新建AI会话";
+
+  // New session sits to the left of Send (issue #133).
+  buttonRow.append(newSessionBtn, sendBtn);
 
   // Input-mode dropdown (3 modes, user story #20/#21).
   const modeSelect = document.createElement("select");
@@ -152,23 +171,14 @@ export function composeGuideMode(
   modeSelect.addEventListener("change", () => {
     const next = modeSelect.value as InputMode;
     if (next === currentMode) return;
-    // Changing mode invalidates old analyses: confirm + clear (user story
-    // #32; the decision lives in the assembly layer).
-    if (history.length > 0) {
-      if (!window.confirm("更改输入模式将清空历史，是否继续？")) {
-        modeSelect.value = currentMode; // decline: revert the selection
-        return;
-      }
-    }
+    // The select is locked once a Send runs / commits, so a change happens
+    // only while the session is empty and the history list is already empty.
     currentMode = next;
-    history = [];
-    machine.reset();
-    renderHistory();
   });
 
   // Thinking-level dropdown (issue #122: off/low/high/max, default low). The
-  // level is an analysis-strength setting, not a board view — changing it never
-  // invalidates or clears the guide history (unlike the mode select).
+  // level is a Send-strength setting, not a board view — changing it never
+  // invalidates a session (unlike the mode select).
   const levelSelect = document.createElement("select");
   levelSelect.className = "level-select";
   for (const l of LEVELS) {
@@ -182,19 +192,6 @@ export function composeGuideMode(
   levelSelect.addEventListener("change", () => {
     currentLevel = levelSelect.value as ThinkingLevel;
   });
-
-  // Session-strategy dropdown (user story / issue #96: per-analysis usable,
-  // per-game greyed and labelled "not implemented").
-  const strategySelect = document.createElement("select");
-  strategySelect.className = "strategy-select";
-  for (const s of STRATEGIES) {
-    const opt = document.createElement("option");
-    opt.value = s.value;
-    opt.textContent = s.label;
-    opt.disabled = s.disabled;
-    strategySelect.appendChild(opt);
-  }
-  dashboard.appendChild(labeledField("会话策略", strategySelect));
 
   // Row/col axis checkbox (user story #16–#19).
   const axisCheckbox = document.createElement("input");
@@ -229,19 +226,25 @@ export function composeGuideMode(
   container.appendChild(dialog);
 
   const conversation = createConversation(dialogStream);
-  const machine = createGuideMachine({ api: deps.aiApi, newSessionId });
+  const machine = createGuideMachine({ api: deps.aiApi });
 
   function setRunning(next: boolean): void {
     running = next;
-    analysisBtn.textContent = next ? "中断" : "分析";
-    analysisBtn.classList.toggle("running", next);
+    sendBtn.textContent = next ? "中断" : "发送";
+    sendBtn.classList.toggle("running", next);
     historyList.classList.toggle("locked", next);
   }
 
   const unsubscribe = machine.onState((state) => {
     conversation.render(state);
+    sessionState = state.sessionState;
     setRunning(state.phase === "running");
-    // A completed analysis is recorded in history; interrupted / pre-flight
+    // The InputMode is bound by the first committed Send: lock the select
+    // while a Send runs or the session is non-empty (issue #133).
+    sendBtn.disabled = state.sessionState === "none";
+    modeSelect.disabled =
+      state.sessionState === "non-empty" || state.phase === "running";
+    // A completed Send is recorded in history; interrupted / pre-flight
     // failures are not (partial / absent output, issue #97).
     if (state.phase === "done") {
       history.push({ mode: currentMode, state: { ...state } });
@@ -267,7 +270,7 @@ export function composeGuideMode(
       li.dataset.index = String(i);
       li.textContent = `分析 #${i + 1} (${entry.mode})`;
       li.addEventListener("click", () => {
-        if (running) return; // Not clickable while an analysis is running (user story #31)
+        if (running) return; // Not clickable while a Send is running (user story #31)
         conversation.render(entry.state);
       });
       historyList.appendChild(li);
@@ -276,7 +279,7 @@ export function composeGuideMode(
   renderHistory();
 
   async function startAnalysis(): Promise<void> {
-    if (running) return;
+    if (running || sessionState === "none") return;
     const mode = currentMode;
     let imageDataUrl: string | undefined;
     if (mode === "image") {
@@ -290,21 +293,41 @@ export function composeGuideMode(
         return;
       }
     }
-    const req: GuideRequest = {
+    const req: SendRequest = {
       inputMode: mode,
       thinkingLevel: currentLevel,
       imageDataUrl,
     };
-    machine.start(req);
+    machine.send(req);
   }
 
-  analysisBtn.addEventListener("click", () => {
+  async function startNewSession(): Promise<void> {
+    // Replacing a non-empty session discards its Turns; ask first (the same
+    // predicate as the InputMode lock, issue #133).
+    if (
+      sessionState === "non-empty" &&
+      !window.confirm("新建AI会话将结束当前会话，是否继续？")
+    ) {
+      return;
+    }
+    // Pressing new session during an in-flight Send interrupts it first.
+    if (running) await machine.interrupt_by_user();
+    history = [];
+    renderHistory();
+    await machine.newSession();
+  }
+
+  sendBtn.addEventListener("click", () => {
     if (running) void machine.interrupt_by_user();
     else void startAnalysis();
+  });
+  newSessionBtn.addEventListener("click", () => {
+    void startNewSession();
   });
 
   const dispose = (): void => {
     unsubscribe();
+    machine.endSession();
     axis?.destroy();
     gameArea.dispose();
     container.remove();
@@ -312,10 +335,10 @@ export function composeGuideMode(
 
   return {
     dispose,
-    /** True while the guide holds analyses a refresh / mode switch would clear. */
-    hasGuideHistory: () => history.length > 0,
-    /** Blocking confirm before discarding guide history (mode switch). */
+    /** True while the AI Session holds Turns a refresh / mode switch would clear. */
+    hasGuideHistory: () => sessionState === "non-empty",
+    /** Blocking confirm before discarding a non-empty AI Session (mode switch). */
     confirmDiscard: (message) =>
-      history.length === 0 || window.confirm(message),
+      sessionState !== "non-empty" || window.confirm(message),
   };
 }

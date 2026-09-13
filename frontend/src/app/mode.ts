@@ -11,13 +11,6 @@ import { composeSingleMode } from "./singleMode";
 /** The runtime identifier of a PlayMode (kebab). */
 export type PlayModeName = "single" | "ai-guide";
 
-/** The session strategy concept (issue #96: 4 forms × 2 strategies): a
- * `per-analysis` run opens one fresh context each analysis; `per-game` would
- * accumulate context across analyses in the same session (unimplemented — the
- * UI greys it out and labels it "not implemented"). It is a composition-layer UI
- * concept only; it is not sent to `AiApi`/the backend in this ticket. */
-export type SessionStrategy = "per-analysis" | "per-game";
-
 /** Screenshots the board into a data URL — the `ai/screenshot.ts` signature.
  * Injected (rather than imported) so jsdom tests can substitute it, since the
  * browser-only capture never runs under jsdom. `createBoardAxis` is pure DOM
@@ -39,17 +32,17 @@ export interface AppDeps {
 
 /** A mounted PlayMode composition, with an optional guard the shell consults
  * before discarding it (mode switch) or on a page unload (refresh). Only the
- * AiGuide composition implements the guard — it is the only one that holds
- * guide analyses whose loss a refresh / switch would silently discard
- * (issue #112 US-32: any history-clearing operation asks first). */
+ * AiGuide composition implements the guard — it is the only one that holds a
+ * live AI Session whose loss a refresh / switch would silently discard
+ * (issue #112 US-32: any clearing operation asks first). */
 export interface Composition {
   /** Tears down the composition; the current Game is abandoned (ADR-0012). */
   dispose(): void;
-  /** True while the composition holds guide analyses a refresh/switch would
-   * discard (i.e. guide history is non-empty). */
+  /** True while the composition holds a non-empty AI Session a refresh/switch
+   * would discard. */
   hasGuideHistory?(): boolean;
-  /** Blocking confirm before discarding guide history; returns true to
-   * proceed. `message` is context-specific. Absent when there is no history
+  /** Blocking confirm before discarding the non-empty AI Session; returns true
+   * to proceed. `message` is context-specific. Absent when there is nothing
    * to discard — callers treat `undefined` as "proceed". */
   confirmDiscard?(message: string): boolean;
 }
@@ -57,7 +50,7 @@ export interface Composition {
 /** Mounts the composition for a mode into `root`. Switching modes = dispose
  * the current composition and mount a new one — the current Game is abandoned
  * and a fresh one starts (ADR-0012). Returns the composition so the shell can
- * guard a history-bearing switch. */
+ * guard a session-bearing switch. */
 export function mountMode(
   mode: PlayModeName,
   root: HTMLElement,

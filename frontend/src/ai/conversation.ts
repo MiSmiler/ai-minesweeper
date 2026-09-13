@@ -8,8 +8,12 @@
 
 import type { GuideState } from "./stateMachine";
 
+/** The slice of `GuideState` the dialog renders. The AI Session's
+ * `sessionState` drives the dashboard, not the dialog, so it is omitted. */
+export type ConversationState = Omit<GuideState, "sessionState">;
+
 export interface Conversation {
-  render(state: GuideState): void;
+  render(state: ConversationState): void;
 }
 
 /** Mounts the dialog into `container` and returns a renderer that updates it
@@ -90,7 +94,7 @@ export function createConversation(container: HTMLElement): Conversation {
     lightbox,
   );
 
-  const render = (state: GuideState): void => {
+  const render = (state: ConversationState): void => {
     // The player's boxed turn: show only when there is text or a screenshot.
     const hasUser = state.user !== "" || state.userImageUrl !== undefined;
     if (hasUser) {

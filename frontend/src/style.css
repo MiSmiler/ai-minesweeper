@@ -187,6 +187,16 @@ button:hover {
   background: var(--hidden-light);
 }
 
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* A disabled button must not light up on hover. */
+button:disabled:hover {
+  background: var(--hidden);
+}
+
 /* The difficulty buttons form the segmented control in .difficulty-row. */
 .difficulty {
   color: #3a3a42;
@@ -353,11 +363,18 @@ button:hover {
 }
 
 .guide-dashboard select,
-.guide-dashboard .analysis-btn {
+.guide-dashboard .send-btn,
+.guide-dashboard .new-session-btn {
   width: max-content;
 }
 
-.analysis-btn.running {
+/* The Send and new-session buttons sit side by side (issue #133). */
+.guide-dashboard .button-row {
+  display: flex;
+  gap: 6px;
+}
+
+.send-btn.running {
   background: var(--mine-bg);
   color: #fff;
 }

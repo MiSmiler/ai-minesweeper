@@ -3,7 +3,6 @@ mod ai_adapter;
 mod core;
 mod server;
 
-use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 
@@ -30,7 +29,7 @@ struct Cli {
     #[arg(long, conflicts_with = "seed")]
     prank: bool,
 
-    /// Pin one Seed for every game of this session: each Difficulty
+    /// Pin one Seed for every game in this server run: each Difficulty
     /// reproduces the same Mine layout. Absent, every New Game draws a
     /// fresh random Seed, printed to the terminal. Mutually exclusive with
     /// `--prank`.
@@ -91,8 +90,8 @@ async fn main() {
     // game per play (issue #100). The Seed is committed (and logged) at the
     // First Click for every game.
     //
-    // The session's launch-time intent is fixed here: one game at a time, with
-    // the Features and pinned Seed set once at launch (issue #103). The Game's
+    // The launch config is fixed here: one game at a time, with the Features
+    // and pinned Seed set once at launch (issue #103). The Game's
     // config is the single source of truth — every New Game reuses it, switching
     // only the Difficulty.
     let game = Game::with_config(GameConfig::new(Difficulty::Beginner, features, cli.seed));
@@ -101,9 +100,10 @@ async fn main() {
 
     // AI assembly (issue #116/#117): a real DeepSeek Provider is registered
     // only when a key is present; absent it, the `/ai/...` routes still mount
-    // and a `suggest` pre-flight fails cleanly with a `config` ProviderError.
-    // `Guide::suggest` sets the model on every call; the provider is fixed to
-    // the DeepSeek entry.
+    // and `Guide::create_session` fails cleanly with a `config` ProviderError
+    // (the new-session load), so the AI is reported unconfigured before any
+    // Send. `Guide::send` sets the model on every Send; the provider is fixed
+    // to the DeepSeek entry.
     let mut providers = ProviderSet::new();
     if let Some(config) = DeepSeekConfig::from_env() {
         providers.insert("deepseek".to_string(), Box::new(DeepSeek::new(config)));
@@ -114,11 +114,7 @@ async fn main() {
     // (held across the streaming network call) is `Send` for the axum handler.
     let guide = Guide::new(Arc::new(tokio::sync::Mutex::new(agent)));
 
-    let state = Arc::new(server::AppState {
-        game,
-        guide,
-        ai_sessions: Arc::new(Mutex::new(HashMap::new())),
-    });
+    let state = Arc::new(server::AppState { game, guide });
 
     // The built frontend (frontend/dist) is served at the root; unknown
     // paths fall back to index.html so client-side routing never 404s.
@@ -151,15 +147,19 @@ async fn run_test_ai_chat(prompt: &str) -> Result<(), String> {
     let mut agent = Agent::new(providers);
     agent.set_model(MODEL.to_string(), Some("deepseek"));
 
-    let mut session = Session::new(Message::System {
-        content: "You are a helpful assistant. Reply concisely to the user's message.".to_string(),
-    });
-    session.push(Message::User {
-        content: vec![ContentBlock::Text(prompt.to_string())],
-    });
+    let session = Session::new();
+    let pending = vec![
+        Message::System {
+            content: "You are a helpful assistant. Reply concisely to the user's message."
+                .to_string(),
+        },
+        Message::User {
+            content: vec![ContentBlock::Text(prompt.to_string())],
+        },
+    ];
 
     match agent
-        .complete_once(&session, CancellationToken::new())
+        .complete_once(&session, pending, CancellationToken::new())
         .await
     {
         Ok(Message::Assistant {
