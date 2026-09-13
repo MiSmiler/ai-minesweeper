@@ -80,13 +80,17 @@ pub(crate) fn ai_routes(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-/// `POST /ai/session`: replaces the live AI Session with an empty one and
-/// returns its id (the old session's Send is cancelled). The UI holds the
-/// discard confirm; the backend replaces unconditionally.
-async fn handle_new_session(State(state): State<Arc<AppState>>) -> Json<NewSessionDto> {
-    Json(NewSessionDto {
-        session_id: state.guide.create_session(),
-    })
+/// `POST /ai/session`: loads the AI runtime, then replaces the live AI Session
+/// with an empty one and returns its id (the old session's Send is cancelled).
+/// The UI holds the discard confirm; the backend replaces unconditionally. A
+/// load failure (no provider / bad key / unreachable model) maps to the same
+/// pre-flight `ProviderError` body as a Send, so the frontend alerts it before
+/// any Send.
+async fn handle_new_session(State(state): State<Arc<AppState>>) -> Response {
+    match state.guide.create_session().await {
+        Ok(session_id) => Json(NewSessionDto { session_id }).into_response(),
+        Err(err) => preflight_response(err),
+    }
 }
 
 /// `POST /ai/guide/{id}`: appends the current board to the AI Session `{id}`
@@ -266,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn send_future_is_send() {
         let (state, _mock) = app_state();
-        let id = state.guide.create_session();
+        let id = state.guide.create_session().await.unwrap();
         let game = state.game.lock().unwrap().clone();
         let fut = state.guide.send(&id, &game, plain_request());
         require_send(fut);
@@ -315,10 +319,37 @@ mod tests {
     #[tokio::test]
     async fn new_session_returns_a_fresh_id_each_time() {
         let (state, _mock) = app_state();
-        let first = handle_new_session(State(state.clone())).await.0.session_id;
-        let second = handle_new_session(State(state.clone())).await.0.session_id;
+        let first = new_session_id(&state).await;
+        let second = new_session_id(&state).await;
         assert!(!first.is_empty());
         assert_ne!(first, second);
+    }
+
+    #[tokio::test]
+    async fn new_session_without_a_provider_is_503_config() {
+        let agent = Agent::new(ProviderSet::new());
+        let guide = Guide::new(Arc::new(tokio::sync::Mutex::new(agent)));
+        let state = Arc::new(AppState {
+            game: Arc::new(Mutex::new(Game::with_config(GameConfig::new(
+                Difficulty::Beginner,
+                Features::NONE,
+                None,
+            )))),
+            guide,
+        });
+        let resp = handle_new_session(State(state.clone())).await;
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = body_as_string(resp).await;
+        assert!(body.contains("\"kind\":\"config\""));
+    }
+
+    /// Drives `handle_new_session` and parses the `session_id` out of its body.
+    async fn new_session_id(state: &Arc<AppState>) -> String {
+        let resp = handle_new_session(State(state.clone())).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_as_string(resp).await;
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        value["session_id"].as_str().unwrap().to_string()
     }
 
     // --- POST /ai/guide/{id} ---
@@ -341,7 +372,7 @@ mod tests {
     #[tokio::test]
     async fn guide_streams_reasoning_content_and_done() {
         let (state, _mock) = app_state();
-        let id = state.guide.create_session();
+        let id = state.guide.create_session().await.unwrap();
         let resp = handle_guide(
             State(state.clone()),
             Path(id.clone()),
@@ -366,7 +397,7 @@ mod tests {
     #[tokio::test]
     async fn a_second_send_while_in_flight_is_409() {
         let (state, _mock) = app_state();
-        let id = state.guide.create_session();
+        let id = state.guide.create_session().await.unwrap();
         let first = handle_guide(
             State(state.clone()),
             Path(id.clone()),
@@ -388,7 +419,7 @@ mod tests {
     #[tokio::test]
     async fn a_mode_switch_after_the_first_commit_is_400() {
         let (state, _mock) = app_state();
-        let id = state.guide.create_session();
+        let id = state.guide.create_session().await.unwrap();
         let first = handle_guide(
             State(state.clone()),
             Path(id.clone()),
@@ -409,7 +440,7 @@ mod tests {
     #[tokio::test]
     async fn image_mode_without_a_data_url_is_400() {
         let (state, _mock) = app_state();
-        let id = state.guide.create_session();
+        let id = state.guide.create_session().await.unwrap();
         let resp = handle_guide(
             State(state.clone()),
             Path(id.clone()),
@@ -421,40 +452,12 @@ mod tests {
         assert!(!state.guide.interrupt(&id));
     }
 
-    #[tokio::test]
-    async fn no_provider_maps_to_503_config() {
-        let agent = Agent::new(ProviderSet::new());
-        let guide = Guide::new(Arc::new(tokio::sync::Mutex::new(agent)));
-        let state = Arc::new(AppState {
-            game: Arc::new(Mutex::new(Game::with_config(GameConfig::new(
-                Difficulty::Beginner,
-                Features::NONE,
-                None,
-            )))),
-            guide,
-        });
-        let id = state.guide.create_session();
-        let resp = handle_guide(
-            State(state.clone()),
-            Path(id.clone()),
-            Json(plain_request()),
-        )
-        .await;
-        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-        // No SSE was started (no event-stream content type).
-        let body = body_as_string(resp).await;
-        assert!(body.contains("\"kind\":\"config\""));
-        assert!(!body.contains("event-stream"));
-        // The failed pre-flight released the Send slot.
-        assert!(!state.guide.interrupt(&id));
-    }
-
     // --- POST /ai/guide/{id}/interrupt ---
 
     #[tokio::test]
     async fn interrupt_cancels_and_drives_the_sse_event() {
         let (state, _mock) = app_state();
-        let id = state.guide.create_session();
+        let id = state.guide.create_session().await.unwrap();
         let guide_resp = handle_guide(
             State(state.clone()),
             Path(id.clone()),

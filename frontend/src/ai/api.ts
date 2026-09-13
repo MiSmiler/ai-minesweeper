@@ -56,7 +56,9 @@ export interface SendRequest {
  * (`createAiApi`) talks to the backend AI Session routes: `createSession`
  * POSTs `/ai/session`, `send` POSTs `/ai/guide/{id}` (issue #131, #133). */
 export interface AiApi {
-  /** Creates an EMPTY AI Session (no InputMode bound yet) and returns its id. */
+  /** Loads the AI runtime, then creates an EMPTY AI Session (no InputMode
+   * bound yet) and returns its id. A load failure rejects with a
+   * `ProviderError` (see `isProviderError`). */
   createSession(): Promise<{ sessionId: string }>;
   /** Appends the current board; the first committed Send binds the InputMode. */
   send(
@@ -75,17 +77,20 @@ export interface AiApi {
 export function createAiApi(): AiApi {
   return {
     async createSession() {
+      let res: Response;
       try {
-        const res = await fetch("/ai/session", { method: "POST" });
-        if (!res.ok) {
-          throw new Error(`POST /ai/session failed (HTTP ${res.status})`);
-        }
-        const body = (await res.json()) as { session_id: string };
-        return { sessionId: body.session_id };
+        res = await fetch("/ai/session", { method: "POST" });
       } catch (err) {
         log.error("POST /ai/session failed", err);
-        throw err;
+        throw asProviderError(err);
       }
+      if (!res.ok) {
+        const providerError = await readProviderError(res);
+        log.error(`POST /ai/session failed: ${res.status}`);
+        throw providerError;
+      }
+      const body = (await res.json()) as { session_id: string };
+      return { sessionId: body.session_id };
     },
     send(sessionId, req, onEvent, onProviderError) {
       void consumeGuide(sessionId, req, onEvent, onProviderError);
@@ -144,6 +149,26 @@ async function consumeGuide(
     return;
   }
   await consumeSse(res, onEvent);
+}
+
+/** Shapes an unknown failure as an `upstream` `ProviderError`, so the machine
+ * can alert it through the same path as a Send pre-flight. */
+function asProviderError(err: unknown): ProviderError {
+  return {
+    kind: "upstream",
+    code: null,
+    message: err instanceof Error ? err.message : String(err),
+  };
+}
+
+/** Narrows an unknown thrown value to a `ProviderError`. */
+export function isProviderError(value: unknown): value is ProviderError {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "kind" in value &&
+    "message" in value
+  );
 }
 
 /** Parses a non-OK guide response into a `ProviderError` (or a fallback). */

@@ -230,6 +230,21 @@ impl Agent {
         self.tools.push(tool);
     }
 
+    /// Loads the current provider/model without starting a Turn: a missing or
+    /// unknown provider is [`AgentError::NoProvider`]; a provider-side config
+    /// or transport failure is [`AgentError::Provider`]. `Guide::create_session`
+    /// calls this so an unconfigured AI fails before the first Send.
+    pub async fn load(&self) -> Result<(), AgentError> {
+        let provider = self
+            .providers
+            .get(&self.current_provider)
+            .ok_or(AgentError::NoProvider)?;
+        provider
+            .load(&self.current_model)
+            .await
+            .map_err(AgentError::Provider)
+    }
+
     /// Starts a chat stream for one turn against the current provider: the
     /// model sees the session's committed messages plus `pending` (the first
     /// turn carries its `System`). The stream maps every `ProviderError` to

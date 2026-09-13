@@ -184,7 +184,7 @@ mod tests {
     #[tokio::test]
     async fn a_new_game_action_ends_the_ai_session() {
         let state = app_state();
-        let id = state.guide.create_session();
+        let id = state.guide.create_session().await.unwrap();
         let game = state.game.lock().unwrap().clone();
         assert!(state.guide.send(&id, &game, send_request()).await.is_ok());
 

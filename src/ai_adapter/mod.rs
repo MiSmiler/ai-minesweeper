@@ -280,8 +280,14 @@ impl Guide {
     }
 
     /// Creates an empty AI Session, replacing the live one (if any) and
-    /// cancelling its in-flight Send. Returns the new id.
-    pub fn create_session(&self) -> String {
+    /// cancelling its in-flight Send. Loads the (agent, provider, model) first,
+    /// so an unconfigured AI fails here rather than on the first Send; a load
+    /// failure leaves the current session untouched.
+    pub async fn create_session(&self) -> Result<String, AgentError> {
+        {
+            let agent = self.agent.lock().await;
+            agent.load().await?;
+        }
         self.end_session();
         let id = format!("s{}", self.next_seq.fetch_add(1, Ordering::Relaxed));
         let binding = SessionBinding {
@@ -293,7 +299,7 @@ impl Guide {
             .session_binding
             .lock()
             .expect("session binding poisoned") = Some(binding);
-        id
+        Ok(id)
     }
 
     /// Ends the live AI Session: cancels its in-flight Send and forgets the
@@ -930,11 +936,11 @@ mod tests {
         request_in(InputMode::Plain)
     }
 
-    #[test]
-    fn create_session_returns_a_fresh_id_each_time() {
+    #[tokio::test]
+    async fn create_session_returns_a_fresh_id_each_time() {
         let (guide, _mock) = guide_with_mock();
-        let first = guide.create_session();
-        let second = guide.create_session();
+        let first = guide.create_session().await.unwrap();
+        let second = guide.create_session().await.unwrap();
         assert_ne!(first, second);
     }
 
@@ -950,8 +956,8 @@ mod tests {
     #[tokio::test]
     async fn send_for_a_replaced_session_is_unknown_session() {
         let (guide, _mock) = guide_with_mock();
-        let stale = guide.create_session();
-        let live = guide.create_session();
+        let stale = guide.create_session().await.unwrap();
+        let live = guide.create_session().await.unwrap();
         let Err(err) = guide.send(&stale, &fresh_game(), plain_request()).await else {
             panic!("expected an error");
         };
@@ -962,7 +968,7 @@ mod tests {
     #[tokio::test]
     async fn send_streams_reasoning_content_and_done() {
         let (guide, mock) = guide_with_mock();
-        let id = guide.create_session();
+        let id = guide.create_session().await.unwrap();
         let (user_text, mut stream) = guide
             .send(&id, &fresh_game(), plain_request())
             .await
@@ -999,7 +1005,7 @@ mod tests {
     #[tokio::test]
     async fn send_threads_off_into_the_request() {
         let (guide, mock) = guide_with_mock();
-        let id = guide.create_session();
+        let id = guide.create_session().await.unwrap();
         let req = SendRequest {
             input_mode: InputMode::Plain,
             thinking_level: ThinkingLevel::Off,
@@ -1020,7 +1026,7 @@ mod tests {
     #[tokio::test]
     async fn the_first_committed_send_binds_the_input_mode() {
         let (guide, mock) = guide_with_mock();
-        let id = guide.create_session();
+        let id = guide.create_session().await.unwrap();
         let game = fresh_game();
         {
             let (_user_text, mut stream) = guide
@@ -1059,7 +1065,7 @@ mod tests {
     #[tokio::test]
     async fn a_committed_send_appends_user_and_assistant_to_the_next_request() {
         let (guide, mock) = guide_with_mock();
-        let id = guide.create_session();
+        let id = guide.create_session().await.unwrap();
         let game = fresh_game();
         for _ in 0..2 {
             let (_user_text, mut stream) = guide.send(&id, &game, plain_request()).await.unwrap();
@@ -1079,7 +1085,7 @@ mod tests {
     #[tokio::test]
     async fn an_interrupted_first_send_commits_nothing_and_keeps_the_mode_free() {
         let (guide, mock) = guide_with_mock();
-        let id = guide.create_session();
+        let id = guide.create_session().await.unwrap();
         let game = fresh_game();
         {
             let (_user_text, mut stream) = guide
@@ -1109,7 +1115,7 @@ mod tests {
     #[tokio::test]
     async fn send_while_a_send_is_in_flight_is_busy() {
         let (guide, _mock) = guide_with_mock();
-        let id = guide.create_session();
+        let id = guide.create_session().await.unwrap();
         let game = fresh_game();
         let (_user_text, stream) = guide.send(&id, &game, plain_request()).await.unwrap();
         let Err(err) = guide.send(&id, &game, plain_request()).await else {
@@ -1122,17 +1128,17 @@ mod tests {
     #[tokio::test]
     async fn interrupt_without_an_in_flight_send_is_false() {
         let (guide, _mock) = guide_with_mock();
-        let id = guide.create_session();
+        let id = guide.create_session().await.unwrap();
         assert!(!guide.interrupt(&id));
     }
 
     #[tokio::test]
     async fn create_session_cancels_the_previous_send() {
         let (guide, _mock) = guide_with_mock();
-        let first = guide.create_session();
+        let first = guide.create_session().await.unwrap();
         let game = fresh_game();
         let (_user_text, mut stream) = guide.send(&first, &game, plain_request()).await.unwrap();
-        let second = guide.create_session();
+        let second = guide.create_session().await.unwrap();
         assert_ne!(first, second);
         // The displaced Send reports a user interrupt on its next poll...
         assert_eq!(
@@ -1150,7 +1156,7 @@ mod tests {
     #[tokio::test]
     async fn end_session_forgets_the_live_session() {
         let (guide, _mock) = guide_with_mock();
-        let id = guide.create_session();
+        let id = guide.create_session().await.unwrap();
         guide.end_session();
         let Err(err) = guide.send(&id, &fresh_game(), plain_request()).await else {
             panic!("expected an error");
@@ -1161,7 +1167,7 @@ mod tests {
     #[tokio::test]
     async fn image_mode_sends_the_screenshot_turn() {
         let (guide, mock) = guide_with_mock();
-        let id = guide.create_session();
+        let id = guide.create_session().await.unwrap();
         let req = SendRequest {
             input_mode: InputMode::Image,
             thinking_level: ThinkingLevel::Low,
@@ -1188,16 +1194,72 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_provider_is_a_preflight_error_and_frees_the_slot() {
+    async fn create_session_without_a_provider_is_no_provider() {
         let agent = Agent::new(ProviderSet::new());
         let guide = Guide::new(Arc::new(Mutex::new(agent)));
-        let id = guide.create_session();
-        let Err(err) = guide.send(&id, &fresh_game(), plain_request()).await else {
-            panic!("expected an error");
-        };
-        assert_eq!(err, SendError::PreFlight(AgentError::NoProvider));
-        // The failed pre-flight released the in-flight slot.
-        assert!(!guide.interrupt(&id));
+        let err = guide.create_session().await.unwrap_err();
+        assert_eq!(err, AgentError::NoProvider);
+    }
+
+    /// A provider whose `load` succeeds once then fails; pins that a failed
+    /// load leaves the live session untouched.
+    struct FlakyLoadProvider {
+        mock: MockProvider,
+        loads: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for FlakyLoadProvider {
+        async fn stream_chat(
+            &self,
+            req: ChatRequest,
+            cancel: CancellationToken,
+        ) -> Result<ProviderStream, ProviderError> {
+            self.mock.stream_chat(req, cancel).await
+        }
+
+        async fn load(&self, _model: &str) -> Result<(), ProviderError> {
+            if self
+                .loads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                == 0
+            {
+                Ok(())
+            } else {
+                Err(ProviderError {
+                    kind: ProviderErrorKind::Config,
+                    code: None,
+                    message: "load failed".into(),
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_load_keeps_the_previous_session_live() {
+        let mut set = ProviderSet::new();
+        set.insert(
+            "flaky".to_string(),
+            Box::new(FlakyLoadProvider {
+                mock: MockProvider::new(),
+                loads: std::sync::atomic::AtomicUsize::new(0),
+            }),
+        );
+        let mut agent = Agent::new(set);
+        agent.set_model("m".to_string(), Some("flaky"));
+        let guide = Guide::new(Arc::new(Mutex::new(agent)));
+
+        let id = guide.create_session().await.unwrap();
+        let err = guide.create_session().await.unwrap_err();
+        assert!(matches!(err, AgentError::Provider(_)));
+        // The failed load did not replace the live session: a Send to `id` is
+        // still accepted (not `UnknownSession`).
+        assert!(
+            guide
+                .send(&id, &fresh_game(), plain_request())
+                .await
+                .is_ok()
+        );
     }
 
     // --- provider-error refraction ---
@@ -1217,7 +1279,7 @@ mod tests {
             code: Some(429),
             message: "rate limited".into(),
         });
-        let id = guide.create_session();
+        let id = guide.create_session().await.unwrap();
         let (_user_text, mut stream) = guide
             .send(&id, &fresh_game(), plain_request())
             .await
@@ -1233,7 +1295,7 @@ mod tests {
             code: None,
             message: "connect timeout".into(),
         });
-        let id = guide.create_session();
+        let id = guide.create_session().await.unwrap();
         let (_user_text, mut stream) = guide
             .send(&id, &fresh_game(), plain_request())
             .await
@@ -1249,7 +1311,7 @@ mod tests {
             code: Some(500),
             message: "boom".into(),
         });
-        let id = guide.create_session();
+        let id = guide.create_session().await.unwrap();
         let (_user_text, mut stream) = guide
             .send(&id, &fresh_game(), plain_request())
             .await
@@ -1268,7 +1330,7 @@ mod tests {
             code: Some(400),
             message: "bad request".into(),
         });
-        let id = guide.create_session();
+        let id = guide.create_session().await.unwrap();
         let (_user_text, mut stream) = guide
             .send(&id, &fresh_game(), plain_request())
             .await
@@ -1289,7 +1351,7 @@ mod tests {
         );
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Playing);
-        let id = guide.create_session();
+        let id = guide.create_session().await.unwrap();
         let (_user_text, mut stream) = guide.send(&id, &game, plain_request()).await.unwrap();
         while stream.next().await.is_some() {}
         let req = mock.last_request().expect("mock recorded a request");

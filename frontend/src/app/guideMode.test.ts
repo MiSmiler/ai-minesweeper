@@ -119,6 +119,15 @@ describe("composeGuideMode layout", () => {
     expect(dash.textContent).not.toContain("会话策略");
   });
 
+  it("places the new-session button to the left of Send", () => {
+    mockFetch();
+    const root = mount();
+    composeGuideMode(root, makeHarness().deps);
+    const row = $(root, ".button-row");
+    expect(row.children[0]?.classList.contains("new-session-btn")).toBe(true);
+    expect(row.children[1]?.classList.contains("send-btn")).toBe(true);
+  });
+
   it("input mode select offers all three modes", () => {
     mockFetch();
     const root = mount();
@@ -387,6 +396,22 @@ describe("composeGuideMode send flow", () => {
 });
 
 describe("composeGuideMode session lifecycle", () => {
+  it("a failed new session alerts and leaves Send disabled", async () => {
+    mockFetch();
+    const root = mount();
+    const h = makeHarness();
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    h.aiApi.createSession.mockRejectedValueOnce({
+      kind: "config",
+      code: null,
+      message: "no provider",
+    });
+    composeGuideMode(root, h.deps);
+    await startSession(root);
+    expect(alertSpy).toHaveBeenCalled();
+    expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("a new session clears history after confirmation", async () => {
     mockFetch();
     const root = mount();

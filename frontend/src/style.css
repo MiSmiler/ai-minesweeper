@@ -187,6 +187,16 @@ button:hover {
   background: var(--hidden-light);
 }
 
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* A disabled button must not light up on hover. */
+button:disabled:hover {
+  background: var(--hidden);
+}
+
 /* The difficulty buttons form the segmented control in .difficulty-row. */
 .difficulty {
   color: #3a3a42;

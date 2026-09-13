@@ -15,6 +15,7 @@
 // backend for an id, `send()` appends to it, and `endSession()` drops it. The
 // machine holds only the id and the session's `empty` / `non-empty` predicate.
 
+import { isProviderError } from "./api";
 import type {
   AiApi,
   GuideEvent,
@@ -51,7 +52,7 @@ export interface GuideState {
 }
 
 export interface GuideMachine {
-  /** Requests an empty AI Session from the backend. */
+  /** Loads the AI runtime and requests an empty AI Session from the backend. */
   newSession(): Promise<void>;
   /** Ends the live AI Session (New Game / PlayMode switch). */
   endSession(): void;
@@ -129,12 +130,14 @@ export function createGuideMachine(deps: { api: AiApi }): GuideMachine {
         created = await deps.api.createSession();
       } catch (err) {
         if (g !== generation) return; // superseded while creating
-        const message = err instanceof Error ? err.message : String(err);
-        state = {
-          ...state,
-          phase: "preflight-failed",
-          providerError: { kind: "upstream", code: null, message },
-        };
+        const providerError: ProviderError = isProviderError(err)
+          ? err
+          : {
+              kind: "upstream",
+              code: null,
+              message: err instanceof Error ? err.message : String(err),
+            };
+        state = { ...state, phase: "preflight-failed", providerError };
         emit();
         return;
       }

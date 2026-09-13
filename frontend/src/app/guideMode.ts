@@ -149,13 +149,14 @@ export function composeGuideMode(
   sendBtn.className = "send-btn";
   sendBtn.textContent = "发送";
   sendBtn.disabled = true; // no AI Session yet
-  buttonRow.appendChild(sendBtn);
 
   const newSessionBtn = document.createElement("button");
   newSessionBtn.type = "button";
   newSessionBtn.className = "new-session-btn";
   newSessionBtn.textContent = "新建AI会话";
-  buttonRow.appendChild(newSessionBtn);
+
+  // New session sits to the left of Send (issue #133).
+  buttonRow.append(newSessionBtn, sendBtn);
 
   // Input-mode dropdown (3 modes, user story #20/#21).
   const modeSelect = document.createElement("select");

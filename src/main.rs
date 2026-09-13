@@ -100,9 +100,10 @@ async fn main() {
 
     // AI assembly (issue #116/#117): a real DeepSeek Provider is registered
     // only when a key is present; absent it, the `/ai/...` routes still mount
-    // and a Send pre-flight fails cleanly with a `config` ProviderError.
-    // `Guide::send` sets the model on every Send; the provider is fixed to the
-    // DeepSeek entry.
+    // and `Guide::create_session` fails cleanly with a `config` ProviderError
+    // (the new-session load), so the AI is reported unconfigured before any
+    // Send. `Guide::send` sets the model on every Send; the provider is fixed
+    // to the DeepSeek entry.
     let mut providers = ProviderSet::new();
     if let Some(config) = DeepSeekConfig::from_env() {
         providers.insert("deepseek".to_string(), Box::new(DeepSeek::new(config)));

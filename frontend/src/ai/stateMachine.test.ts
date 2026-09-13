@@ -122,6 +122,22 @@ describe("createGuideMachine session lifecycle", () => {
     });
   });
 
+  it("preserves a ProviderError rejected by newSession", async () => {
+    const h = setup();
+    h.api.createSession.mockRejectedValueOnce({
+      kind: "config",
+      code: null,
+      message: "no key",
+    });
+    await h.machine.newSession();
+    expect(last(h).providerError).toEqual({
+      kind: "config",
+      code: null,
+      message: "no key",
+    });
+    expect(last(h).sessionState).toBe("none");
+  });
+
   it("ignores a newSession response superseded by endSession", async () => {
     const h = setup();
     let resolve!: (v: { sessionId: string }) => void;

@@ -3,7 +3,12 @@
 // `GuideEvent`s, and `interrupt_by_user` POSTs the interrupt route.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createAiApi, type GuideEvent, type ProviderError } from "./api";
+import {
+  createAiApi,
+  isProviderError,
+  type GuideEvent,
+  type ProviderError,
+} from "./api";
 
 /** A minimal SSE body backed by a fake reader over `chunks`. */
 function sseBody(chunks: string[]): {
@@ -238,19 +243,43 @@ describe("createAiApi.createSession", () => {
     });
   });
 
-  it("rejects on a non-OK response", async () => {
+  it("rejects with the parsed ProviderError body on a non-OK response", async () => {
     const api = createAiApi();
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: false, status: 500 } as Response),
+      vi.fn().mockResolvedValue(
+        errorResponse(503, {
+          kind: "config",
+          code: null,
+          message: "no provider",
+        }),
+      ),
     );
-    await expect(api.createSession()).rejects.toThrow("500");
+    await expect(api.createSession()).rejects.toEqual({
+      kind: "config",
+      code: null,
+      message: "no provider",
+    });
   });
 
-  it("propagates a network failure", async () => {
+  it("shapes a network failure as an upstream ProviderError", async () => {
     const api = createAiApi();
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    await expect(api.createSession()).rejects.toThrow("offline");
+    await expect(api.createSession()).rejects.toEqual({
+      kind: "upstream",
+      code: null,
+      message: "offline",
+    });
+  });
+});
+
+describe("isProviderError", () => {
+  it("recognizes a provider error shape", () => {
+    expect(isProviderError({ kind: "config", code: null, message: "x" })).toBe(
+      true,
+    );
+    expect(isProviderError(new Error("x"))).toBe(false);
+    expect(isProviderError(null)).toBe(false);
   });
 });
 
