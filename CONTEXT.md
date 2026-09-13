@@ -135,12 +135,11 @@ The way the Board is put in front of DeepSeek: `Plain` (the character grid), `Em
 _Avoid_: BoardFormat, format, input format
 
 **AI Session**:
-The conversation with the AI Agent bound to one Game: the accumulated
-`user` / `assistant` messages the advisor sees, spanning every Send of that
-Game. The backend owns it and creates it on request. A fresh AI Session is
-empty; its first committed Send binds the InputMode (the board legend in its
-system prompt), and a New Game ends it.
-_Avoid_: session, chat, context, conversation
+The AI Agent's session, bound to one Game: the accumulated `user` /
+`assistant` messages spanning every Send of that Game. The backend creates it
+on request. A fresh AI Session is empty; its first committed Send binds the
+InputMode (the board legend in its system prompt), and a New Game ends it.
+_Avoid_: chat, context, conversation
 
 **Send**:
 The player action that appends the current Board to the AI Session as a `user`

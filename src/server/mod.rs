@@ -7,7 +7,6 @@
 mod ai_routes;
 pub mod wire;
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::Json;
@@ -15,7 +14,6 @@ use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::ai_adapter::Guide;
@@ -23,16 +21,12 @@ use crate::core::{Difficulty, Game, GameState, Position};
 
 use self::wire::{ActionDto, ActionKind, GameSnapshot};
 
-/// The shared server state: the single `Game`, the AI advisor, and the set of
-/// live analysis sessions keyed by the frontend-generated `sessionId`. The
-/// `/ai/...` routes only read the board (never write `Game`).
+/// The shared server state: the single `Game` and the AI advisor. The
+/// `/ai/...` routes only read the board (never write `Game`); the advisor owns
+/// the live AI Session, its messages, and its in-flight cancel token.
 pub(crate) struct AppState {
     pub(crate) game: Arc<Mutex<Game>>,
     pub(crate) guide: Guide,
-    /// Active `Guide::suggest` cancel tokens, keyed by the `{id}` path segment
-    /// (= the frontend `sessionId`). The interrupt route cancels the matching
-    /// token to abort the upstream generation and drive the SSE event.
-    pub(crate) ai_sessions: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 
 /// The outcome of applying a player action to the human game.
@@ -133,6 +127,9 @@ pub(crate) async fn post_action(
     // core.rs logs the Seed lifecycle (a committed Seed at info, rejected
     // candidates at debug); here we only record that a new game was created.
     if matches!(outcome, ActionOutcome::NewGame) {
+        // A new Game replaces the board the AI Session was reasoning about, so
+        // the session ends with it (ADR-0017).
+        state.guide.end_session();
         log_new_game(&game, "player");
     }
     debug!(
@@ -155,8 +152,56 @@ pub(crate) async fn post_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::agent::{Agent, ProviderSet, ThinkingLevel};
+    use crate::ai::provider::MockProvider;
+    use crate::ai_adapter::{Guide, InputMode, SendError, SendRequest};
     use crate::core::{Difficulty, Features, Game, GameConfig, GameState, Position};
     use crate::server::wire::{ActionDto, ActionKind, GameSnapshot, PositionDto};
+
+    /// An `AppState` whose `Guide` runs against the offline mock provider.
+    fn app_state() -> Arc<AppState> {
+        let game = Arc::new(Mutex::new(Game::with_config(GameConfig::new(
+            Difficulty::Beginner,
+            Features::NONE,
+            None,
+        ))));
+        let mut set = ProviderSet::new();
+        set.insert("mock".to_string(), Box::new(MockProvider::new()));
+        let mut agent = Agent::new(set);
+        agent.set_model("mock-model".to_string(), Some("mock"));
+        let guide = Guide::new(Arc::new(tokio::sync::Mutex::new(agent)));
+        Arc::new(AppState { game, guide })
+    }
+
+    fn send_request() -> SendRequest {
+        SendRequest {
+            input_mode: InputMode::Plain,
+            thinking_level: ThinkingLevel::Low,
+            image_data_url: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_new_game_action_ends_the_ai_session() {
+        let state = app_state();
+        let id = state.guide.create_session();
+        let game = state.game.lock().unwrap().clone();
+        assert!(state.guide.send(&id, &game, send_request()).await.is_ok());
+
+        let resp = post_action(
+            State(state.clone()),
+            Json(action(ActionKind::NewGame, None, None, None)),
+        )
+        .await;
+        assert!(resp.is_ok());
+
+        // The session is gone: its id is no longer the live one.
+        let err = match state.guide.send(&id, &game, send_request()).await {
+            Err(err) => err,
+            Ok(_) => panic!("expected the session to be ended"),
+        };
+        assert_eq!(err, SendError::UnknownSession);
+    }
 
     fn action(
         kind: ActionKind,

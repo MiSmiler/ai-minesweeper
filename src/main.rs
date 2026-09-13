@@ -3,7 +3,6 @@ mod ai_adapter;
 mod core;
 mod server;
 
-use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 
@@ -101,9 +100,9 @@ async fn main() {
 
     // AI assembly (issue #116/#117): a real DeepSeek Provider is registered
     // only when a key is present; absent it, the `/ai/...` routes still mount
-    // and a `suggest` pre-flight fails cleanly with a `config` ProviderError.
-    // `Guide::suggest` sets the model on every call; the provider is fixed to
-    // the DeepSeek entry.
+    // and a Send pre-flight fails cleanly with a `config` ProviderError.
+    // `Guide::send` sets the model on every Send; the provider is fixed to the
+    // DeepSeek entry.
     let mut providers = ProviderSet::new();
     if let Some(config) = DeepSeekConfig::from_env() {
         providers.insert("deepseek".to_string(), Box::new(DeepSeek::new(config)));
@@ -114,11 +113,7 @@ async fn main() {
     // (held across the streaming network call) is `Send` for the axum handler.
     let guide = Guide::new(Arc::new(tokio::sync::Mutex::new(agent)));
 
-    let state = Arc::new(server::AppState {
-        game,
-        guide,
-        ai_sessions: Arc::new(Mutex::new(HashMap::new())),
-    });
+    let state = Arc::new(server::AppState { game, guide });
 
     // The built frontend (frontend/dist) is served at the root; unknown
     // paths fall back to index.html so client-side routing never 404s.
@@ -151,15 +146,19 @@ async fn run_test_ai_chat(prompt: &str) -> Result<(), String> {
     let mut agent = Agent::new(providers);
     agent.set_model(MODEL.to_string(), Some("deepseek"));
 
-    let mut session = Session::new(Message::System {
-        content: "You are a helpful assistant. Reply concisely to the user's message.".to_string(),
-    });
-    session.push(Message::User {
-        content: vec![ContentBlock::Text(prompt.to_string())],
-    });
+    let session = Session::new();
+    let pending = vec![
+        Message::System {
+            content: "You are a helpful assistant. Reply concisely to the user's message."
+                .to_string(),
+        },
+        Message::User {
+            content: vec![ContentBlock::Text(prompt.to_string())],
+        },
+    ];
 
     match agent
-        .complete_once(&session, CancellationToken::new())
+        .complete_once(&session, pending, CancellationToken::new())
         .await
     {
         Ok(Message::Assistant {

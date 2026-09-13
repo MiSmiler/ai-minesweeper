@@ -1,18 +1,17 @@
-//! SSE transport for the `/ai/guide` advisor routes (issue #117, ADR-0013).
+//! SSE transport for the `/ai/...` advisor routes (issue #117, ADR-0013).
 //!
-//! A thin transport layer: it calls the public seam `ai_adapter::Guide::suggest`
-//! and forwards its event stream to the frontend as an SSE stream, terminated
-//! by `[DONE]`. It also owns `POST /ai/guide/{id}/interrupt`, which cancels the
-//! upstream generation for the same session through a [`CancellationToken`].
+//! A thin transport layer over the `ai_adapter::Guide` seam: it creates the
+//! backend-owned AI Session (`POST /ai/session`), appends one board to it and
+//! forwards the reply as an SSE stream terminated by `[DONE]`
+//! (`POST /ai/guide/{id}`), and cancels the in-flight Send
+//! (`POST /ai/guide/{id}/interrupt`).
 //!
 //! This module never reaches into `ai_adapter` internals and never writes to
 //! the `Game` — it only takes a player-visible board snapshot (cloned under a
-//! short lock) to hand to `suggest`, while the session registry pairs the
-//! frontend-generated `sessionId` (the `{id}` path segment) with the cancel
-//! token so a separate interrupt request can abort the analysis.
+//! short lock) to hand to `Guide::send`. The session itself (its id, its
+//! messages, its cancel token) is owned by the `Guide`.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -20,15 +19,13 @@ use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
-use futures::Stream;
 use futures::StreamExt;
 use futures::stream;
 use serde::Serialize;
-use tokio_util::sync::CancellationToken;
 
 use crate::ai::agent::AgentError;
 use crate::ai::protocol::{ProviderError, ProviderErrorKind, StreamChunk};
-use crate::ai_adapter::{GuideRequest, InterruptReason, SuggestPreFlightError};
+use crate::ai_adapter::{InputMode, InterruptReason, SendError, SendRequest};
 
 use super::AppState;
 
@@ -59,32 +56,54 @@ pub(crate) enum GuideEventDto {
     },
 }
 
+/// The `POST /ai/session` response: the id the frontend sends back on every
+/// Send.
+#[derive(Debug, Serialize)]
+struct NewSessionDto {
+    session_id: String,
+}
+
+/// The error body of the three session-lifecycle failures. The status code is
+/// the machine signal; this is the human-readable reason.
+#[derive(Debug, Serialize)]
+struct ErrorDto {
+    error: String,
+}
+
 /// Assembles the `/ai/...` routes onto a `Router`, given the `AppState`.
 /// `server::routes` merges this into the game API router.
 pub(crate) fn ai_routes(state: Arc<AppState>) -> Router {
     Router::new()
+        .route("/ai/session", post(handle_new_session))
         .route("/ai/guide/{id}", post(handle_guide))
         .route("/ai/guide/{id}/interrupt", post(handle_user_interrupt))
         .with_state(state)
 }
 
-/// `POST /ai/guide/{id}`: consumes the `Guide::suggest` event stream and
-/// downstreams it as SSE. The `{id}` is the frontend-generated `sessionId`; it
-/// is used only to associate this SSE's cancel token so the interrupt route can
-/// abort the upstream generation.
+/// `POST /ai/session`: replaces the live AI Session with an empty one and
+/// returns its id (the old session's Send is cancelled). The UI holds the
+/// discard confirm; the backend replaces unconditionally.
+async fn handle_new_session(State(state): State<Arc<AppState>>) -> Json<NewSessionDto> {
+    Json(NewSessionDto {
+        session_id: state.guide.create_session(),
+    })
+}
+
+/// `POST /ai/guide/{id}`: appends the current board to the AI Session `{id}`
+/// and downstreams the reply as SSE.
 async fn handle_guide(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(req): Json<GuideRequest>,
+    Json(req): Json<SendRequest>,
 ) -> Response {
-    // Register the cancel token before any stream work so a concurrent
-    // `/interrupt` can find it. A failed pre-flight removes it again.
-    let cancel = CancellationToken::new();
-    state
-        .ai_sessions
-        .lock()
-        .expect("ai session registry poisoned")
-        .insert(id.clone(), cancel.clone());
+    // An image Send must carry the screenshot it describes; reject it before
+    // the session is touched, so the Send never starts.
+    if req.input_mode == InputMode::Image && req.image_data_url.is_none() {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "image mode requires image_data_url".to_string(),
+        );
+    }
 
     // `/ai/...` is read-only: clone a player-visible snapshot under a *short*
     // lock, then drop the lock before the (potentially long) network round trip
@@ -93,77 +112,37 @@ async fn handle_guide(
     // is built from the visible-only `BoardView`), so privacy is preserved.
     let game = state.game.lock().expect("game state poisoned").clone();
 
-    match state.guide.suggest(&game, req, cancel).await {
+    match state.guide.send(&id, &game, req).await {
         Ok((user_text, stream)) => {
-            let guard = SessionGuard::new(state.ai_sessions.clone(), id);
             // Emit the player's message first, then the agent's stream (issue
             // #124). `once` and `map(to_event)` share the same item type
             // (`Result<Event, axum::Error>`) so `.chain` composes them into one
             // SSE stream; `position: fixed` is the frontend's concern.
             let user_event = Event::default().json_data(GuideEventDto::User { text: user_text });
             let sse = stream::once(async move { user_event }).chain(stream.map(to_event));
-            Sse::new(guard_stream(sse, guard)).into_response()
+            Sse::new(sse).into_response()
         }
-        Err(preflight) => {
-            state
-                .ai_sessions
-                .lock()
-                .expect("ai session registry poisoned")
-                .remove(&id);
-            preflight_response(preflight)
-        }
+        Err(err) => send_error_response(err),
     }
 }
 
-/// `POST /ai/guide/{id}/interrupt`: cancels the upstream generation for the
-/// analysis session `{id}`. The SSE connection stays open; the interrupt event
-/// is emitted on that stream (`{kind:"interrupt",reason:"user_interrupt"}`).
+/// `POST /ai/guide/{id}/interrupt`: cancels the in-flight Send of `{id}`. The
+/// SSE connection stays open; the interrupt event is emitted on that stream
+/// (`{kind:"interrupt",reason:"user_interrupt"}`).
 async fn handle_user_interrupt(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Response {
-    let token = state
-        .ai_sessions
-        .lock()
-        .expect("ai session registry poisoned")
-        .get(&id)
-        .cloned();
-    match token {
-        Some(token) => {
-            token.cancel();
-            StatusCode::NO_CONTENT.into_response()
-        }
-        None => StatusCode::NOT_FOUND.into_response(),
+    if state.guide.interrupt(&id) {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        StatusCode::NOT_FOUND.into_response()
     }
 }
 
-/// Removes a session's cancel token from the registry when the SSE stream ends
-/// or the client disconnects, so a finished analysis doesn't leave a stale
-/// entry behind. A `Drop` guard makes the cleanup robust against both a clean
-/// `[DONE]` end and a mid-stream client abort.
-struct SessionGuard {
-    registry: Arc<Mutex<HashMap<String, CancellationToken>>>,
-    id: String,
-}
-
-impl SessionGuard {
-    fn new(registry: Arc<Mutex<HashMap<String, CancellationToken>>>, id: String) -> Self {
-        Self { registry, id }
-    }
-}
-
-impl Drop for SessionGuard {
-    fn drop(&mut self) {
-        self.registry
-            .lock()
-            .expect("ai session registry poisoned")
-            .remove(&self.id);
-    }
-}
-
-/// Maps one `Guide::suggest` stream item to an SSE event. `Ok(Done)` becomes
-/// the `[DONE]` terminator; an interrupt `Err(reason)` becomes the explicit
-/// `interrupt` event (an analysis that never receives `[DONE]`).
+/// Maps one `Guide::send` stream item to an SSE event. `Ok(Done)` becomes the
+/// `[DONE]` terminator; an interrupt `Err(reason)` becomes the explicit
+/// `interrupt` event (a reply that never receives `[DONE]`).
 fn to_event(item: Result<StreamChunk, InterruptReason>) -> Result<Event, axum::Error> {
     let event = match item {
         Ok(StreamChunk::ReasoningDelta(text)) => {
@@ -178,29 +157,38 @@ fn to_event(item: Result<StreamChunk, InterruptReason>) -> Result<Event, axum::E
     Ok(event)
 }
 
-/// Holds a `Drop` guard across a stream's lifetime, so the guard fires when the
-/// stream is dropped (normal `[DONE]` end or a client abort).
-fn guard_stream<S, G>(
-    inner: S,
-    guard: G,
-) -> impl Stream<Item = Result<Event, axum::Error>> + Send + 'static
-where
-    S: Stream<Item = Result<Event, axum::Error>> + Send + 'static,
-    G: Send + 'static,
-{
-    let mut inner = inner.boxed();
-    stream::poll_fn(move |cx| {
-        let _ = &guard;
-        inner.as_mut().poll_next(cx)
-    })
+/// Maps a pre-flight [`SendError`] to a status + body. The three
+/// session-lifecycle failures carry `{"error": "..."}` — the status code is the
+/// machine signal. Only a `PreFlight` keeps the #97/#123 `ProviderError` shape,
+/// because only it is a provider failure.
+fn send_error_response(err: SendError) -> Response {
+    match err {
+        SendError::UnknownSession => {
+            error_response(StatusCode::NOT_FOUND, "unknown AI session".to_string())
+        }
+        SendError::Busy => error_response(
+            StatusCode::CONFLICT,
+            "a send is already in flight for this AI session".to_string(),
+        ),
+        SendError::ModeMismatch { bound, requested } => error_response(
+            StatusCode::BAD_REQUEST,
+            format!("input mode is locked to {bound:?}, requested {requested:?}"),
+        ),
+        SendError::PreFlight(err) => preflight_response(err),
+    }
 }
 
-/// Maps a pre-flight `Guide::suggest` failure (before any content streamed)
-/// into an HTTP status + a `ProviderError` body (`{kind,code,message}`); no SSE
-/// is started. `AgentError::Cancelled` is a defensive branch — a cancel before
-/// the stream begins surfaces as an interrupt *through* the stream, not here.
-fn preflight_response(err: SuggestPreFlightError) -> Response {
-    let (status, provider_error) = match err.into_inner() {
+/// The `{"error": "..."}` body of the session-lifecycle failures.
+fn error_response(status: StatusCode, message: String) -> Response {
+    (status, Json(ErrorDto { error: message })).into_response()
+}
+
+/// Maps a pre-flight agent failure (before any content streamed) into an HTTP
+/// status + a `ProviderError` body (`{kind,code,message}`); no SSE is started.
+/// `AgentError::Cancelled` is a defensive branch — a cancel before the stream
+/// begins surfaces as an interrupt *through* the stream, not here.
+fn preflight_response(err: AgentError) -> Response {
+    let (status, provider_error) = match err {
         AgentError::Provider(pe) => {
             let status = pe
                 .code
@@ -234,23 +222,14 @@ mod tests {
     use crate::ai::agent::ThinkingLevel;
     use crate::ai::agent::{Agent, ProviderSet};
     use crate::ai::provider::MockProvider;
-    use crate::ai_adapter::{Guide, InputMode};
+    use crate::ai_adapter::Guide;
     use crate::core::{Difficulty, Features, Game, GameConfig};
     use axum::body::to_bytes;
+    use std::sync::Mutex;
 
-    // The `suggest` future is held across a `tokio::sync::Mutex` guard over a
+    // The `send` future is held across a `tokio::sync::Mutex` guard over a
     // network await; this pins that it stays `Send` so axum accepts the route.
     fn require_send<T: Send>(_: T) {}
-
-    #[tokio::test]
-    async fn suggest_future_is_send() {
-        let (state, _mock) = app_state();
-        let game = state.game.lock().unwrap().clone();
-        let fut = state
-            .guide
-            .suggest(&game, guide_request(), CancellationToken::new());
-        require_send(fut);
-    }
 
     fn app_state() -> (Arc<AppState>, MockProvider) {
         let game = Arc::new(Mutex::new(Game::with_config(GameConfig::new(
@@ -264,25 +243,33 @@ mod tests {
         let mut agent = Agent::new(set);
         agent.set_model("mock-model".to_string(), Some("mock"));
         let guide = Guide::new(Arc::new(tokio::sync::Mutex::new(agent)));
-        let state = Arc::new(AppState {
-            game,
-            guide,
-            ai_sessions: Arc::new(Mutex::new(HashMap::new())),
-        });
-        (state, mock)
+        (Arc::new(AppState { game, guide }), mock)
     }
 
-    fn guide_request() -> GuideRequest {
-        GuideRequest {
-            input_mode: InputMode::Plain,
+    fn request_in(mode: InputMode) -> SendRequest {
+        SendRequest {
+            input_mode: mode,
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         }
     }
 
+    fn plain_request() -> SendRequest {
+        request_in(InputMode::Plain)
+    }
+
     async fn body_as_string(resp: Response) -> String {
         let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn send_future_is_send() {
+        let (state, _mock) = app_state();
+        let id = state.guide.create_session();
+        let game = state.game.lock().unwrap().clone();
+        let fut = state.guide.send(&id, &game, plain_request());
+        require_send(fut);
     }
 
     // --- GuideEventDto wire shape ---
@@ -323,45 +310,42 @@ mod tests {
         assert_eq!(value, serde_json::json!({"kind": "user", "text": "hi"}));
     }
 
-    // --- pre-flight failure mapping ---
+    // --- POST /ai/session ---
 
     #[tokio::test]
-    async fn no_provider_maps_to_503_config() {
-        let agent = Agent::new(ProviderSet::new());
-        let guide = Guide::new(Arc::new(tokio::sync::Mutex::new(agent)));
-        let state = Arc::new(AppState {
-            game: Arc::new(Mutex::new(Game::with_config(GameConfig::new(
-                Difficulty::Beginner,
-                Features::NONE,
-                None,
-            )))),
-            guide,
-            ai_sessions: Arc::new(Mutex::new(HashMap::new())),
-        });
-        let resp = handle_guide(
-            State(state.clone()),
-            Path("s1".to_string()),
-            Json(guide_request()),
-        )
-        .await;
-        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-        // No SSE was started (no event-stream content type), and the session
-        // token was removed so no stale entry lingers.
-        assert!(state.ai_sessions.lock().unwrap().is_empty());
-        let body = body_as_string(resp).await;
-        assert!(body.contains("\"kind\":\"config\""));
-        assert!(!body.contains("event-stream"));
+    async fn new_session_returns_a_fresh_id_each_time() {
+        let (state, _mock) = app_state();
+        let first = handle_new_session(State(state.clone())).await.0.session_id;
+        let second = handle_new_session(State(state.clone())).await.0.session_id;
+        assert!(!first.is_empty());
+        assert_ne!(first, second);
     }
 
-    // --- happy path SSE ---
+    // --- POST /ai/guide/{id} ---
+
+    #[tokio::test]
+    async fn guide_without_a_live_session_is_404() {
+        let (state, _mock) = app_state();
+        let resp = handle_guide(
+            State(state.clone()),
+            Path("nope".to_string()),
+            Json(plain_request()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body = body_as_string(resp).await;
+        assert!(body.contains("\"error\""));
+        assert!(!body.contains("event-stream"));
+    }
 
     #[tokio::test]
     async fn guide_streams_reasoning_content_and_done() {
         let (state, _mock) = app_state();
+        let id = state.guide.create_session();
         let resp = handle_guide(
             State(state.clone()),
-            Path("s1".to_string()),
-            Json(guide_request()),
+            Path(id.clone()),
+            Json(plain_request()),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -375,37 +359,123 @@ mod tests {
         // The player's message is emitted first (issue #124).
         assert!(body.contains("\"kind\":\"user\""));
         assert!(body.contains("data: [DONE]"));
-        // A completed analysis leaves no stale session entry.
-        assert!(state.ai_sessions.lock().unwrap().is_empty());
+        // The reply ended, so the session's Send slot is free again.
+        assert!(!state.guide.interrupt(&id));
     }
 
-    // --- interrupt cancels and emits the user_interrupt event ---
+    #[tokio::test]
+    async fn a_second_send_while_in_flight_is_409() {
+        let (state, _mock) = app_state();
+        let id = state.guide.create_session();
+        let first = handle_guide(
+            State(state.clone()),
+            Path(id.clone()),
+            Json(plain_request()),
+        )
+        .await;
+        assert_eq!(first.status(), StatusCode::OK);
+        // `first`'s body is still unread, so its Send is still in flight.
+        let second = handle_guide(
+            State(state.clone()),
+            Path(id.clone()),
+            Json(plain_request()),
+        )
+        .await;
+        assert_eq!(second.status(), StatusCode::CONFLICT);
+        drop(first);
+    }
+
+    #[tokio::test]
+    async fn a_mode_switch_after_the_first_commit_is_400() {
+        let (state, _mock) = app_state();
+        let id = state.guide.create_session();
+        let first = handle_guide(
+            State(state.clone()),
+            Path(id.clone()),
+            Json(plain_request()),
+        )
+        .await;
+        // Draining the body commits the Turn and locks the InputMode.
+        let _ = body_as_string(first).await;
+        let second = handle_guide(
+            State(state.clone()),
+            Path(id.clone()),
+            Json(request_in(InputMode::Emoji)),
+        )
+        .await;
+        assert_eq!(second.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn image_mode_without_a_data_url_is_400() {
+        let (state, _mock) = app_state();
+        let id = state.guide.create_session();
+        let resp = handle_guide(
+            State(state.clone()),
+            Path(id.clone()),
+            Json(request_in(InputMode::Image)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        // The Send never started, so there is nothing to interrupt.
+        assert!(!state.guide.interrupt(&id));
+    }
+
+    #[tokio::test]
+    async fn no_provider_maps_to_503_config() {
+        let agent = Agent::new(ProviderSet::new());
+        let guide = Guide::new(Arc::new(tokio::sync::Mutex::new(agent)));
+        let state = Arc::new(AppState {
+            game: Arc::new(Mutex::new(Game::with_config(GameConfig::new(
+                Difficulty::Beginner,
+                Features::NONE,
+                None,
+            )))),
+            guide,
+        });
+        let id = state.guide.create_session();
+        let resp = handle_guide(
+            State(state.clone()),
+            Path(id.clone()),
+            Json(plain_request()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        // No SSE was started (no event-stream content type).
+        let body = body_as_string(resp).await;
+        assert!(body.contains("\"kind\":\"config\""));
+        assert!(!body.contains("event-stream"));
+        // The failed pre-flight released the Send slot.
+        assert!(!state.guide.interrupt(&id));
+    }
+
+    // --- POST /ai/guide/{id}/interrupt ---
 
     #[tokio::test]
     async fn interrupt_cancels_and_drives_the_sse_event() {
         let (state, _mock) = app_state();
+        let id = state.guide.create_session();
         let guide_resp = handle_guide(
             State(state.clone()),
-            Path("s1".to_string()),
-            Json(guide_request()),
+            Path(id.clone()),
+            Json(plain_request()),
         )
         .await;
         assert_eq!(guide_resp.status(), StatusCode::OK);
 
-        // The interrupt route cancels the same session id.
-        let ir_resp = handle_user_interrupt(State(state.clone()), Path("s1".to_string())).await;
+        // The interrupt route cancels the same session's in-flight Send.
+        let ir_resp = handle_user_interrupt(State(state.clone()), Path(id.clone())).await;
         assert_eq!(ir_resp.status(), StatusCode::NO_CONTENT);
 
         // The already-open SSE emits the interrupt event instead of [DONE].
         let body = body_as_string(guide_resp).await;
         assert!(body.contains("{\"kind\":\"interrupt\",\"reason\":\"user_interrupt\"}"));
         assert!(!body.contains("[DONE]"));
-        // The guard cleaned up the session entry.
-        assert!(state.ai_sessions.lock().unwrap().is_empty());
+        assert!(!state.guide.interrupt(&id));
     }
 
     #[tokio::test]
-    async fn interrupt_unknown_session_is_not_found() {
+    async fn interrupt_without_an_in_flight_send_is_404() {
         let (state, _mock) = app_state();
         let resp = handle_user_interrupt(State(state.clone()), Path("nope".to_string())).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
