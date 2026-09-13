@@ -1,6 +1,6 @@
-// Tests for the real SSE `AiApi` (issue #119): `startGuide` consumes the
-// backend `/ai/guide/:id` SSE stream into `GuideEvent`s and `interrupt_by_user`
-// POSTs the interrupt route.
+// Tests for the real SSE `AiApi` (issue #119, #133): `createSession` POSTs
+// `/ai/session`, `send` consumes the backend `/ai/guide/:id` SSE stream into
+// `GuideEvent`s, and `interrupt_by_user` POSTs the interrupt route.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAiApi, type GuideEvent, type ProviderError } from "./api";
@@ -45,18 +45,17 @@ function errorResponse(status: number, payload: ProviderError): Response {
   } as unknown as Response;
 }
 
-/** Starts a guide run and resolves with the streamed events (or pushes a
- * provider error). `startGuide` is fire-and-forget, so this bridges the async
- * work for tests. */
+/** Starts a Send and resolves with the streamed events (or pushes a provider
+ * error). `send` is fire-and-forget, so this bridges the async work for tests. */
 function collect(
   api: ReturnType<typeof createAiApi>,
   sid: string,
-  req: Parameters<ReturnType<typeof createAiApi>["startGuide"]>[1],
+  req: Parameters<ReturnType<typeof createAiApi>["send"]>[1],
   providerErrors: ProviderError[] = [],
 ): Promise<GuideEvent[]> {
   return new Promise((resolve) => {
     const events: GuideEvent[] = [];
-    api.startGuide(
+    api.send(
       sid,
       req,
       (e) => {
@@ -77,7 +76,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("createAiApi.startGuide (SSE consumer)", () => {
+describe("createAiApi.send (SSE consumer)", () => {
   it("streams reasoning, content and [DONE] into GuideEvents", async () => {
     const api = createAiApi();
     vi.stubGlobal(
@@ -218,6 +217,40 @@ describe("createAiApi.startGuide (SSE consumer)", () => {
     await collect(api, "s1", { inputMode: "emoji" }, providerErrors);
     expect(providerErrors[0]?.kind).toBe("upstream");
     expect(providerErrors[0]?.message).toBe("boom");
+  });
+});
+
+describe("createAiApi.createSession", () => {
+  it("POSTs /ai/session and maps session_id to sessionId", async () => {
+    const api = createAiApi();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ session_id: "abc" }),
+      } as Response),
+    );
+
+    await expect(api.createSession()).resolves.toEqual({ sessionId: "abc" });
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith("/ai/session", {
+      method: "POST",
+    });
+  });
+
+  it("rejects on a non-OK response", async () => {
+    const api = createAiApi();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 500 } as Response),
+    );
+    await expect(api.createSession()).rejects.toThrow("500");
+  });
+
+  it("propagates a network failure", async () => {
+    const api = createAiApi();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    await expect(api.createSession()).rejects.toThrow("offline");
   });
 });
 

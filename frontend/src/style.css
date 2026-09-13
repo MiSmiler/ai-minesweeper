@@ -353,11 +353,18 @@ button:hover {
 }
 
 .guide-dashboard select,
-.guide-dashboard .analysis-btn {
+.guide-dashboard .send-btn,
+.guide-dashboard .new-session-btn {
   width: max-content;
 }
 
-.analysis-btn.running {
+/* The Send and new-session buttons sit side by side (issue #133). */
+.guide-dashboard .button-row {
+  display: flex;
+  gap: 6px;
+}
+
+.send-btn.running {
   background: var(--mine-bg);
   color: #fff;
 }

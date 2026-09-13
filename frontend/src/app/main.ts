@@ -61,11 +61,11 @@ let composition = mountMode(current, content, deps);
 function refreshSwitcher(): void {
   renderModeSwitcher(switcher, current, (next) => {
     if (next === current) return;
-    // Switching PlayMode discards the current Game and its guide history; ask
-    // first when there is history to lose (issue #112 US-32 spirit).
+    // Switching PlayMode abandons the current Game and its AI Session; ask
+    // first when the session is non-empty (issue #112 US-32 spirit).
     if (
       composition.confirmDiscard?.(
-        "切换 PlayMode 将清空当前 guide 历史，是否继续？",
+        "切换 PlayMode 将结束当前 AI 会话，是否继续？",
       ) === false
     ) {
       return; // Declined: stay in the current mode.
@@ -79,8 +79,8 @@ function refreshSwitcher(): void {
 }
 refreshSwitcher();
 
-// A refresh (or tab close) would silently discard guide history; the browser
-// shows a native beforeunload prompt when the guard reports history present.
+// A refresh (or tab close) would silently discard a live AI Session; the
+// browser shows a native beforeunload prompt when the guard reports one.
 // A custom confirm can't block unload, so this is the only browser-sanctioned
 // way to warn (issue #112 US-32 spirit).
 window.addEventListener("beforeunload", (e) => {

@@ -20,7 +20,8 @@ function makeDeps(): AppDeps {
   return {
     getPlayMode: () => "single",
     aiApi: {
-      startGuide: vi.fn(),
+      createSession: vi.fn(async () => ({ sessionId: "s" })),
+      send: vi.fn(),
       interrupt_by_user: vi.fn().mockResolvedValue(undefined),
     },
     captureBoardImage: vi.fn().mockResolvedValue("data:image/png;base64,xxx"),
