@@ -1,3 +1,7 @@
+## Communication Guidelines
+
+Organise a message around **a few points — three or so**. Past that it becomes work to read, and the reader loses the ones that matter: lead with what needs a reply now, and hold the rest for the next turn.
+
 ## Toolchain
 
 - **Backend** (`src/`): Rust (edition 2024) + axum, built and tested with `cargo` (`cargo fmt`, `cargo test`).
