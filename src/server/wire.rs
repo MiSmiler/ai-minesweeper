@@ -2,12 +2,12 @@
 //!
 //! The wire contract has its own home here. The structs are pure data with
 //! serde derives; `GameSnapshot::from_game` maps a `core::Game` into this
-//! shape. This module depends on `crate::core` for that mapping and on
+//! shape. This module depends on the `game` crate for that mapping and on
 //! `serde`, but not on axum (the handlers live in `server::mod.rs`).
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::{CellContent, Game, GameState, Position};
+use game::{CellContent, Game, GameState, Position};
 
 // --- Wire DTOs ---
 
@@ -126,7 +126,7 @@ impl GameSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Difficulty, Features, GameConfig};
+    use game::{Difficulty, Features, GameConfig};
 
     #[test]
     fn content_serializes_to_the_wire_shape() {

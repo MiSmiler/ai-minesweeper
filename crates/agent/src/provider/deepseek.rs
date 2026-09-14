@@ -22,7 +22,7 @@ use futures::StreamExt;
 use futures::stream::{self, BoxStream};
 use tokio_util::sync::CancellationToken;
 
-use crate::ai::protocol::{ChatRequest, ProviderError, ProviderErrorKind, StreamChunk};
+use crate::protocol::{ChatRequest, ProviderError, ProviderErrorKind, StreamChunk};
 
 use super::{Provider, ProviderStream};
 
@@ -355,7 +355,7 @@ impl Provider for DeepSeek {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::protocol::{ContentBlock, Message};
+    use crate::protocol::{ContentBlock, Message};
     use futures::StreamExt;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

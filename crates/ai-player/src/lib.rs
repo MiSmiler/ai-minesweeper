@@ -1,13 +1,15 @@
-//! Minesweeper binding adapter for the generic AI runtime (ADR-0013).
+//! The ai-player context: the Minesweeper binding for the generic AI runtime
+//! (ADR-0013).
 //!
-//! `ai_adapter` renders the player-visible side of a `core::Game` into the
-//! board presentation (the [`InputMode`]), builds the system prompt (the
-//! shared core plus the mode's own section), and wires `Guide::send` — the
-//! advisor's "ask the AI" entry point — to one Turn of an `ai::agent::Agent`.
+//! [`Guide`] renders the player-visible side of a `game::Game` into the board
+//! presentation (the [`InputMode`]), builds the system prompt (the shared core
+//! plus the mode's own section), and wires `Guide::send` — the advisor's "ask
+//! the AI" entry point — to one Turn of an `agent::Agent`.
 //!
-//! The AI Session itself is a backend-owned concept (ADR-0017): [`Guide`] holds
-//! the live session's *binding* (the id the backend handed out and the
-//! InputMode lock) while the conversation lives in the agent's [`Session`].
+//! The Session bound to the current Game is a backend-owned concept (ADR-0017):
+//! [`Guide`] holds the live session's *binding* (the id the backend handed out
+//! and the InputMode lock) while the messages live in the agent's
+//! [`Session`].
 //!
 //! The user turn carries the board alone (ADR-0016): every rule — the
 //! coordinate system, the symbol legend, the output contract — lives in the
@@ -18,9 +20,9 @@
 //! Privacy hard constraint: the payload sent to the model contains only
 //! player-visible state (hidden / flagged / revealed numbers). The Mine
 //! layout is never read and never leaks. `BoardView::from_game` is that
-//! privacy seam — it reads only the visible API of `core::Game`.
+//! privacy seam — it reads only the visible API of `game::Game`.
 //!
-//! This module depends on `core` + `ai`, never on `server`.
+//! This crate depends on `game` + `agent`, never on the app (`server`).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -31,13 +33,15 @@ use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::ai::agent::{Agent, AgentError, Session, ThinkingLevel, Tool};
-use crate::ai::protocol::{ContentBlock, Message, ProviderError, ProviderErrorKind, StreamChunk};
-use crate::core::{CellContent, CellState, CellView, Difficulty, Game, GameState, Position};
+use agent::{
+    Agent, AgentError, ContentBlock, DeepSeek, DeepSeekConfig, Message, ProviderError,
+    ProviderErrorKind, ProviderSet, Session, StreamChunk, ThinkingLevel, Tool,
+};
+use game::{CellContent, CellState, CellView, Difficulty, Game, GameState, Position};
 
 /// How the board is put in front of the model: the rendering into the user
 /// turn and the system-prompt section that describes it. Not
-/// `core::PlayMode`, which is the player's view.
+/// `game::PlayMode`, which is the player's view.
 ///
 /// Wire serialization is kebab-case (`#[serde(rename_all = "kebab-case")]`),
 /// aligned with the frontend `ai/api.ts` literals: `Plain` → `plain`,
@@ -193,6 +197,9 @@ pub enum SendError {
 /// <https://api-docs.deepseek.com/zh-cn/news/news260910>
 pub(crate) const MODEL: &str = "deepseek-flash";
 
+/// The name the product registers its DeepSeek provider under.
+const PROVIDER: &str = "deepseek";
+
 /// The AI Session bound to one Game: the id the backend handed out, the
 /// InputMode lock, and the agent's [`Session`], which owns the messages.
 struct SessionBinding {
@@ -279,6 +286,21 @@ impl Guide {
             in_flight: Arc::new(StdMutex::new(None)),
             next_seq: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// The assembly this product ships: DeepSeek from `DEEPSEEK_API_KEY` and
+    /// [`MODEL`] for every Send. It never fails — an environment without a key
+    /// yields a `Guide` with no Provider, whose Load fails with
+    /// [`AgentError::NoProvider`], surfaced to the player as a `config`
+    /// ProviderError at session creation rather than at startup.
+    pub fn from_env() -> Self {
+        let mut providers = ProviderSet::new();
+        if let Some(config) = DeepSeekConfig::from_env() {
+            providers.insert(PROVIDER.to_string(), Box::new(DeepSeek::new(config)));
+        }
+        let mut agent = Agent::new(providers);
+        agent.set_model(MODEL.to_string(), Some(PROVIDER));
+        Self::new(Arc::new(Mutex::new(agent)))
     }
 
     /// Creates an empty AI Session, replacing the live one (if any) and
@@ -661,13 +683,13 @@ fn civil_from_days(z: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::agent::ProviderSet;
-    use crate::ai::protocol::ChatRequest;
-    use crate::ai::protocol::{ReasoningEffort, ThinkingMode, ThinkingToggle};
-    use crate::ai::provider::{MockProvider, Provider, ProviderStream};
-    use crate::core::{Features, GameConfig};
+    use agent::ChatRequest;
+    use agent::ProviderSet;
+    use agent::{MockProvider, Provider, ProviderStream};
+    use agent::{ReasoningEffort, ThinkingMode, ThinkingToggle};
     use async_trait::async_trait;
     use futures::stream;
+    use game::{Features, GameConfig};
 
     // --- a deterministic, player-built test view ---
 

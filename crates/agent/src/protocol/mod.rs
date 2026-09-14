@@ -6,8 +6,8 @@
 //! ([`ProviderError`]) flowing out of a provider. It knows nothing about a
 //! concrete vendor or about Minesweeper; it depends on `serde` only.
 //!
-//! These types are consumed on the **output side**: `provider` / `ai_adapter`
-//! / `server` all produce them and serialize them out (to the provider's wire
+//! These types are consumed on the **output side**: `provider` / `ai-player`
+//! / the app all produce them and serialize them out (to the provider's wire
 //! or to the frontend). They are never parsed back from a wire body in this
 //! layer, so they carry only `Serialize` (the real DeepSeek provider parses
 //! its own OpenAI wire and *constructs* these values; it does not deserialize
@@ -157,7 +157,7 @@ pub struct ThinkingToggle {
 }
 
 /// The request sent to a provider. `model` is required and is filled by the
-/// [`crate::ai::agent::Agent`]'s `current_model`.
+/// [`crate::agent::Agent`]'s `current_model`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ChatRequest {
     pub messages: Vec<Message>,

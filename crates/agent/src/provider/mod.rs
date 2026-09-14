@@ -3,7 +3,7 @@
 //! [`Provider`] is the single extension point for vendors (DeepSeek today,
 //! others later). [`ProviderStream`] is the streaming cell type returned by
 //! [`Provider::stream_chat`]; it is a boxed, `Send` stream so a `dyn
-//! Provider` can be held boxed in a [`ProviderSet`](crate::ai::agent::ProviderSet).
+//! Provider` can be held boxed in a [`ProviderSet`](crate::agent::ProviderSet).
 //!
 //! The module owns only the seam. Concrete providers live next to it:
 //! [`deepseek`] (the real OpenAI-compatible backend, issue #116) and [`mock`]
@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use tokio_util::sync::CancellationToken;
 
-use crate::ai::protocol::{ChatRequest, ProviderError, StreamChunk};
+use crate::protocol::{ChatRequest, ProviderError, StreamChunk};
 
 pub use deepseek::{DeepSeek, DeepSeekConfig};
 // The mock provider is only referenced by unit tests (the product uses

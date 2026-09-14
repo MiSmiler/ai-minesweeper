@@ -1,12 +1,12 @@
 //! SSE transport for the `/ai/...` advisor routes (issue #117, ADR-0013).
 //!
-//! A thin transport layer over the `ai_adapter::Guide` seam: it creates the
+//! A thin transport layer over the `ai_player::Guide` seam: it creates the
 //! backend-owned AI Session (`POST /ai/session`), appends one board to it and
 //! forwards the reply as an SSE stream terminated by `[DONE]`
 //! (`POST /ai/guide/{id}`), and cancels the in-flight Send
 //! (`POST /ai/guide/{id}/interrupt`).
 //!
-//! This module never reaches into `ai_adapter` internals and never writes to
+//! This module never reaches into `ai_player` internals and never writes to
 //! the `Game` — it only takes a player-visible board snapshot (cloned under a
 //! short lock) to hand to `Guide::send`. The session itself (its id, its
 //! messages, its cancel token) is owned by the `Guide`.
@@ -23,9 +23,9 @@ use futures::StreamExt;
 use futures::stream;
 use serde::Serialize;
 
-use crate::ai::agent::AgentError;
-use crate::ai::protocol::{ProviderError, ProviderErrorKind, StreamChunk};
-use crate::ai_adapter::{InputMode, InterruptReason, SendError, SendRequest};
+use agent::AgentError;
+use agent::{ProviderError, ProviderErrorKind, StreamChunk};
+use ai_player::{InputMode, InterruptReason, SendError, SendRequest};
 
 use super::AppState;
 
@@ -224,12 +224,12 @@ fn agent_error_response(err: AgentError) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::agent::ThinkingLevel;
-    use crate::ai::agent::{Agent, ProviderSet};
-    use crate::ai::provider::MockProvider;
-    use crate::ai_adapter::Guide;
-    use crate::core::{Difficulty, Features, Game, GameConfig};
+    use agent::MockProvider;
+    use agent::ThinkingLevel;
+    use agent::{Agent, ProviderSet};
+    use ai_player::Guide;
     use axum::body::to_bytes;
+    use game::{Difficulty, Features, Game, GameConfig};
     use std::sync::Mutex;
 
     // The `send` future is held across a `tokio::sync::Mutex` guard over a

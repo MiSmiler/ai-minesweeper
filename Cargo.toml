@@ -3,15 +3,16 @@ name = "ai-minesweeper"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["crates/*"]
+
 [dependencies]
-base64 = "0.22"
-async-trait = "0.1"
+agent = { path = "crates/agent" }
+ai-player = { path = "crates/ai-player" }
 axum = "0.8.9"
-bytes = "1"
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
-rand = "0.10.2"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+game = { path = "crates/game" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync"] }
@@ -21,4 +22,5 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
-wiremock = "0.6"
+# The game crate's test-support constructors (`Game::with_mines`).
+game = { path = "crates/game", features = ["test-support"] }
