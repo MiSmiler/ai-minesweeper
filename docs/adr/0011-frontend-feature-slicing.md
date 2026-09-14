@@ -1,5 +1,11 @@
 # Frontend organized by feature slice, layered within each slice
 
+> Amended by ADR-0018 (the context split): the frontend's slices are named after
+> their contexts — `frontend/src/ai` is now `frontend/src/ai-player` — and the
+> game slice took `gameArea.ts` and `makeGameSnapshot` from `app/` and `infra/`,
+> leaving `app/` with the compositions alone and `infra/` with the shared logger.
+> The slicing decision below stands; read it with the context map as well.
+
 The frontend `src/` was flat — every TypeScript module sat at the top level (`api.ts`, `client.ts`, `controller.ts`, …). The backend `src/` is already grouped by concern (`core/` for pure rules, `server/` for the transport layer), and the frontend was growing past the point where one directory made each module's role obvious. The frontend is also heading toward multiple play modes (human-plays, AI-watches, AI-plays, AI-and-human) behind a shared top bar, which will need reusable, instantiable units — two boards side by side in the AI-and-human mode, an AI message stream, a mode switcher.
 
 We organize the frontend **by feature slice first, then by layer within each slice**, mirroring the backend's layer spirit without committing to a single flat layer set across the whole app.
