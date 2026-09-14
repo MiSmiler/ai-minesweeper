@@ -1,6 +1,8 @@
-# ai-minesweeper
+# game
 
-A Minesweeper game with a web UI: a TypeScript frontend over a Rust backend, controlled entirely by mouse.
+The Minesweeper rules: what a Game is, how a Board is played, and what the
+Seed, the Features and the First Click mean. This context spans both stacks —
+the pure rules in `crates/game`, their UI in `frontend/src/game`.
 
 ## Language
 
@@ -125,45 +127,3 @@ _Avoid_: Options, flags, settings
 **Prank**:
 A Feature that makes the First Click always a Mine, ending the game immediately in `Lost` — the game is unwinnable by design. It is mutually exclusive with a pinned Seed (Prank is unseedable and non-reproducible), so it never coexists with a `--seed`. Enabled by the `--prank` launch parameter; the UI never indicates it is active.
 _Avoid_: Prank mode, trick mode, joke mode, jinx mode
-
-**PlayMode**:
-The perspective a single Game is shown from, independent of the rule set and of which Features are on: `SinglePlay` — the player plays unaided; `AiHelpMePlay` — the player plays while DeepSeek watches and suggests. The set is open and may grow (e.g. `AiPlay`, `AiPlayWithMe`); a Game has exactly one PlayMode at a time.
-_Avoid_: PlaySurface, view, perspective (when meaning the mode)
-
-**InputMode**:
-The way the Board is put in front of DeepSeek: `Plain` (the character grid), `Emoji`, or `Image` (a screenshot of the Board). Distinct from **PlayMode**, which is the perspective the player sees.
-_Avoid_: BoardFormat, format, input format
-
-**AI Agent**:
-The runtime that replies on the player's behalf in a PlayMode: it owns the model and the Provider, and answers each Send of an AI Session.
-_Avoid_: assistant, bot, AI
-
-**Provider**:
-The AI service that serves a model, plus the configuration needed to reach it: DeepSeek today, with the set open to others. Load resolves a Provider and validates its configuration and model.
-_Avoid_: vendor, backend, endpoint
-
-**Load**:
-The AI Agent bringing its Provider and model up when an AI Session is created: the configuration is resolved and the model validated, before any Send. A Load failure is reported at session creation and leaves the live AI Session untouched.
-_Avoid_: preflight, pre-flight, startup, initialization
-
-**AI Session**:
-The AI Agent's session, bound to one Game: the accumulated `user` /
-`assistant` messages spanning every Send of that Game. The backend creates it
-on request. A fresh AI Session is empty; its first committed Send binds the
-InputMode (the board legend in its system prompt), and a New Game ends it.
-_Avoid_: chat, context, conversation
-
-**Send**:
-The player action that appends the current Board to the AI Session as a `user`
-message and asks the AI Agent to reply. Its reply completes the Turn.
-_Avoid_: analysis, request, prompt
-
-**Prepare**:
-A Send's pre-processing — the AI Session checks, the Board payload, and the opening of the stream — before any reply content arrives. A failed Prepare adds no Turn.
-_Avoid_: preflight, pre-flight, preamble
-
-**Turn**:
-One Send together with the AI Agent's reply: the committed `user` / `assistant`
-pair. A Turn enters the AI Session as a unit — an interrupted or failed Send
-adds no Turn.
-_Avoid_: round, exchange, message pair
