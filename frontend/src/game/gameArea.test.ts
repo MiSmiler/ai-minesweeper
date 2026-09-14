@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createGameArea } from "./gameArea";
-import { makeGameSnapshot } from "../infra/testUtils";
+import { makeGameSnapshot } from "./testUtils";
 
 const flush = () => new Promise<void>((r) => setTimeout(r, 0));
 

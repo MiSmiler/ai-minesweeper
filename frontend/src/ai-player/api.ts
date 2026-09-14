@@ -52,7 +52,7 @@ export interface SendRequest {
   imageDataUrl?: string;
 }
 
-/** The AI slice entry point, injected via `AppDeps`. The real implementation
+/** The ai-player slice entry point, injected via `AppDeps`. The real implementation
  * (`createAiApi`) talks to the backend AI Session routes: `createSession`
  * POSTs `/ai/session`, `send` POSTs `/ai/guide/{id}` (issue #131, #133). */
 export interface AiApi {

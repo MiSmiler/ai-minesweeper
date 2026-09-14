@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { Action, CellView, GameSnapshot, Position } from "./api";
 import { createGameClient } from "./client";
 import type { TopBarEls } from "./render/snapshotRender";
-import { makeGameSnapshot } from "../infra/testUtils";
+import { makeGameSnapshot } from "./testUtils";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

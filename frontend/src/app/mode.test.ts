@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mountMode, renderModeSwitcher, type AppDeps } from "./mode";
-import { makeGameSnapshot } from "../infra/testUtils";
+import { makeGameSnapshot } from "../game/testUtils";
 
 function mockFetch(snapshot = makeGameSnapshot()): void {
   vi.stubGlobal(

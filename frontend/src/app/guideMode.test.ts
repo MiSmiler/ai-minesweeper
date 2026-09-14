@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AiApi, GuideEvent, ProviderError } from "../ai/api";
+import type { AiApi, GuideEvent, ProviderError } from "../ai-player/api";
 import { composeGuideMode } from "./guideMode";
 import type { AppDeps } from "./mode";
-import { makeGameSnapshot } from "../infra/testUtils";
+import { makeGameSnapshot } from "../game/testUtils";
 
 const flush = () => new Promise<void>((r) => setTimeout(r, 0));
 
