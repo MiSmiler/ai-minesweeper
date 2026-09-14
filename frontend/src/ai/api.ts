@@ -152,7 +152,7 @@ async function consumeGuide(
 }
 
 /** Shapes an unknown failure as an `upstream` `ProviderError`, so the machine
- * can alert it through the same path as a Send pre-flight. */
+ * can alert it through the same path as a Send's Prepare failure. */
 function asProviderError(err: unknown): ProviderError {
   return {
     kind: "upstream",

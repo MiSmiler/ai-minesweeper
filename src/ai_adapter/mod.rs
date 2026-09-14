@@ -167,8 +167,8 @@ pub struct SendRequest {
     pub image_data_url: Option<String>,
 }
 
-/// Why a Send never started: `Guide::send`'s pre-flight failures. Each maps to
-/// a wire status; only [`SendError::PreFlight`] carries a provider body.
+/// Why a Send never started: the reasons its Prepare failed. Each maps to a
+/// wire status; only [`SendError::Runtime`] carries a provider body.
 #[derive(Debug, PartialEq)]
 pub enum SendError {
     /// `id` is not the live AI Session (or there is none).
@@ -180,8 +180,10 @@ pub enum SendError {
         bound: InputMode,
         requested: InputMode,
     },
-    /// The agent failed before any content streamed (#97/#123).
-    PreFlight(AgentError),
+    /// The runtime failed before any content streamed (#97/#123): the Provider
+    /// or its model could not be brought up. The session-lifecycle rejections
+    /// (`UnknownSession` / `Busy` / `ModeMismatch`) are their own variants.
+    Runtime(AgentError),
 }
 
 /// The DeepSeek model that serves every [`InputMode`]: the canonical
@@ -449,7 +451,7 @@ impl Guide {
                 Ok(stream) => stream,
                 Err(err) => {
                     clear_in_flight(&self.in_flight, seq);
-                    return Err(SendError::PreFlight(err));
+                    return Err(SendError::Runtime(err));
                 }
             }
         };
@@ -573,12 +575,13 @@ fn render_emoji(view: &BoardView) -> String {
 /// `Timeout`; an upstream `5xx` is `UpstreamError`.
 ///
 /// `ProviderErrorKind` is *not* redundant (issue #123): it is a real consumer
-/// signal on the pre-flight path, where `config` / `upstream` reach the
-/// frontend intact (see `ai_routes::preflight_response`). Here, on the
+/// signal on the Load and Prepare paths, where `config` / `upstream` reach the
+/// frontend intact (see `ai_routes::agent_error_response`). Here, on the
 /// mid-stream path, `Config` is a defensive fallback **only** — in practice
 /// DeepSeek never streams one (unknown-model / serialization failures are
-/// returned pre-flight from `validate_model`, and `SseState` only ever emits
-/// `Upstream`). The `Config -> Unknown` arm below is tested
+/// returned before any content — unknown-model failures from `validate_model`,
+/// serialization failures from the request build — and `SseState` only ever
+/// emits `Upstream`). The `Config -> Unknown` arm below is tested
 /// (`config_error_refracts_to_unknown`) and intentionally reports a
 /// should-never-surface config error as `Unknown`; it is a contract, not dead
 /// code.

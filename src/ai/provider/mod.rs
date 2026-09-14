@@ -45,9 +45,11 @@ pub trait Provider: Send + Sync {
         cancel: CancellationToken,
     ) -> Result<ProviderStream, ProviderError>;
 
-    /// Loads the provider for `model`: verifies its config and that the model
-    /// is reachable before any Turn starts (see `Guide::create_session`). The
-    /// default is a no-op for providers with no external config (the mock).
+    /// Loads the provider for `model` — the provider half of `Load`: resolves
+    /// its config and ensures the model is available (a provider may fetch and
+    /// cache its catalog on first use), so an unconfigured provider fails
+    /// before any Turn starts. The default is a no-op for providers with no
+    /// external config (the mock).
     async fn load(&self, _model: &str) -> Result<(), ProviderError> {
         Ok(())
     }

@@ -638,7 +638,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, AgentError::NoProvider);
-        // A pre-flight failure commits nothing.
+        // A runtime failure commits nothing.
         assert!(session.is_empty());
     }
 

@@ -108,12 +108,12 @@ describe("createGuideMachine session lifecycle", () => {
     expect(h.api.send).toHaveBeenCalledTimes(1);
   });
 
-  it("a failed newSession surfaces preflight-failed and leaves no session", async () => {
+  it("a failed newSession surfaces load-failed and leaves no session", async () => {
     const h = setup();
     h.api.createSession.mockRejectedValueOnce(new Error("offline"));
     await h.machine.newSession();
     const s = last(h);
-    expect(s.phase).toBe("preflight-failed");
+    expect(s.phase).toBe("load-failed");
     expect(s.sessionState).toBe("none");
     expect(s.providerError).toEqual({
       kind: "upstream",
@@ -205,7 +205,7 @@ describe("createGuideMachine run transitions", () => {
     expect(last(h).sessionState).toBe("non-empty");
   });
 
-  it("a provider error enters preflight-failed without changing the session", async () => {
+  it("a provider error enters prepare-failed without changing the session", async () => {
     const h = await emptySession();
     h.machine.send({ inputMode: "emoji" });
     h.handlers[0]!.onProviderError({
@@ -214,7 +214,7 @@ describe("createGuideMachine run transitions", () => {
       message: "no",
     });
     const s = last(h);
-    expect(s.phase).toBe("preflight-failed");
+    expect(s.phase).toBe("prepare-failed");
     expect(s.sessionState).toBe("empty");
     expect(s.providerError).toEqual({
       kind: "config",

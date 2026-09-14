@@ -83,13 +83,13 @@ pub(crate) fn ai_routes(state: Arc<AppState>) -> Router {
 /// `POST /ai/session`: loads the AI runtime, then replaces the live AI Session
 /// with an empty one and returns its id (the old session's Send is cancelled).
 /// The UI holds the discard confirm; the backend replaces unconditionally. A
-/// load failure (no provider / bad key / unreachable model) maps to the same
-/// pre-flight `ProviderError` body as a Send, so the frontend alerts it before
-/// any Send.
+/// Load failure (no provider / bad key / unreachable model) maps to the same
+/// `ProviderError` body as a Send's Prepare failure, so the frontend alerts it
+/// before any Send.
 async fn handle_new_session(State(state): State<Arc<AppState>>) -> Response {
     match state.guide.create_session().await {
         Ok(session_id) => Json(NewSessionDto { session_id }).into_response(),
-        Err(err) => preflight_response(err),
+        Err(err) => agent_error_response(err),
     }
 }
 
@@ -161,10 +161,10 @@ fn to_event(item: Result<StreamChunk, InterruptReason>) -> Result<Event, axum::E
     Ok(event)
 }
 
-/// Maps a pre-flight [`SendError`] to a status + body. The three
-/// session-lifecycle failures carry `{"error": "..."}` — the status code is the
-/// machine signal. Only a `PreFlight` keeps the #97/#123 `ProviderError` shape,
-/// because only it is a provider failure.
+/// Maps a [`SendError`] to a status + body. The three session-lifecycle
+/// failures carry `{"error": "..."}` — the status code is the machine signal.
+/// Only `Runtime` keeps the #97/#123 `ProviderError` shape, because only it is
+/// a provider failure.
 fn send_error_response(err: SendError) -> Response {
     match err {
         SendError::UnknownSession => {
@@ -178,7 +178,7 @@ fn send_error_response(err: SendError) -> Response {
             StatusCode::BAD_REQUEST,
             format!("input mode is locked to {bound:?}, requested {requested:?}"),
         ),
-        SendError::PreFlight(err) => preflight_response(err),
+        SendError::Runtime(err) => agent_error_response(err),
     }
 }
 
@@ -187,11 +187,12 @@ fn error_response(status: StatusCode, message: String) -> Response {
     (status, Json(ErrorDto { error: message })).into_response()
 }
 
-/// Maps a pre-flight agent failure (before any content streamed) into an HTTP
-/// status + a `ProviderError` body (`{kind,code,message}`); no SSE is started.
-/// `AgentError::Cancelled` is a defensive branch — a cancel before the stream
-/// begins surfaces as an interrupt *through* the stream, not here.
-fn preflight_response(err: AgentError) -> Response {
+/// Maps an [`AgentError`] into an HTTP status + a `ProviderError` body
+/// (`{kind,code,message}`); no SSE is started. Both failure paths land here: a
+/// Load failure (session creation) and a Prepare failure (a Send before any
+/// content). `AgentError::Cancelled` is a defensive branch — a cancel before the
+/// stream begins surfaces as an interrupt *through* the stream, not here.
+fn agent_error_response(err: AgentError) -> Response {
     let (status, provider_error) = match err {
         AgentError::Provider(pe) => {
             let status = pe

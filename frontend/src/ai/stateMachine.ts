@@ -1,8 +1,8 @@
 // The guide state machine (issue #119, #133): owns the Send run's phase, the
 // AI Session's `sessionState`, and the accumulated `reasoning` / `content`
 // text. It is deliberately thin — phase + text accumulation + session
-// lifecycle only. History binding, mode-change confirm, and the pre-flight
-// alert all live in the `app/` assembly layer.
+// lifecycle only. History binding, mode-change confirm, and the Load / Prepare
+// alerts all live in the `app/` assembly layer.
 //
 // Generation tracking: each `newSession()` / `endSession()` / `send()` bumps a
 // generation counter, and the event callbacks capture the generation they were
@@ -24,9 +24,16 @@ import type {
   SendRequest,
 } from "./api";
 
-/** The phase of a single Send run. */
+/** The phase of the guide: the Send run's own phases (`idle` / `running` /
+ * `done` / `interrupted`) plus the two failures before any content —
+ * `load-failed` (session creation) and `prepare-failed` (a Send). */
 export type GuidePhase =
-  "idle" | "running" | "done" | "interrupted" | "preflight-failed";
+  | "idle"
+  | "running"
+  | "done"
+  | "interrupted"
+  | "load-failed"
+  | "prepare-failed";
 
 /** Whether an AI Session is live: `none` (no session), `empty` (created, no
  * committed Turn), `non-empty` (at least one committed Turn). The `empty` /
@@ -47,7 +54,7 @@ export interface GuideState {
   userImageUrl?: string;
   /** Set only when `phase === "interrupted"`. */
   interruptReason?: InterruptReason;
-  /** Set only when `phase === "preflight-failed"`. */
+  /** Set only when `phase` is `load-failed` or `prepare-failed`. */
   providerError?: ProviderError;
 }
 
@@ -113,7 +120,7 @@ export function createGuideMachine(deps: { api: AiApi }): GuideMachine {
 
   const onProviderError = (g: number, e: ProviderError): void => {
     if (g !== generation) return;
-    state = { ...state, phase: "preflight-failed", providerError: e };
+    state = { ...state, phase: "prepare-failed", providerError: e };
     emit();
   };
 
@@ -137,7 +144,7 @@ export function createGuideMachine(deps: { api: AiApi }): GuideMachine {
               code: null,
               message: err instanceof Error ? err.message : String(err),
             };
-        state = { ...state, phase: "preflight-failed", providerError };
+        state = { ...state, phase: "load-failed", providerError };
         emit();
         return;
       }

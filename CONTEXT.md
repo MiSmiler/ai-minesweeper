@@ -134,6 +134,18 @@ _Avoid_: PlaySurface, view, perspective (when meaning the mode)
 The way the Board is put in front of DeepSeek: `Plain` (the character grid), `Emoji`, or `Image` (a screenshot of the Board). Distinct from **PlayMode**, which is the perspective the player sees.
 _Avoid_: BoardFormat, format, input format
 
+**AI Agent**:
+The runtime that replies on the player's behalf in a PlayMode: it owns the model and the Provider, and answers each Send of an AI Session.
+_Avoid_: assistant, bot, AI
+
+**Provider**:
+The AI service that serves a model, plus the configuration needed to reach it: DeepSeek today, with the set open to others. Load resolves a Provider and validates its configuration and model.
+_Avoid_: vendor, backend, endpoint
+
+**Load**:
+The AI Agent bringing its Provider and model up when an AI Session is created: the configuration is resolved and the model validated, before any Send. A Load failure is reported at session creation and leaves the live AI Session untouched.
+_Avoid_: preflight, pre-flight, startup, initialization
+
 **AI Session**:
 The AI Agent's session, bound to one Game: the accumulated `user` /
 `assistant` messages spanning every Send of that Game. The backend creates it
@@ -145,6 +157,10 @@ _Avoid_: chat, context, conversation
 The player action that appends the current Board to the AI Session as a `user`
 message and asks the AI Agent to reply. Its reply completes the Turn.
 _Avoid_: analysis, request, prompt
+
+**Prepare**:
+A Send's pre-processing — the AI Session checks, the Board payload, and the opening of the stream — before any reply content arrives. A failed Prepare adds no Turn.
+_Avoid_: preflight, pre-flight, preamble
 
 **Turn**:
 One Send together with the AI Agent's reply: the committed `user` / `assistant`

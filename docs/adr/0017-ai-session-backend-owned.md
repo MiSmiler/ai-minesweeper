@@ -19,8 +19,8 @@ An AI Session is empty until its first Turn commits; that same `empty` /
 `non-empty` predicate drives both the InputMode lock and the discard confirm.
 The InputMode is bound at the first committed Send rather than at creation, so
 an empty session can still change its board legend. A Send commits the `user` +
-`assistant` pair atomically and adds nothing on interrupt or pre-flight
-failure, so the stored history never holds a dangling `user` turn.
+`assistant` pair atomically and adds nothing on interrupt or a failed
+Prepare, so the stored history never holds a dangling `user` turn.
 
 Consequences: `Guide` becomes stateful and owns the live session plus its
 in-flight cancel token, so the server's `ai_sessions` registry disappears; a

@@ -50,11 +50,11 @@ function labeledField(caption: string, control: HTMLElement): HTMLElement {
   return row;
 }
 
-/** Buckets a `preflight-failed` error into a human alert message (issue #97 ①).
- * 4xx/5xx surface via the HTTP status / provider kind; the alert blocks
- * (synchronous `window.alert`).
+/** Buckets a `load-failed` / `prepare-failed` error into a human alert message
+ * (issue #97 ①). 4xx/5xx surface via the HTTP status / provider kind; the alert
+ * blocks (synchronous `window.alert`).
  *
- * This is the pre-flight consumer of the `kind` field on the backend
+ * This is the Load / Prepare consumer of the `kind` field on the backend
  * `ProviderError` body (issue #123): `config` ("AI 未配置") and `upstream`
  * ("AI 服务异常") must stay distinct, and they are *not* derivable from `code`
  * when the error carries no HTTP status (no provider / bad key / transport
@@ -244,13 +244,16 @@ export function composeGuideMode(
     sendBtn.disabled = state.sessionState === "none";
     modeSelect.disabled =
       state.sessionState === "non-empty" || state.phase === "running";
-    // A completed Send is recorded in history; interrupted / pre-flight
-    // failures are not (partial / absent output, issue #97).
+    // A completed Send is recorded in history; interrupted / failed Prepare
+    // runs are not (partial / absent output, issue #97).
     if (state.phase === "done") {
       history.push({ mode: currentMode, state: { ...state } });
       renderHistory();
     }
-    if (state.phase === "preflight-failed" && state.providerError) {
+    if (
+      (state.phase === "load-failed" || state.phase === "prepare-failed") &&
+      state.providerError
+    ) {
       window.alert(providerAlertMessage(state.providerError));
     }
   });
