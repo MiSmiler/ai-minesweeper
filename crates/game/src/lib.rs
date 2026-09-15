@@ -292,7 +292,7 @@ impl Game {
     /// deterministic non-Prank layout — a Prank game ignores it and samples
     /// its own Mines at the First Click. The mine count is still set from
     /// the Difficulty (the recipe) and is independent of the preset length.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_mines(difficulty: Difficulty, features: Features, mines: &[Position]) -> Self {
         let mut game = Self::with_config(GameConfig {
             difficulty,
@@ -357,7 +357,7 @@ impl Game {
 
     /// The placed Mines, if any; `None` until the First Click (for every
     /// game). Test use.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn mines(&self) -> Option<&[Position]> {
         self.mines.as_deref()
     }

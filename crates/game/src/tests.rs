@@ -1,4 +1,4 @@
-//! Unit tests for the game domain (`crate::core`), extracted from the former
+//! Unit tests for the game domain (the `game` crate), extracted from the former
 //! single-file `core.rs` so the module's definitions and `Game` logic are no
 //! longer buried behind ~830 lines of tests (issue #108).
 //!

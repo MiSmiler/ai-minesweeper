@@ -13,15 +13,15 @@ import {
   type Action,
   type GameSnapshot,
   type Position,
-} from "../game/api";
-import { createGameClient, type GameClient } from "../game/client";
+} from "./api";
+import { createGameClient, type GameClient } from "./client";
 import {
   cellAtPoint,
   measureBoard,
   type BoardGeometry,
-} from "../game/render/hitTest";
+} from "./render/hitTest";
 import { log } from "../infra/log";
-import type { TopBarEls } from "../game/render/snapshotRender";
+import type { TopBarEls } from "./render/snapshotRender";
 
 export interface GameArea {
   /** The root container of the game area (a `.game-area` div). */

@@ -15,15 +15,15 @@ import type {
   ProviderError,
   SendRequest,
   ThinkingLevel,
-} from "../ai/api";
-import { createConversation } from "../ai/conversation";
-import { createBoardAxis, type AxisOverlay } from "../ai/axis";
+} from "../ai-player/api";
+import { createConversation } from "../ai-player/conversation";
+import { createBoardAxis, type AxisOverlay } from "../ai-player/axis";
 import {
   createGuideMachine,
   type GuideState,
   type SessionState,
-} from "../ai/stateMachine";
-import { createGameArea, type GameArea } from "./gameArea";
+} from "../ai-player/stateMachine";
+import { createGameArea, type GameArea } from "../game/gameArea";
 import type { AppDeps, Composition } from "./mode";
 
 const MODES: ReadonlyArray<{ value: InputMode; label: string }> = [

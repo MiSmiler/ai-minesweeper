@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { composeSingleMode } from "./singleMode";
 import type { AppDeps } from "./mode";
-import { makeGameSnapshot } from "../infra/testUtils";
+import { makeGameSnapshot } from "../game/testUtils";
 
 function mockFetch(snapshot = makeGameSnapshot()): void {
   vi.stubGlobal(

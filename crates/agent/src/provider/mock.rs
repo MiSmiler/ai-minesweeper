@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use futures::stream;
 use tokio_util::sync::CancellationToken;
 
-use crate::ai::protocol::{ChatRequest, ContentBlock, Message, ProviderError, StreamChunk};
+use crate::protocol::{ChatRequest, ContentBlock, Message, ProviderError, StreamChunk};
 
 use super::{Provider, ProviderStream};
 

@@ -1,6 +1,6 @@
 //! The agent engine: `Agent`, `Tool`, `Session`, `ProviderSet`, `run_loop`
 //! (issue #113, ADR-0013). This is the only module that depends on
-//! [`crate::ai::provider`]; it consumes the `Provider` seam to implement
+//! [`crate::provider`]; it consumes the `Provider` seam to implement
 //! streaming, single-turn aggregation (`complete_once`), and the multi-turn
 //! tool loop (`run_loop`).
 
@@ -12,11 +12,11 @@ use futures::{Stream, StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::ai::protocol::{
+use crate::protocol::{
     ChatRequest, Message, ProviderError, ReasoningEffort, StreamChunk, ThinkingMode,
     ThinkingToggle, ToolCall, ToolDecl,
 };
-use crate::ai::provider::Provider;
+use crate::provider::Provider;
 
 /// The reasoning depth the agent should use for a turn (issue #122). Owned by
 /// the `Agent` — the engine decides how deep to think — and translated onto the
@@ -405,8 +405,8 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::protocol::ContentBlock;
-    use crate::ai::provider::{MockProvider, Provider, ProviderStream};
+    use crate::protocol::ContentBlock;
+    use crate::provider::{MockProvider, Provider, ProviderStream};
 
     fn agent_with_mock(model: &str, provider_name: &str) -> (Agent, MockProvider) {
         let mock = MockProvider::new();
@@ -575,7 +575,7 @@ mod tests {
         set.insert(
             "mock".to_string(),
             Box::new(ErroringProvider(ProviderError {
-                kind: crate::ai::protocol::ProviderErrorKind::Upstream,
+                kind: crate::protocol::ProviderErrorKind::Upstream,
                 code: Some(500),
                 message: "boom".into(),
             })),

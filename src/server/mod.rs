@@ -1,8 +1,9 @@
 //! HTTP server layer: the game state API.
 //!
-//! A thin adapter over the core interface (ADR-0003). `core.rs` stays a pure
-//! logic module with no serde or server dependencies; this module owns the
-//! axum handlers and maps core types to the wire DTOs in [`wire`].
+//! A thin adapter over the game crate's interface (ADR-0003). The `game` crate
+//! stays a pure logic module with no serde or server dependencies; this module
+//! owns the axum handlers and maps the game's types to the wire DTOs in
+//! [`wire`].
 
 mod ai_routes;
 pub mod wire;
@@ -16,8 +17,8 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use tracing::{debug, info, warn};
 
-use crate::ai_adapter::Guide;
-use crate::core::{Difficulty, Game, GameState, Position};
+use ai_player::Guide;
+use game::{Difficulty, Game, GameState, Position};
 
 use self::wire::{ActionDto, ActionKind, GameSnapshot};
 
@@ -85,7 +86,7 @@ pub(crate) fn apply_action(game: &mut Game, action: &ActionDto) -> Result<Action
 
 /// Logs a freshly created Game's difficulty at `info` with its `source`. The
 /// Seed lifecycle (a committed Seed at `info`, rejected candidates at `debug`)
-/// is logged by the engine in `core.rs`; this records only that a game was
+/// is logged by the engine in the `game` crate; this records only that a game was
 /// created. `source` distinguishes the initial game from player-triggered
 /// New Games.
 pub fn log_new_game(game: &Game, source: &str) {
@@ -124,7 +125,7 @@ pub(crate) async fn post_action(
         (StatusCode::BAD_REQUEST, e)
     })?;
     let after = game.game_state();
-    // core.rs logs the Seed lifecycle (a committed Seed at info, rejected
+    // the `game` crate logs the Seed lifecycle (a committed Seed at info, rejected
     // candidates at debug); here we only record that a new game was created.
     if matches!(outcome, ActionOutcome::NewGame) {
         // A new Game replaces the board the AI Session was reasoning about, so
@@ -152,11 +153,11 @@ pub(crate) async fn post_action(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::agent::{Agent, ProviderSet, ThinkingLevel};
-    use crate::ai::provider::MockProvider;
-    use crate::ai_adapter::{Guide, InputMode, SendError, SendRequest};
-    use crate::core::{Difficulty, Features, Game, GameConfig, GameState, Position};
     use crate::server::wire::{ActionDto, ActionKind, GameSnapshot, PositionDto};
+    use agent::MockProvider;
+    use agent::{Agent, ProviderSet, ThinkingLevel};
+    use ai_player::{Guide, InputMode, SendError, SendRequest};
+    use game::{Difficulty, Features, Game, GameConfig, GameState, Position};
 
     /// An `AppState` whose `Guide` runs against the offline mock provider.
     fn app_state() -> Arc<AppState> {

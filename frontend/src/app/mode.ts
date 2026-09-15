@@ -4,14 +4,14 @@
 // deliberately not unified: one is the UI-facing concept, the other is the
 // runtime key.
 
-import type { AiApi } from "../ai/api";
+import type { AiApi } from "../ai-player/api";
 import { composeGuideMode } from "./guideMode";
 import { composeSingleMode } from "./singleMode";
 
 /** The runtime identifier of a PlayMode (kebab). */
 export type PlayModeName = "single" | "ai-guide";
 
-/** Screenshots the board into a data URL — the `ai/screenshot.ts` signature.
+/** Screenshots the board into a data URL — the `ai-player/screenshot.ts` signature.
  * Injected (rather than imported) so jsdom tests can substitute it, since the
  * browser-only capture never runs under jsdom. `createBoardAxis` is pure DOM
  * and is imported directly by the compositions, not injected. */
@@ -24,7 +24,7 @@ export type CaptureBoardImage = (
 export interface AppDeps {
   /** Reads the initial PlayMode the app should start in. */
   getPlayMode(): PlayModeName;
-  /** The AI slice entry point (a stub/mock in this ticket). */
+  /** The ai-player slice entry point (a stub/mock in this ticket). */
   aiApi: AiApi;
   /** Screenshots the board for the image input form. */
   captureBoardImage: CaptureBoardImage;

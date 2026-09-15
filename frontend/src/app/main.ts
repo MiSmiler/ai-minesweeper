@@ -6,8 +6,8 @@
 // mounts a fresh composition. The initial mode comes from `?mode=` (default
 // `single`) so dev/screenshots/acceptance can boot straight into either mode.
 
-import { createAiApi } from "../ai/api";
-import { captureBoardImage } from "../ai/screenshot";
+import { createAiApi } from "../ai-player/api";
+import { captureBoardImage } from "../ai-player/screenshot";
 import {
   mountMode,
   renderModeSwitcher,

@@ -1,5 +1,10 @@
 # AI subsystem: a core-decoupled generic agent runtime with a Minesweeper binding adapter
 
+> Renamed by ADR-0018 (the context split): the two layers are now the crates
+> `crates/agent` (was `src/ai/`) and `crates/ai-player` (was `src/ai_adapter/`),
+> and the decision below is unchanged. Read its `ai` / `ai_adapter` / `core`
+> references as `agent` / `ai-player` / `game`.
+
 The AI feature set — the `AiHelpMePlay` advisor mode now, and the future `AiPlay` / `AiPlayWithMe` modes — is organized as two layers rather than as `assist`-flavored modules inside `core` or `server`. `src/ai/` is a generic agent runtime that is deliberately decoupled from the core game: it knows nothing about Minesweeper, reuses nothing from `core`, and exposes only a `Tool` abstraction, a `Session` / message-history, a `Provider` seam, and a `run_loop`. `src/ai_adapter/` is the Minesweeper binding that depends on both `core` and `ai`: it renders the board per the `InputMode` (ADR-0016), builds the mode's system prompt, and wraps `core`'s `reveal` / `toggle_flag` / `chord` into `ai::Tool`s. `server` stays a thin transport layer that owns the `/ai/...` SSE routes and calls into `ai_adapter`; `ai_adapter` never depends on `server`, and `main` composes everything (build the `Game`, build the `ai` agent, register the tools via `ai_adapter`, wire the routes).
 
 Inside `ai`, the runtime splits into `agent` (the engine: `Agent`, `Tool`, `Session`, `run_loop`) which depends on `provider` (the `Provider` seam plus concrete impls — currently DeepSeek as `deepseek`), so `agent → provider` is the only internal dependency and `provider` depends on nothing internal. The `Provider` seam exists because more providers than DeepSeek are expected; the DeepSeek impl carries the HTTP/SSE streaming, `tool_use`, and `image_url`/vision specifics.

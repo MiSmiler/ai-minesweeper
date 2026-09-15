@@ -8,7 +8,7 @@ import {
   renderTopBar,
   type TopBarEls,
 } from "./snapshotRender";
-import { makeGameSnapshot } from "../../infra/testUtils";
+import { makeGameSnapshot } from "../../game/testUtils";
 
 const cell = (
   state: CellView["state"],

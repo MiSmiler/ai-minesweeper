@@ -1,0 +1,13 @@
+[package]
+name = "game"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# Exposes the test-support constructors (`Game::with_mines`), which a
+# consuming crate's tests need to build a deterministic board.
+test-support = []
+
+[dependencies]
+rand = "0.10.2"
+tracing = "0.1"

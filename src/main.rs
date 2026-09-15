@@ -1,6 +1,3 @@
-mod ai;
-mod ai_adapter;
-mod core;
 mod server;
 
 use std::net::{IpAddr, SocketAddr};
@@ -12,11 +9,9 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use crate::ai::agent::{Agent, ProviderSet, Session};
-use crate::ai::protocol::{ContentBlock, Message};
-use crate::ai::provider::{DeepSeek, DeepSeekConfig};
-use crate::ai_adapter::{Guide, MODEL};
-use crate::core::{Difficulty, Features, Game, GameConfig, Seed};
+use agent::{Agent, ContentBlock, DeepSeek, DeepSeekConfig, Message, ProviderSet, Session};
+use ai_player::Guide;
+use game::{Difficulty, Features, Game, GameConfig, Seed};
 
 /// Command-line options for the game server.
 #[derive(Parser)]
@@ -98,21 +93,15 @@ async fn main() {
     server::log_new_game(&game, "startup");
     let game: Arc<Mutex<Game>> = Arc::new(Mutex::new(game));
 
-    // AI assembly (issue #116/#117): a real DeepSeek Provider is registered
-    // only when a key is present; absent it, the `/ai/...` routes still mount
-    // and `Guide::create_session` fails cleanly with a `config` ProviderError
-    // (the new-session load), so the AI is reported unconfigured before any
-    // Send. `Guide::send` sets the model on every Send; the provider is fixed
-    // to the DeepSeek entry.
-    let mut providers = ProviderSet::new();
-    if let Some(config) = DeepSeekConfig::from_env() {
-        providers.insert("deepseek".to_string(), Box::new(DeepSeek::new(config)));
-    }
-    let mut agent = Agent::new(providers);
-    agent.set_model(MODEL.to_string(), Some("deepseek"));
-    // The `Guide` holds the agent behind a `tokio::sync::Mutex` so its guard
-    // (held across the streaming network call) is `Send` for the axum handler.
-    let guide = Guide::new(Arc::new(tokio::sync::Mutex::new(agent)));
+    // The AI assembly belongs to the ai-player context (the product's provider
+    // and model choice): the app asks for a configured Guide and never sees
+    // the Provider, the model, or the Agent. Absent `DEEPSEEK_API_KEY` the
+    // Guide still builds — its Load then fails at session creation with a
+    // `config` ProviderError, so the AI is reported unconfigured before any
+    // Send. The Guide holds the agent behind a `tokio::sync::Mutex` so its
+    // guard (held across the streaming network call) is `Send` for the axum
+    // handler.
+    let guide = Guide::from_env();
 
     let state = Arc::new(server::AppState { game, guide });
 
@@ -139,13 +128,19 @@ async fn main() {
 /// exercises the `complete_once` path — one `User` message in, one `Assistant`
 /// reply out (content + reasoning). Requires `DEEPSEEK_API_KEY`; absent it, AI
 /// is not configured and this is a hard error.
+///
+/// The self-check carries its own model: the product's model choice belongs to
+/// the ai-player context (its `MODEL` is crate-private), and #136 moves this
+/// check into `crates/agent/examples/` where it must pick one anyway.
+const SELF_CHECK_MODEL: &str = "deepseek-flash";
+
 async fn run_test_ai_chat(prompt: &str) -> Result<(), String> {
     let config = DeepSeekConfig::from_env()
         .ok_or_else(|| "DEEPSEEK_API_KEY is not set; AI is not configured".to_string())?;
     let mut providers = ProviderSet::new();
     providers.insert("deepseek".to_string(), Box::new(DeepSeek::new(config)));
     let mut agent = Agent::new(providers);
-    agent.set_model(MODEL.to_string(), Some("deepseek"));
+    agent.set_model(SELF_CHECK_MODEL.to_string(), Some("deepseek"));
 
     let session = Session::new();
     let pending = vec![

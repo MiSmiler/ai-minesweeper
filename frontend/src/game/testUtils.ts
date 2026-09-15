@@ -1,4 +1,4 @@
-import type { CellView, GameSnapshot } from "../game/api";
+import type { CellView, GameSnapshot } from "./api";
 
 /** Builds a minimal 2×2 playing GameSnapshot for tests; override any field. */
 export function makeGameSnapshot(

@@ -4,7 +4,7 @@ Organise a message around **a few points — three or so**. Past that it becomes
 
 ## Toolchain
 
-- **Backend** (`src/`): Rust (edition 2024) + axum, built and tested with `cargo` (`cargo fmt`, `cargo test`).
+- **Backend** (root package + `crates/*`): Rust (edition 2024) + axum, built and tested with `cargo` (`cargo fmt`, `cargo test --workspace` — with a root package, a plain `cargo test` runs only the root package).
 - **Frontend** (`frontend/`): Vite + TypeScript app, built with `npm run build` (tsc + Vite), tested with `vitest`, formatted with `prettier`.
 - **Playwright** (`frontend/` devDependency): a headless browser you can drive to **screenshot the web UI** with no repo wiring — launch `chromium` from a one-off node invocation, load the app (a running `cargo run` backend on port 8080, or the Vite dev server via `npm run dev`, default `:5173`), and save screenshots to `.scratch/shot/` (gitignored). Live state is at `GET /state`, actions at `POST /action`.
 
@@ -56,4 +56,4 @@ Before executing `git commit`, **show the proposed commit message and wait for c
 
 ### Domain docs
 
-Single-context repo — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Multi-context repo — `CONTEXT-MAP.md` at the root, one `CONTEXT.md` per context beside that context's code under `crates/`, and `docs/adr/` for system-wide decisions. See `docs/agents/domain.md`.
