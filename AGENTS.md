@@ -29,9 +29,9 @@ asked:
   only after the user confirms they want the change made.
 - **Investigating a problem** (debugging, diagnosing, exploring the codebase):
   report your findings first; do not jump from investigation straight to editing.
-- **Implementing a feature/fix** (a change to `src/` or `frontend/`): lay out
-  the interface design and the shape of the change first; the implementation is
-  not underway until the design is agreed.
+- **Implementing a feature/fix**: lay out the interface design and the shape of
+  the change first; the implementation is not underway until the design is
+  agreed.
   - Present interface design as **code in a fenced code block** — read the
     shape as code, not as prose or bulleted markdown.
 
