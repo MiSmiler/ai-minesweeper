@@ -82,7 +82,7 @@ describe("createBoardAxis", () => {
     ]);
   });
 
-  it("setRowsCols renders 0-based col labels along the top edge", () => {
+  it("setRowsCols renders 0-based col labels along the bottom edge", () => {
     const host = makeBoard(3, 4);
     const axis = createBoardAxis(host);
     axis.setRowsCols(3, 4);
