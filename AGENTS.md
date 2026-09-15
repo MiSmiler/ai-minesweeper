@@ -1,6 +1,8 @@
 ## Communication Guidelines
 
-Organise a message around **a few points — three or so**. Past that it becomes work to read, and the reader loses the ones that matter: lead with what needs a reply now, and hold the rest for the next turn.
+Align **one point at a time**. Put a single question or decision to the user, then wait for the answer before raising the next: the reader answers one thing at a time; everything else sits in their head as cognitive load, and the one needing an answer is lost among them. This holds even when a skill's own process calls for a batch of questions.
+
+**Ask before summarising.** When a discussion looks settled, ask whether to summarise and write it only on a yes. An unasked-for summary arrives as a surprise, and can close a branch the user meant to keep open.
 
 ## Toolchain
 
