@@ -13,10 +13,10 @@
 // come from the game slice (`measureBoard` / `BoardGeometry`).
 
 export interface BoardAxis {
-  /** Renders/refreshes the row/col labels for the given grid.
-   * Renders `rows` 0-based row labels along the left edge and `cols`
-   * 0-based col labels along the top edge. Re-renders on resize; a no-op
-   * when the grid size is unchanged. */
+  /** Renders/refreshes the 0-based labels for the given grid: `rows` labels
+   * down the Board's left edge, `cols` labels along its bottom edge. A no-op
+   * when the grid size is unchanged, so the same-size re-render that follows a
+   * Reveal, a Flag or a timer tick doesn't churn the label DOM. */
   setRowsCols(rows: number, cols: number): void;
   /** Shows or hides the axis label overlay (default off). */
   setVisible(visible: boolean): void;
