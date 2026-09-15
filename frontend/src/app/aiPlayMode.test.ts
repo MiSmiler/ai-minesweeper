@@ -62,7 +62,7 @@ async function startSession(root: HTMLElement): Promise<void> {
 }
 
 /** Creates a session and commits one Send so the session is non-empty. */
-async function seedOneHistoryEntry(
+async function seedOneCommittedTurn(
   root: HTMLElement,
   deps: AppDeps,
 ): Promise<void> {
@@ -95,7 +95,7 @@ describe("composeAiPlayMode layout", () => {
     expect(layout.querySelector(".ai-play-game .game-top-bar")).toBeTruthy();
   });
 
-  it("dashboard has send, new session, input mode, axis, history — no strategy", () => {
+  it("dashboard has send, new session, input mode, axis — no strategy", () => {
     mockFetch();
     const root = mount();
     composeAiPlayMode(root, makeDeps());
@@ -104,7 +104,6 @@ describe("composeAiPlayMode layout", () => {
     expect(dash.querySelector(".new-session-btn")).toBeTruthy();
     expect(dash.querySelector(".input-mode-select")).toBeTruthy();
     expect(dash.querySelector(".axis-checkbox")).toBeTruthy();
-    expect(dash.querySelector(".history-list")).toBeTruthy();
     // The SessionStrategy dropdown is gone (issue #125).
     expect(dash.querySelector(".strategy-select")).toBeNull();
     expect(dash.textContent).not.toContain("会话策略");
@@ -146,16 +145,6 @@ describe("composeAiPlayMode layout", () => {
       "max",
     ]);
     expect(select.value).toBe("low");
-  });
-
-  it("history starts empty", () => {
-    mockFetch();
-    const root = mount();
-    composeAiPlayMode(root, makeDeps());
-    expect($(root, ".history-empty")).toBeTruthy();
-    expect(
-      $(root, ".history-list").querySelectorAll(".history-entry"),
-    ).toHaveLength(0);
   });
 
   it("the axis layer is hidden by default", () => {
@@ -218,7 +207,6 @@ describe("composeAiPlayMode session controls", () => {
     onEvent(deps)({ kind: "sse_done" });
     expect(mode.disabled).toBe(true); // committed: still locked
     expect(send.textContent).toBe("发送");
-    expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
   });
 
   it("an interrupted first Send leaves the InputMode editable", async () => {
@@ -234,7 +222,6 @@ describe("composeAiPlayMode session controls", () => {
     onEvent(deps)({ kind: "interrupt", reason: "user_interrupt" });
     expect(mode.disabled).toBe(false);
     expect($(root, ".session-interrupt").textContent).toContain("已中断");
-    expect(root.querySelectorAll(".history-entry")).toHaveLength(0);
   });
 
   it("Send is a no-op with no session", () => {
@@ -248,7 +235,7 @@ describe("composeAiPlayMode session controls", () => {
 });
 
 describe("composeAiPlayMode send flow", () => {
-  it("streams events into the box and records history on done", async () => {
+  it("streams events into the box", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -270,7 +257,6 @@ describe("composeAiPlayMode send flow", () => {
     expect($(root, ".session-content").textContent).toBe("(2,3)");
 
     onEvent(deps)({ kind: "sse_done" });
-    expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
   });
 
   it("interrupt calls interrupt_by_user and the event reverts the button", async () => {
@@ -310,7 +296,7 @@ describe("composeAiPlayMode send flow", () => {
     expect(req.imageDataUrl).toBeTruthy();
   });
 
-  it("sends the selected thinking level and keeps history on change", async () => {
+  it("sends the selected thinking level across a change", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -325,13 +311,11 @@ describe("composeAiPlayMode send flow", () => {
     };
     expect(req.thinkingLevel).toBe("low");
     onEvent(deps)({ kind: "sse_done" });
-    expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
 
-    // Switch the level: no confirm, history kept.
+    // Switch the level: no confirm.
     const level = root.querySelector<HTMLSelectElement>(".level-select")!;
     level.value = "max";
     level.dispatchEvent(new Event("change"));
-    expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
 
     // The next Send carries the new level.
     send.click();
@@ -405,33 +389,37 @@ describe("composeAiPlayMode session lifecycle", () => {
     expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("a new session clears history after confirmation", async () => {
+  it("a new session replaces the current one after confirmation", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     composeAiPlayMode(root, deps);
-    await seedOneHistoryEntry(root, deps);
-    expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
+    await seedOneCommittedTurn(root, deps);
 
     await startSession(root);
     expect(confirmSpy).toHaveBeenCalled();
-    expect(root.querySelectorAll(".history-entry")).toHaveLength(0);
-    expect($(root, ".history-empty")).toBeTruthy();
     expect(deps.aiApi.createSession).toHaveBeenCalledTimes(2);
+    // The fresh session is empty again: the InputMode lock reopens.
+    expect(
+      (root.querySelector(".input-mode-select") as HTMLSelectElement).disabled,
+    ).toBe(false);
   });
 
-  it("declining a new session keeps history and the current session", async () => {
+  it("declining a new session keeps the current session", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
     vi.spyOn(window, "confirm").mockReturnValue(false);
     composeAiPlayMode(root, deps);
-    await seedOneHistoryEntry(root, deps);
+    await seedOneCommittedTurn(root, deps);
 
     await startSession(root);
-    expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
     expect(deps.aiApi.createSession).toHaveBeenCalledTimes(1);
+    // The non-empty session survives: the InputMode stays locked.
+    expect(
+      (root.querySelector(".input-mode-select") as HTMLSelectElement).disabled,
+    ).toBe(true);
   });
 
   it("a new session never confirms while the session is empty", async () => {
@@ -459,15 +447,14 @@ describe("composeAiPlayMode session lifecycle", () => {
     expect($(root, ".send-btn") as HTMLButtonElement).toBeTruthy();
   });
 
-  it("a new game clears history after confirmation", async () => {
+  it("a new game ends the session after confirmation", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     composeAiPlayMode(root, deps);
     await flush(); // init done, so the game area click listener is live
-    await seedOneHistoryEntry(root, deps);
-    expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
+    await seedOneCommittedTurn(root, deps);
 
     const difficulty = root.querySelector<HTMLButtonElement>(
       '[data-difficulty="beginner"]',
@@ -475,18 +462,17 @@ describe("composeAiPlayMode session lifecycle", () => {
     difficulty.click();
     await flush();
     expect(confirmSpy).toHaveBeenCalled();
-    expect(root.querySelectorAll(".history-entry")).toHaveLength(0);
-    expect($(root, ".history-empty")).toBeTruthy();
+    expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("declining a new game keeps history and does not start one", async () => {
+  it("declining a new game keeps the game and the session", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     composeAiPlayMode(root, deps);
     await flush();
-    await seedOneHistoryEntry(root, deps);
+    await seedOneCommittedTurn(root, deps);
 
     const difficulty = root.querySelector<HTMLButtonElement>(
       '[data-difficulty="beginner"]',
@@ -494,8 +480,7 @@ describe("composeAiPlayMode session lifecycle", () => {
     difficulty.click();
     await flush();
     expect(confirmSpy).toHaveBeenCalled();
-    expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
-    expect($(root, ".history-empty")).toBeFalsy();
+    expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("the smiley starts a new game after confirmation", async () => {
@@ -505,13 +490,12 @@ describe("composeAiPlayMode session lifecycle", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     composeAiPlayMode(root, deps);
     await flush();
-    await seedOneHistoryEntry(root, deps);
+    await seedOneCommittedTurn(root, deps);
 
     const smiley = root.querySelector<HTMLButtonElement>(".smiley")!;
     smiley.click();
     await flush();
-    expect(root.querySelectorAll(".history-entry")).toHaveLength(0);
-    expect($(root, ".history-empty")).toBeTruthy();
+    expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("a new game on an in-flight first Send interrupts without confirming", async () => {
@@ -531,7 +515,7 @@ describe("composeAiPlayMode session lifecycle", () => {
     expect(deps.aiApi.interrupt_by_user).toHaveBeenCalledTimes(1);
   });
 
-  it("changing the InputMode while empty does not confirm or clear", async () => {
+  it("changing the InputMode while empty does not confirm", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -544,16 +528,15 @@ describe("composeAiPlayMode session lifecycle", () => {
     select.value = "emoji";
     select.dispatchEvent(new Event("change"));
     expect(confirmSpy).not.toHaveBeenCalled();
-    expect(root.querySelectorAll(".history-entry")).toHaveLength(0);
     expect(select.value).toBe("emoji");
   });
 
-  it("guards refresh / mode switch via hasSessionHistory and confirmDiscard", async () => {
+  it("guards refresh / mode switch via hasNonEmptySession and confirmDiscard", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
     const composition = composeAiPlayMode(root, deps);
-    expect(composition.hasSessionHistory!()).toBe(false);
+    expect(composition.hasNonEmptySession!()).toBe(false);
     // Nothing to discard: confirmDiscard proceeds without asking.
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     expect(composition.confirmDiscard!("msg")).toBe(true);
@@ -561,10 +544,10 @@ describe("composeAiPlayMode session lifecycle", () => {
 
     // An empty (created but uncommitted) session does not guard either.
     await startSession(root);
-    expect(composition.hasSessionHistory!()).toBe(false);
+    expect(composition.hasNonEmptySession!()).toBe(false);
 
-    await seedOneHistoryEntry(root, deps);
-    expect(composition.hasSessionHistory!()).toBe(true);
+    await seedOneCommittedTurn(root, deps);
+    expect(composition.hasNonEmptySession!()).toBe(true);
     confirmSpy.mockReturnValue(false);
     expect(composition.confirmDiscard!("msg")).toBe(false);
     expect(confirmSpy).toHaveBeenCalledWith("msg");

@@ -38,9 +38,11 @@ export interface AppDeps {
 export interface Composition {
   /** Tears down the composition; the current Game is abandoned (ADR-0012). */
   dispose(): void;
-  /** True while the composition holds a non-empty AI Session a refresh/switch
-   * would discard. */
-  hasSessionHistory?(): boolean;
+  /** True while the AI Session holds at least one committed Turn — the
+   * `non-empty` half of the session's `empty` / `non-empty` predicate
+   * (ADR-0017), the same predicate that locks the InputMode select and gates
+   * every discard confirm. */
+  hasNonEmptySession?(): boolean;
   /** Blocking confirm before discarding the non-empty AI Session; returns true
    * to proceed. `message` is context-specific. Absent when there is nothing
    * to discard — callers treat `undefined` as "proceed". */

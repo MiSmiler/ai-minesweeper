@@ -39,8 +39,8 @@ export interface GameAreaOptions {
   post?: (action: Action) => Promise<GameSnapshot>;
   /** Replaces the HTTP snapshot adapter (tests). */
   fetchSnapshot?: () => Promise<GameSnapshot>;
-  /** Called after a new-game action is confirmed — the mode uses it to reset
-   * per-game state (history, session id). */
+  /** Called after a new-game action is confirmed — the mode uses it to end the
+   * AI Session. */
   onNewGame?: () => void;
   /** Called before a new game (smiley / difficulty) is confirmed; return false
    * to cancel. The AiPlay mode uses it to guard a discard of a non-empty Session. */

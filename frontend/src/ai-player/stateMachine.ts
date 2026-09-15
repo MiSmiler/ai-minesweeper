@@ -1,8 +1,8 @@
 // The ai-player state machine (issue #119, #133): owns the Send run's phase, the
 // AI Session's `sessionState`, and the accumulated `reasoning` / `content`
 // text. It is deliberately thin — phase + text accumulation + session
-// lifecycle only. History binding, mode-change confirm, and the Load / Prepare
-// alerts all live in the `app/` assembly layer.
+// lifecycle only. The discard confirm and the Load / Prepare alerts live in the
+// `app/` assembly layer.
 //
 // Generation tracking: each `newSession()` / `endSession()` / `send()` bumps a
 // generation counter, and the event callbacks capture the generation they were

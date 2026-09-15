@@ -1,7 +1,7 @@
 // The `AiPlay` composition (ADR-0012): the top-left game area (a full copy
 // of HumanPlay with its own independent game client), the bottom-left
-// dashboard (send/interrupt, new session, input mode, row/col axis, history),
-// and the right SessionBox shell. The "发送" button drives the `AiPlayerMachine`
+// dashboard (send/interrupt, new session, input mode, row/col axis), and the
+// right SessionBox shell. The "发送" button drives the `AiPlayerMachine`
 // (issue #119) which consumes the real SSE stream; the box is rendered by
 // `createSessionBox`.
 //
@@ -20,7 +20,6 @@ import { createSessionBox } from "../ai-player/sessionBox";
 import { createBoardAxis, type BoardAxis } from "./boardAxis";
 import {
   createAiPlayerMachine,
-  type AiPlayerState,
   type SessionState,
 } from "../ai-player/stateMachine";
 import { createGameArea, type GameArea } from "../game/gameArea";
@@ -91,7 +90,6 @@ export function composeAiPlayMode(
   // The reasoning depth (issue #122): default low, session-persistent, and
   // independent of the input mode — changing it never invalidates a session.
   let currentLevel: ThinkingLevel = "low";
-  let history: Array<{ mode: InputMode; state: AiPlayerState }> = [];
   let running = false;
   // Mirrors the machine's `sessionState` so the synchronous predicates
   // (`beforeNewGame`, `confirmDiscard`) can read it without a subscription.
@@ -105,10 +103,8 @@ export function composeAiPlayMode(
   const gameArea: GameArea = createGameArea(gameZone, {
     onNewGame: () => {
       // A new game ends the AI Session (the backend's new-game action already
-      // ended it); the history list is per-game and resets with it (issue #133).
-      history = [];
+      // ended it, issue #133).
       machine.endSession();
-      renderHistory();
     },
     // A new game discards a non-empty AI Session; ask first exactly when the
     // session is non-empty (issue #133). Pressing New Game during an in-flight
@@ -171,7 +167,7 @@ export function composeAiPlayMode(
     const next = modeSelect.value as InputMode;
     if (next === currentMode) return;
     // The select is locked once a Send runs / commits, so a change happens
-    // only while the session is empty and the history list is already empty.
+    // only while the session is empty.
     currentMode = next;
   });
 
@@ -204,16 +200,6 @@ export function composeAiPlayMode(
     axis.setVisible(axisCheckbox.checked);
   });
 
-  // History list (empty for a fresh game).
-  const historyBox = document.createElement("div");
-  historyBox.className = "history";
-  const historyTitle = document.createElement("h3");
-  historyTitle.textContent = "历史";
-  const historyList = document.createElement("ul");
-  historyList.className = "history-list";
-  historyBox.append(historyTitle, historyList);
-  dashboard.appendChild(historyBox);
-
   // --- Right SessionBox shell ---
   const boxEl = document.createElement("div");
   boxEl.className = "ai-play-session-box";
@@ -231,7 +217,6 @@ export function composeAiPlayMode(
     running = next;
     sendBtn.textContent = next ? "中断" : "发送";
     sendBtn.classList.toggle("running", next);
-    historyList.classList.toggle("locked", next);
   }
 
   const unsubscribe = machine.onState((state) => {
@@ -243,12 +228,6 @@ export function composeAiPlayMode(
     sendBtn.disabled = state.sessionState === "none";
     modeSelect.disabled =
       state.sessionState === "non-empty" || state.phase === "running";
-    // A completed Send is recorded in history; interrupted / failed Prepare
-    // runs are not (partial / absent output, issue #97).
-    if (state.phase === "done") {
-      history.push({ mode: currentMode, state: { ...state } });
-      renderHistory();
-    }
     if (
       (state.phase === "load-failed" || state.phase === "prepare-failed") &&
       state.providerError
@@ -256,29 +235,6 @@ export function composeAiPlayMode(
       window.alert(providerAlertMessage(state.providerError));
     }
   });
-
-  function renderHistory(): void {
-    historyList.replaceChildren();
-    if (history.length === 0) {
-      const empty = document.createElement("li");
-      empty.className = "history-empty";
-      empty.textContent = "暂无";
-      historyList.appendChild(empty);
-      return;
-    }
-    history.forEach((entry, i) => {
-      const li = document.createElement("li");
-      li.className = "history-entry";
-      li.dataset.index = String(i);
-      li.textContent = `分析 #${i + 1} (${entry.mode})`;
-      li.addEventListener("click", () => {
-        if (running) return; // Not clickable while a Send is running (user story #31)
-        sessionBox.render(entry.state);
-      });
-      historyList.appendChild(li);
-    });
-  }
-  renderHistory();
 
   async function startSend(): Promise<void> {
     if (running || sessionState === "none") return;
@@ -314,8 +270,6 @@ export function composeAiPlayMode(
     }
     // Pressing new session during an in-flight Send interrupts it first.
     if (running) await machine.interrupt_by_user();
-    history = [];
-    renderHistory();
     await machine.newSession();
   }
 
@@ -338,7 +292,7 @@ export function composeAiPlayMode(
   return {
     dispose,
     /** True while the AI Session holds Turns a refresh / mode switch would clear. */
-    hasSessionHistory: () => sessionState === "non-empty",
+    hasNonEmptySession: () => sessionState === "non-empty",
     /** Blocking confirm before discarding a non-empty AI Session (mode switch). */
     confirmDiscard: (message) =>
       sessionState !== "non-empty" || window.confirm(message),
