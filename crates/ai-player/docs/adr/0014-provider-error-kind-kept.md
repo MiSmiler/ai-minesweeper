@@ -1,5 +1,10 @@
 # ProviderErrorKind is kept: config/upstream is a real Load and Prepare signal, not redundant
 
+> Superseded in part by ADR-0022: the mid-stream refraction and `InterruptReason`
+> are deleted — `ProviderError` now travels intact in both the Prepare and the
+> mid-stream positions. The Load / Prepare argument below stands, minus the
+> `Config -> Unknown` contract the removed refraction required.
+
 > Renamed by ADR-0019: `Guide` is now `AiPlayer` and `frontend/src/app/guideMode.ts` is now `aiPlayMode.ts`; the decision below is unchanged.
 
 Issue #123 asked whether `ai::protocol::ProviderErrorKind` (`Config` / `Upstream`) holds independent meaning or is redundant, since the mid-stream `ai_adapter` refracts `Config` into `InterruptReason::Unknown` before it reaches a consumer. It is **not** redundant: the field is genuinely consumed, intact, on the Load and Prepare paths. `ai_routes::agent_error_response` returns a `ProviderError {kind,code,message}` body directly to the frontend on a `Guide::create_session` Load failure and on a Send's Prepare failure, and `frontend/src/app/guideMode.ts`'s `providerAlertMessage` branches on that `kind` to show the player two materially different alerts — `config` → "AI 未配置：…", `upstream` → "AI 服务异常：…".

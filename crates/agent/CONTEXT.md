@@ -1,13 +1,13 @@
 # agent
 
-The runtime behind an AI Session: it owns the model and the Provider,
-holds the messages, and answers Sends. It is deliberately ignorant of
-Minesweeper — `game` is not one of its dependencies.
+The runtime behind a Session: it owns the model, the Provider and the live
+Session, and answers Sends. It is deliberately ignorant of Minesweeper —
+`game` is not one of its dependencies.
 
 ## Language
 
 **Agent**:
-The runtime that owns the model and the Provider and answers Sends. It is blind to what the messages mean.
+The runtime that owns the model, the Provider and the live Session, and answers Sends. It is blind to what the messages mean.
 _Avoid_: assistant, bot, AI
 
 **Provider**:
@@ -19,11 +19,11 @@ The Agent bringing its Provider and model up: the configuration is resolved and 
 _Avoid_: preflight, pre-flight, startup, initialization
 
 **Session**:
-The messages a caller has committed: the `user` / `assistant` Turns in order. A Session holds only committed Turns — an interrupted, failed, or unread stream adds none.
+The Turns a caller has committed — the `user` / `assistant` pairs in order — plus the Send in flight against them; an interrupted, failed or unread stream adds no Turn. It carries an id and is created and ended by the Agent, and at most one is live per Agent, so a caller addresses the Agent and never a Session.
 _Avoid_: conversation, chat, context, transcript
 
 **Send**:
-One call that appends a message to a Session and asks the Agent for a reply; the reply completes the Turn. A Send that fails before any content adds no Turn.
+One call that appends a message to a Session and asks the Agent for a reply; the reply completes the Turn. A Send that does not reach its end — interrupted, failed or unread — adds no Turn.
 _Avoid_: analysis, request, prompt, query
 
 **Prepare**:
@@ -38,6 +38,6 @@ _Avoid_: round, exchange, message pair
 The assistant's half of a Turn — the Agent's answer to a Send.
 _Avoid_: response, answer, completion, message
 
-**InterruptReason**:
-Why a stream stopped early: the caller cancelled it, or the Provider failed mid-stream (rate limit, timeout, upstream error).
-_Avoid_: error kind, failure reason, stop reason
+**Interrupt**:
+The caller's act of stopping the live Send before it ends; the Send commits no Turn. It is an act, not a cause — a Provider failing mid-stream is not an Interrupt.
+_Avoid_: cancel, abort, stop

@@ -1,5 +1,9 @@
 # Contexts and crates: game, agent, ai-player, and the app as composition root
 
+> Amended by ADR-0021: #136 landed — the Agent owns the Session lifecycle, the
+> binding keeps only policy, and the `/ai/session/{id}/...` routes lose the id
+> (`/ai/begin`, `/ai/send`, `/ai/interrupt`).
+
 > Renamed by ADR-0019: the renames this record left to #129 have landed — `Guide` is now `AiPlayer`, the `/ai/guide/...` routes are now `/ai/session/...`, and the second PlayMode is `AiPlay` (was `AiGuide`).
 
 The repo carried three languages in one glossary. The game's nouns (Board, Cell, Mine, Gesture), the runtime's nouns (Agent, Provider, Session, Turn), and the binding's nouns (InputMode, the board legend, one Session per Game) sat in one flat list, and two of them collided: `ai::agent::Session` was the accumulated messages, while **AI Session** was the backend-owned session bound to one Game. The layering that kept them apart — ADR-0003's "`core` stays a pure-logic module with no serde or server dependencies", ADR-0013's "`ai` is deliberately ignorant of Minesweeper" — was a comment and a doc, not something the compiler enforced.
