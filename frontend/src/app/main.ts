@@ -1,10 +1,10 @@
 // The frontend entry: reads the initial PlayMode, renders the top-bar mode
 // switcher, and mounts the mode composition. This replaces the old single
-// `main.ts` (the single composition now lives in `singleMode.ts`).
+// `main.ts` (the single composition now lives in `humanPlayMode.ts`).
 //
 // Modes are exclusive (ADR-0012): switching abandons the current Game and
 // mounts a fresh composition. The initial mode comes from `?mode=` (default
-// `single`) so dev/screenshots/acceptance can boot straight into either mode.
+// `human`) so dev/screenshots/acceptance can boot straight into either mode.
 
 import { createAiApi } from "../ai-player/api";
 import { captureBoardImage } from "../ai-player/screenshot";
@@ -17,17 +17,17 @@ import {
 import "../style.css";
 
 const OPTS: ReadonlyArray<[PlayModeName, string]> = [
-  ["single", "single"],
-  ["ai-guide", "ai-guide"],
+  ["human", "human"],
+  ["ai", "ai"],
 ];
 
 /** Reads the initial PlayMode from `?mode=` (validated), defaulting to
- * `single`. */
+ * `human`. */
 function readInitialMode(): PlayModeName {
   const mode = new URLSearchParams(window.location.search).get("mode");
   return OPTS.some(([name]) => name === mode)
     ? (mode as PlayModeName)
-    : "single";
+    : "human";
 }
 
 /** Persists the chosen PlayMode into `?mode=` so a refresh keeps the current
@@ -42,8 +42,8 @@ function persistMode(mode: PlayModeName): void {
 const app = document.getElementById("app")!;
 const deps: AppDeps = {
   getPlayMode: readInitialMode,
-  // The real AI guide transport: consumes the backend `/ai/guide` SSE stream
-  // (issue #119).
+  // The real AI transport: consumes the backend `/ai/session/{id}/send` SSE
+  // stream (issue #119).
   aiApi: createAiApi(),
   captureBoardImage,
 };
@@ -84,5 +84,5 @@ refreshSwitcher();
 // A custom confirm can't block unload, so this is the only browser-sanctioned
 // way to warn (issue #112 US-32 spirit).
 window.addEventListener("beforeunload", (e) => {
-  if (composition.hasGuideHistory?.()) e.preventDefault();
+  if (composition.hasSessionHistory?.()) e.preventDefault();
 });

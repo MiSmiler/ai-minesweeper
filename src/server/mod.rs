@@ -17,17 +17,17 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use tracing::{debug, info, warn};
 
-use ai_player::Guide;
+use ai_player::AiPlayer;
 use game::{Difficulty, Game, GameState, Position};
 
 use self::wire::{ActionDto, ActionKind, GameSnapshot};
 
-/// The shared server state: the single `Game` and the AI advisor. The
-/// `/ai/...` routes only read the board (never write `Game`); the advisor owns
+/// The shared server state: the single `Game` and the AiPlayer. The
+/// `/ai/...` routes only read the board (never write `Game`); the AiPlayer owns
 /// the live AI Session, its messages, and its in-flight cancel token.
 pub(crate) struct AppState {
     pub(crate) game: Arc<Mutex<Game>>,
-    pub(crate) guide: Guide,
+    pub(crate) ai_player: AiPlayer,
 }
 
 /// The outcome of applying a player action to the human game.
@@ -130,7 +130,7 @@ pub(crate) async fn post_action(
     if matches!(outcome, ActionOutcome::NewGame) {
         // A new Game replaces the board the AI Session was reasoning about, so
         // the session ends with it (ADR-0017).
-        state.guide.end_session();
+        state.ai_player.end_session();
         log_new_game(&game, "player");
     }
     debug!(
@@ -156,10 +156,10 @@ mod tests {
     use crate::server::wire::{ActionDto, ActionKind, GameSnapshot, PositionDto};
     use agent::MockProvider;
     use agent::{Agent, ProviderSet, ThinkingLevel};
-    use ai_player::{Guide, InputMode, SendError, SendRequest};
+    use ai_player::{AiPlayer, InputMode, SendError, SendRequest};
     use game::{Difficulty, Features, Game, GameConfig, GameState, Position};
 
-    /// An `AppState` whose `Guide` runs against the offline mock provider.
+    /// An `AppState` whose `AiPlayer` runs against the offline mock provider.
     fn app_state() -> Arc<AppState> {
         let game = Arc::new(Mutex::new(Game::with_config(GameConfig::new(
             Difficulty::Beginner,
@@ -170,8 +170,8 @@ mod tests {
         set.insert("mock".to_string(), Box::new(MockProvider::new()));
         let mut agent = Agent::new(set);
         agent.set_model("mock-model".to_string(), Some("mock"));
-        let guide = Guide::new(Arc::new(tokio::sync::Mutex::new(agent)));
-        Arc::new(AppState { game, guide })
+        let ai_player = AiPlayer::new(Arc::new(tokio::sync::Mutex::new(agent)));
+        Arc::new(AppState { game, ai_player })
     }
 
     fn send_request() -> SendRequest {
@@ -185,9 +185,15 @@ mod tests {
     #[tokio::test]
     async fn a_new_game_action_ends_the_ai_session() {
         let state = app_state();
-        let id = state.guide.create_session().await.unwrap();
+        let id = state.ai_player.create_session().await.unwrap();
         let game = state.game.lock().unwrap().clone();
-        assert!(state.guide.send(&id, &game, send_request()).await.is_ok());
+        assert!(
+            state
+                .ai_player
+                .send(&id, &game, send_request())
+                .await
+                .is_ok()
+        );
 
         let resp = post_action(
             State(state.clone()),
@@ -197,7 +203,7 @@ mod tests {
         assert!(resp.is_ok());
 
         // The session is gone: its id is no longer the live one.
-        let err = match state.guide.send(&id, &game, send_request()).await {
+        let err = match state.ai_player.send(&id, &game, send_request()).await {
             Err(err) => err,
             Ok(_) => panic!("expected the session to be ended"),
         };

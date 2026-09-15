@@ -45,7 +45,7 @@ export interface GameClientDeps {
   fetchSnapshot: () => Promise<GameSnapshot>;
   /** Called after the Board is re-rendered with a fresh snapshot (the initial
    * load and every applied action response). The composition layer uses it to
-   * keep overlay state in sync with the live Board — e.g. the guide's axis
+   * keep overlay state in sync with the live Board — e.g. the AiPlay mode's axis
    * labels, which are keyed by `rows`/`cols`. */
   onRender?: (snapshot: GameSnapshot) => void;
 }

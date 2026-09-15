@@ -1,13 +1,13 @@
 //! The ai-player context: the Minesweeper binding for the generic AI runtime
 //! (ADR-0013).
 //!
-//! [`Guide`] renders the player-visible side of a `game::Game` into the board
+//! [`AiPlayer`] renders the player-visible side of a `game::Game` into the board
 //! presentation (the [`InputMode`]), builds the system prompt (the shared core
-//! plus the mode's own section), and wires `Guide::send` — the advisor's "ask
+//! plus the mode's own section), and wires `AiPlayer::send` — the AiPlayer's "ask
 //! the AI" entry point — to one Turn of an `agent::Agent`.
 //!
 //! The Session bound to the current Game is a backend-owned concept (ADR-0017):
-//! [`Guide`] holds the live session's *binding* (the id the backend handed out
+//! [`AiPlayer`] holds the live session's *binding* (the id the backend handed out
 //! and the InputMode lock) while the messages live in the agent's
 //! [`Session`].
 //!
@@ -45,7 +45,7 @@ use game::{CellContent, CellState, CellView, Difficulty, Game, GameState, Positi
 ///
 /// Wire serialization is kebab-case (`#[serde(rename_all = "kebab-case")]`),
 /// aligned with the frontend `ai/api.ts` literals: `Plain` → `plain`,
-/// `Emoji` → `emoji`, `Image` → `image`. It is a `POST /ai/guide/:id`
+/// `Emoji` → `emoji`, `Image` → `image`. It is a `POST /ai/session/{id}/send`
 /// request-body field (sent back by the frontend), so it carries
 /// `Deserialize` — together with [`SendRequest`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -258,7 +258,7 @@ impl Drop for TurnGuard {
     }
 }
 
-/// The advisor: owns the live AI Session (ADR-0017) and its one in-flight Send.
+/// The AiPlayer: owns the live AI Session (ADR-0017) and its one in-flight Send.
 ///
 /// The adapter holds the *binding* — the id and the InputMode lock — while the
 /// conversation itself lives in the agent's [`Session`]. Cloned into the
@@ -266,10 +266,10 @@ impl Drop for TurnGuard {
 /// guards the `Agent`, so the guard held across the `agent.stream(...).await`
 /// network round trip is `Send` for the axum handlers.
 #[derive(Clone)]
-pub struct Guide {
+pub struct AiPlayer {
     agent: Arc<Mutex<Agent>>,
     /// The AI Session bound to the current Game; `None` until
-    /// [`Guide::create_session`] and again after [`Guide::end_session`].
+    /// [`AiPlayer::create_session`] and again after [`AiPlayer::end_session`].
     session_binding: Arc<StdMutex<Option<SessionBinding>>>,
     /// The Send whose stream has not ended yet.
     in_flight: Arc<StdMutex<Option<InFlight>>>,
@@ -277,8 +277,8 @@ pub struct Guide {
     next_seq: Arc<AtomicU64>,
 }
 
-impl Guide {
-    /// Builds a `Guide` from a shared `Agent` (DeepSeek or mock).
+impl AiPlayer {
+    /// Builds an `AiPlayer` from a shared `Agent` (DeepSeek or mock).
     pub fn new(agent: Arc<Mutex<Agent>>) -> Self {
         Self {
             agent,
@@ -290,7 +290,7 @@ impl Guide {
 
     /// The assembly this product ships: DeepSeek from `DEEPSEEK_API_KEY` and
     /// [`MODEL`] for every Send. It never fails — an environment without a key
-    /// yields a `Guide` with no Provider, whose Load fails with
+    /// yields an `AiPlayer` with no Provider, whose Load fails with
     /// [`AgentError::NoProvider`], surfaced to the player as a `config`
     /// ProviderError at session creation rather than at startup.
     pub fn from_env() -> Self {
@@ -504,8 +504,8 @@ impl Guide {
 
 /// A handle to a single game instance's visible state (ADR-0013: tool binding
 /// is a parameter, not a hardcoded single `Game`, leaving the door open for a
-/// future two-`Game` `AiPlayWithMe`). Today it wraps the single shared
-/// `Arc<Mutex<Game>>`; details land when AiPlay does. The advisor binds no
+/// future two-`Game` `HumanVsAiPlay`). Today it wraps the single shared
+/// `Arc<Mutex<Game>>`; details land when AiPlay does. The AiPlayer binds no
 /// tools, so nothing constructs one yet.
 #[allow(dead_code)]
 pub struct GameHandle {
@@ -521,7 +521,7 @@ impl GameHandle {
     }
 }
 
-/// Binds the `ai::Tool`s for a mode (future AiPlay; the advisor passes an
+/// Binds the `ai::Tool`s for a mode (future AiPlay; today the AiPlayer binds an
 /// empty set). Bound to a `GameHandle` so future two-`Game` modes don't swap
 /// the adapter.
 #[allow(dead_code)]
@@ -625,7 +625,7 @@ fn refract_provider_error(pe: &ProviderError) -> InterruptReason {
 /// Persists a `data:image/png;base64,<payload>` data URL to
 /// `<exe_dir>/base64_img/YYYYMMDD_HHMMSS_<seed>.png`, best-effort: a failure
 /// returns `Err` and must never block the send. This is an internal side
-/// effect of `Guide::send`, not a public interface.
+/// effect of `AiPlayer::send`, not a public interface.
 fn persist_image(data_url: &str) -> Result<(), String> {
     let payload = data_url
         .split_once("base64,")
@@ -942,11 +942,11 @@ mod tests {
         );
     }
 
-    // --- Guide: session lifecycle ---
+    // --- AiPlayer: session lifecycle ---
 
-    fn guide_with_mock() -> (Guide, MockProvider) {
+    fn ai_player_with_mock() -> (AiPlayer, MockProvider) {
         let (agent, mock) = mock_agent();
-        (Guide::new(Arc::new(Mutex::new(agent))), mock)
+        (AiPlayer::new(Arc::new(Mutex::new(agent))), mock)
     }
 
     fn request_in(mode: InputMode) -> SendRequest {
@@ -963,16 +963,16 @@ mod tests {
 
     #[tokio::test]
     async fn create_session_returns_a_fresh_id_each_time() {
-        let (guide, _mock) = guide_with_mock();
-        let first = guide.create_session().await.unwrap();
-        let second = guide.create_session().await.unwrap();
+        let (ai_player, _mock) = ai_player_with_mock();
+        let first = ai_player.create_session().await.unwrap();
+        let second = ai_player.create_session().await.unwrap();
         assert_ne!(first, second);
     }
 
     #[tokio::test]
     async fn send_without_a_live_session_is_unknown_session() {
-        let (guide, _mock) = guide_with_mock();
-        let Err(err) = guide.send("nope", &fresh_game(), plain_request()).await else {
+        let (ai_player, _mock) = ai_player_with_mock();
+        let Err(err) = ai_player.send("nope", &fresh_game(), plain_request()).await else {
             panic!("expected an error");
         };
         assert_eq!(err, SendError::UnknownSession);
@@ -980,10 +980,10 @@ mod tests {
 
     #[tokio::test]
     async fn send_for_a_replaced_session_is_unknown_session() {
-        let (guide, _mock) = guide_with_mock();
-        let stale = guide.create_session().await.unwrap();
-        let live = guide.create_session().await.unwrap();
-        let Err(err) = guide.send(&stale, &fresh_game(), plain_request()).await else {
+        let (ai_player, _mock) = ai_player_with_mock();
+        let stale = ai_player.create_session().await.unwrap();
+        let live = ai_player.create_session().await.unwrap();
+        let Err(err) = ai_player.send(&stale, &fresh_game(), plain_request()).await else {
             panic!("expected an error");
         };
         assert_eq!(err, SendError::UnknownSession);
@@ -992,9 +992,9 @@ mod tests {
 
     #[tokio::test]
     async fn send_streams_reasoning_content_and_done() {
-        let (guide, mock) = guide_with_mock();
-        let id = guide.create_session().await.unwrap();
-        let (user_text, mut stream) = guide
+        let (ai_player, mock) = ai_player_with_mock();
+        let id = ai_player.create_session().await.unwrap();
+        let (user_text, mut stream) = ai_player
             .send(&id, &fresh_game(), plain_request())
             .await
             .unwrap();
@@ -1029,14 +1029,14 @@ mod tests {
 
     #[tokio::test]
     async fn send_threads_off_into_the_request() {
-        let (guide, mock) = guide_with_mock();
-        let id = guide.create_session().await.unwrap();
+        let (ai_player, mock) = ai_player_with_mock();
+        let id = ai_player.create_session().await.unwrap();
         let req = SendRequest {
             input_mode: InputMode::Plain,
             thinking_level: ThinkingLevel::Off,
             image_data_url: None,
         };
-        let (_user_text, mut stream) = guide.send(&id, &fresh_game(), req).await.unwrap();
+        let (_user_text, mut stream) = ai_player.send(&id, &fresh_game(), req).await.unwrap();
         while stream.next().await.is_some() {}
         let req = mock.last_request().expect("mock recorded a request");
         assert_eq!(req.reasoning_effort, None);
@@ -1050,11 +1050,11 @@ mod tests {
 
     #[tokio::test]
     async fn the_first_committed_send_binds_the_input_mode() {
-        let (guide, mock) = guide_with_mock();
-        let id = guide.create_session().await.unwrap();
+        let (ai_player, mock) = ai_player_with_mock();
+        let id = ai_player.create_session().await.unwrap();
         let game = fresh_game();
         {
-            let (_user_text, mut stream) = guide
+            let (_user_text, mut stream) = ai_player
                 .send(&id, &game, request_in(InputMode::Plain))
                 .await
                 .unwrap();
@@ -1062,11 +1062,15 @@ mod tests {
         }
         // A second Send in the same mode is accepted...
         {
-            let (_user_text, mut stream) = guide.send(&id, &game, plain_request()).await.unwrap();
+            let (_user_text, mut stream) =
+                ai_player.send(&id, &game, plain_request()).await.unwrap();
             while stream.next().await.is_some() {}
         }
         // ...and a different mode is a permanent mismatch.
-        let Err(err) = guide.send(&id, &game, request_in(InputMode::Emoji)).await else {
+        let Err(err) = ai_player
+            .send(&id, &game, request_in(InputMode::Emoji))
+            .await
+        else {
             panic!("expected an error");
         };
         assert_eq!(
@@ -1089,11 +1093,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_committed_send_appends_user_and_assistant_to_the_next_request() {
-        let (guide, mock) = guide_with_mock();
-        let id = guide.create_session().await.unwrap();
+        let (ai_player, mock) = ai_player_with_mock();
+        let id = ai_player.create_session().await.unwrap();
         let game = fresh_game();
         for _ in 0..2 {
-            let (_user_text, mut stream) = guide.send(&id, &game, plain_request()).await.unwrap();
+            let (_user_text, mut stream) =
+                ai_player.send(&id, &game, plain_request()).await.unwrap();
             while stream.next().await.is_some() {}
         }
         // The second request was taken before its own reply streamed, so it is
@@ -1109,22 +1114,22 @@ mod tests {
 
     #[tokio::test]
     async fn an_interrupted_first_send_commits_nothing_and_keeps_the_mode_free() {
-        let (guide, mock) = guide_with_mock();
-        let id = guide.create_session().await.unwrap();
+        let (ai_player, mock) = ai_player_with_mock();
+        let id = ai_player.create_session().await.unwrap();
         let game = fresh_game();
         {
-            let (_user_text, mut stream) = guide
+            let (_user_text, mut stream) = ai_player
                 .send(&id, &game, request_in(InputMode::Plain))
                 .await
                 .unwrap();
             // The first chunk arrived; the player then interrupts.
             assert!(stream.next().await.is_some());
-            assert!(guide.interrupt(&id));
+            assert!(ai_player.interrupt(&id));
             while stream.next().await.is_some() {}
         }
         // Nothing was committed: a different mode is still accepted, and the
         // next request carries a single System built from the NEW mode.
-        let (_user_text, mut stream) = guide
+        let (_user_text, mut stream) = ai_player
             .send(&id, &game, request_in(InputMode::Emoji))
             .await
             .unwrap();
@@ -1139,11 +1144,11 @@ mod tests {
 
     #[tokio::test]
     async fn send_while_a_send_is_in_flight_is_busy() {
-        let (guide, _mock) = guide_with_mock();
-        let id = guide.create_session().await.unwrap();
+        let (ai_player, _mock) = ai_player_with_mock();
+        let id = ai_player.create_session().await.unwrap();
         let game = fresh_game();
-        let (_user_text, stream) = guide.send(&id, &game, plain_request()).await.unwrap();
-        let Err(err) = guide.send(&id, &game, plain_request()).await else {
+        let (_user_text, stream) = ai_player.send(&id, &game, plain_request()).await.unwrap();
+        let Err(err) = ai_player.send(&id, &game, plain_request()).await else {
             panic!("expected an error");
         };
         assert_eq!(err, SendError::Busy);
@@ -1152,18 +1157,21 @@ mod tests {
 
     #[tokio::test]
     async fn interrupt_without_an_in_flight_send_is_false() {
-        let (guide, _mock) = guide_with_mock();
-        let id = guide.create_session().await.unwrap();
-        assert!(!guide.interrupt(&id));
+        let (ai_player, _mock) = ai_player_with_mock();
+        let id = ai_player.create_session().await.unwrap();
+        assert!(!ai_player.interrupt(&id));
     }
 
     #[tokio::test]
     async fn create_session_cancels_the_previous_send() {
-        let (guide, _mock) = guide_with_mock();
-        let first = guide.create_session().await.unwrap();
+        let (ai_player, _mock) = ai_player_with_mock();
+        let first = ai_player.create_session().await.unwrap();
         let game = fresh_game();
-        let (_user_text, mut stream) = guide.send(&first, &game, plain_request()).await.unwrap();
-        let second = guide.create_session().await.unwrap();
+        let (_user_text, mut stream) = ai_player
+            .send(&first, &game, plain_request())
+            .await
+            .unwrap();
+        let second = ai_player.create_session().await.unwrap();
         assert_ne!(first, second);
         // The displaced Send reports a user interrupt on its next poll...
         assert_eq!(
@@ -1172,7 +1180,7 @@ mod tests {
         );
         assert_eq!(stream.next().await, None);
         // ...and the new session is the only one a Send accepts.
-        let Err(err) = guide.send(&first, &game, plain_request()).await else {
+        let Err(err) = ai_player.send(&first, &game, plain_request()).await else {
             panic!("expected an error");
         };
         assert_eq!(err, SendError::UnknownSession);
@@ -1180,10 +1188,10 @@ mod tests {
 
     #[tokio::test]
     async fn end_session_forgets_the_live_session() {
-        let (guide, _mock) = guide_with_mock();
-        let id = guide.create_session().await.unwrap();
-        guide.end_session();
-        let Err(err) = guide.send(&id, &fresh_game(), plain_request()).await else {
+        let (ai_player, _mock) = ai_player_with_mock();
+        let id = ai_player.create_session().await.unwrap();
+        ai_player.end_session();
+        let Err(err) = ai_player.send(&id, &fresh_game(), plain_request()).await else {
             panic!("expected an error");
         };
         assert_eq!(err, SendError::UnknownSession);
@@ -1191,15 +1199,15 @@ mod tests {
 
     #[tokio::test]
     async fn image_mode_sends_the_screenshot_turn() {
-        let (guide, mock) = guide_with_mock();
-        let id = guide.create_session().await.unwrap();
+        let (ai_player, mock) = ai_player_with_mock();
+        let id = ai_player.create_session().await.unwrap();
         let req = SendRequest {
             input_mode: InputMode::Image,
             thinking_level: ThinkingLevel::Low,
             // Deliberately not valid base64: persist fails, and must not block.
             image_data_url: Some("data:image/png;base64,not-valid!!!".to_string()),
         };
-        let (user_text, mut stream) = guide.send(&id, &fresh_game(), req).await.unwrap();
+        let (user_text, mut stream) = ai_player.send(&id, &fresh_game(), req).await.unwrap();
         // The image user turn is the screenshot alone, so the echo is empty;
         // the frontend renders its own captured copy in the player's bubble.
         assert_eq!(user_text, "");
@@ -1221,8 +1229,8 @@ mod tests {
     #[tokio::test]
     async fn create_session_without_a_provider_is_no_provider() {
         let agent = Agent::new(ProviderSet::new());
-        let guide = Guide::new(Arc::new(Mutex::new(agent)));
-        let err = guide.create_session().await.unwrap_err();
+        let ai_player = AiPlayer::new(Arc::new(Mutex::new(agent)));
+        let err = ai_player.create_session().await.unwrap_err();
         assert_eq!(err, AgentError::NoProvider);
     }
 
@@ -1272,15 +1280,15 @@ mod tests {
         );
         let mut agent = Agent::new(set);
         agent.set_model("m".to_string(), Some("flaky"));
-        let guide = Guide::new(Arc::new(Mutex::new(agent)));
+        let ai_player = AiPlayer::new(Arc::new(Mutex::new(agent)));
 
-        let id = guide.create_session().await.unwrap();
-        let err = guide.create_session().await.unwrap_err();
+        let id = ai_player.create_session().await.unwrap();
+        let err = ai_player.create_session().await.unwrap_err();
         assert!(matches!(err, AgentError::Provider(_)));
         // The failed load did not replace the live session: a Send to `id` is
         // still accepted (not `UnknownSession`).
         assert!(
-            guide
+            ai_player
                 .send(&id, &fresh_game(), plain_request())
                 .await
                 .is_ok()
@@ -1289,23 +1297,23 @@ mod tests {
 
     // --- provider-error refraction ---
 
-    fn guide_with_failing(error: ProviderError) -> Guide {
+    fn ai_player_with_failing(error: ProviderError) -> AiPlayer {
         let mut set = ProviderSet::new();
         set.insert("mock".to_string(), Box::new(FailingProvider::new(error)));
         let mut agent = Agent::new(set);
         agent.set_model("m".to_string(), Some("mock"));
-        Guide::new(Arc::new(Mutex::new(agent)))
+        AiPlayer::new(Arc::new(Mutex::new(agent)))
     }
 
     #[tokio::test]
     async fn rate_limit_refracts_to_rate_limit_interrupt() {
-        let guide = guide_with_failing(ProviderError {
+        let ai_player = ai_player_with_failing(ProviderError {
             kind: ProviderErrorKind::Upstream,
             code: Some(429),
             message: "rate limited".into(),
         });
-        let id = guide.create_session().await.unwrap();
-        let (_user_text, mut stream) = guide
+        let id = ai_player.create_session().await.unwrap();
+        let (_user_text, mut stream) = ai_player
             .send(&id, &fresh_game(), plain_request())
             .await
             .unwrap();
@@ -1315,13 +1323,13 @@ mod tests {
 
     #[tokio::test]
     async fn transport_failure_refracts_to_timeout() {
-        let guide = guide_with_failing(ProviderError {
+        let ai_player = ai_player_with_failing(ProviderError {
             kind: ProviderErrorKind::Upstream,
             code: None,
             message: "connect timeout".into(),
         });
-        let id = guide.create_session().await.unwrap();
-        let (_user_text, mut stream) = guide
+        let id = ai_player.create_session().await.unwrap();
+        let (_user_text, mut stream) = ai_player
             .send(&id, &fresh_game(), plain_request())
             .await
             .unwrap();
@@ -1331,13 +1339,13 @@ mod tests {
 
     #[tokio::test]
     async fn upstream_error_refracts_to_upstream_error() {
-        let guide = guide_with_failing(ProviderError {
+        let ai_player = ai_player_with_failing(ProviderError {
             kind: ProviderErrorKind::Upstream,
             code: Some(500),
             message: "boom".into(),
         });
-        let id = guide.create_session().await.unwrap();
-        let (_user_text, mut stream) = guide
+        let id = ai_player.create_session().await.unwrap();
+        let (_user_text, mut stream) = ai_player
             .send(&id, &fresh_game(), plain_request())
             .await
             .unwrap();
@@ -1350,13 +1358,13 @@ mod tests {
 
     #[tokio::test]
     async fn config_error_refracts_to_unknown() {
-        let guide = guide_with_failing(ProviderError {
+        let ai_player = ai_player_with_failing(ProviderError {
             kind: ProviderErrorKind::Config,
             code: Some(400),
             message: "bad request".into(),
         });
-        let id = guide.create_session().await.unwrap();
-        let (_user_text, mut stream) = guide
+        let id = ai_player.create_session().await.unwrap();
+        let (_user_text, mut stream) = ai_player
             .send(&id, &fresh_game(), plain_request())
             .await
             .unwrap();
@@ -1368,7 +1376,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_payload_does_not_leak_hidden_mines() {
-        let (guide, mock) = guide_with_mock();
+        let (ai_player, mock) = ai_player_with_mock();
         let mut game = Game::with_mines(
             Difficulty::Beginner,
             Features::NONE,
@@ -1376,8 +1384,8 @@ mod tests {
         );
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Playing);
-        let id = guide.create_session().await.unwrap();
-        let (_user_text, mut stream) = guide.send(&id, &game, plain_request()).await.unwrap();
+        let id = ai_player.create_session().await.unwrap();
+        let (_user_text, mut stream) = ai_player.send(&id, &game, plain_request()).await.unwrap();
         while stream.next().await.is_some() {}
         let req = mock.last_request().expect("mock recorded a request");
         // The user turn is the plain board alone. The two hidden Mines (0,1)

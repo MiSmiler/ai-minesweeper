@@ -205,7 +205,7 @@ impl Agent {
     }
 
     /// Sets the reasoning depth for subsequent [`Agent::stream`] calls; `None`
-    /// leaves the provider default. Mirrors [`Agent::set_model`]: the `Guide`
+    /// leaves the provider default. Mirrors [`Agent::set_model`]: the `AiPlayer`
     /// locks the agent and sets it once per request.
     pub fn set_thinking_level(&mut self, level: Option<ThinkingLevel>) {
         self.thinking_level = level;
@@ -232,7 +232,7 @@ impl Agent {
 
     /// Loads the current provider/model without starting a Turn: a missing or
     /// unknown provider is [`AgentError::NoProvider`]; a provider-side config
-    /// or transport failure is [`AgentError::Provider`]. `Guide::create_session`
+    /// or transport failure is [`AgentError::Provider`]. `AiPlayer::create_session`
     /// calls this so an unconfigured AI fails before the first Send.
     pub async fn load(&self) -> Result<(), AgentError> {
         let provider = self
@@ -245,14 +245,14 @@ impl Agent {
             .map_err(AgentError::Provider)
     }
 
-    /// Starts a chat stream for one turn against the current provider: the
+    /// Starts a chat stream for one Reply against the current provider: the
     /// model sees the session's committed messages plus `pending` (the first
-    /// turn carries its `System`). The stream maps every `ProviderError` to
+    /// Reply carries its `System`). The stream maps every `ProviderError` to
     /// [`AgentError::Provider`] and reports a fired `cancel` as
     /// [`AgentError::Cancelled`].
     ///
-    /// The turn lands in `session` only when the stream reaches `Done`, as
-    /// `pending` + the aggregated assistant reply, under one lock. An
+    /// The Reply lands in `session` only when the stream reaches `Done`, as
+    /// `pending` + the assistant message, under one lock. An
     /// interrupt, an error, or dropping the stream unread commits nothing.
     pub async fn stream(
         &self,
@@ -322,9 +322,9 @@ impl Agent {
         }))
     }
 
-    /// Runs a single streaming turn and aggregates it into one
-    /// [`Message::Assistant`]. The turn lands in `session` (see
-    /// [`Agent::stream`]); the reply is returned too, for inspection.
+    /// Runs a single streaming Reply and aggregates it into one
+    /// [`Message::Assistant`]. The Reply lands in `session` (see
+    /// [`Agent::stream`]); it is returned too, for inspection.
     pub async fn complete_once(
         &self,
         session: &Session,
@@ -350,9 +350,9 @@ impl Agent {
         })
     }
 
-    /// The multi-turn tool loop: stream a turn, and if it requests tool calls,
-    /// execute them and run another turn with the results as `pending`, until a
-    /// reply has no calls. Each turn lands in `session` via [`Agent::stream`].
+    /// The multi-Reply tool loop: stream one Reply; if it requests tool calls,
+    /// execute them and continue with the results as `pending`, until a Reply
+    /// has no calls. Each Reply lands in `session` via [`Agent::stream`].
     /// A skeleton in this ticket; exercised by the adapter (issue #115).
     #[allow(dead_code)]
     pub async fn run_loop(
@@ -377,7 +377,7 @@ impl Agent {
                     Ok(content) => content,
                     // A failed or unknown tool is fed back as a Tool message
                     // so the model can recover; the loop then continues
-                    // (AiPlay concern, #115+).
+                    // (an AiPlay concern).
                     Err(err) => err,
                 };
                 next.push(Message::Tool {

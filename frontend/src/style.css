@@ -31,7 +31,7 @@ body {
   align-items: center;
 }
 
-/* The top-bar mode switcher (SinglePlay / AiGuide). Switching modes abandons
+/* The top-bar mode switcher (Human / AI). Switching modes abandons
    the current Game and mounts a fresh composition (ADR-0012). */
 .mode-switcher {
   display: flex;
@@ -327,9 +327,9 @@ button:disabled:hover {
   width: max-content;
 }
 
-/* --- AiGuide composition --- */
+/* --- AiPlay composition --- */
 
-.guide-layout {
+.ai-play-layout {
   display: grid;
   grid-template-columns: auto auto;
   /* Single row: the left cell (game + dashboard) and the dialog are sibling
@@ -341,7 +341,7 @@ button:disabled:hover {
 }
 
 /* The left cell stacks game above dashboard; the gap mirrors the old row gap. */
-.guide-left {
+.ai-play-left {
   grid-column: 1;
   grid-row: 1;
   display: flex;
@@ -349,7 +349,7 @@ button:disabled:hover {
   gap: 12px;
 }
 
-.guide-dashboard {
+.ai-play-dashboard {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -362,14 +362,14 @@ button:disabled:hover {
     inset -1px -1px 0 var(--hidden-dark);
 }
 
-.guide-dashboard select,
-.guide-dashboard .send-btn,
-.guide-dashboard .new-session-btn {
+.ai-play-dashboard select,
+.ai-play-dashboard .send-btn,
+.ai-play-dashboard .new-session-btn {
   width: max-content;
 }
 
 /* The Send and new-session buttons sit side by side (issue #133). */
-.guide-dashboard .button-row {
+.ai-play-dashboard .button-row {
   display: flex;
   gap: 6px;
 }
@@ -379,14 +379,14 @@ button:disabled:hover {
   color: #fff;
 }
 
-.guide-dash-label {
+.ai-play-dash-label {
   font-size: 12px;
   color: #3a3a42;
 }
 
 /* A dashboard setting row: caption to the left, dropdown control to the right.
    Clicking the caption focuses the control (native <label> behavior). */
-.guide-dashboard .field-row {
+.ai-play-dashboard .field-row {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -402,7 +402,7 @@ button:disabled:hover {
 }
 
 .history h3,
-.guide-dialog h3 {
+.ai-play-dialog h3 {
   margin: 0 0 6px;
   font-size: 13px;
 }
@@ -437,7 +437,7 @@ button:disabled:hover {
   padding: 2px 4px;
 }
 
-.guide-dialog {
+.ai-play-dialog {
   grid-column: 2;
   grid-row: 1;
   display: flex;

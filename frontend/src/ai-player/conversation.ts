@@ -6,11 +6,11 @@
 // scrollbar (issue #128): it stays pinned to the bottom only while the user
 // is not scrolling away, and releases the moment they scroll up.
 
-import type { GuideState } from "./stateMachine";
+import type { AiPlayerState } from "./stateMachine";
 
-/** The slice of `GuideState` the dialog renders. The AI Session's
+/** The slice of `AiPlayerState` the dialog renders. The AI Session's
  * `sessionState` drives the dashboard, not the dialog, so it is omitted. */
-export type ConversationState = Omit<GuideState, "sessionState">;
+export type ConversationState = Omit<AiPlayerState, "sessionState">;
 
 export interface Conversation {
   render(state: ConversationState): void;

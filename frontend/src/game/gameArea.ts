@@ -1,7 +1,7 @@
-// The instantiable game area: builds the SinglePlay-shaped board (difficulty
+// The instantiable game area: builds the HumanPlay-shaped board (difficulty
 // row + top bar + board) and its own independent game client, wiring the mouse
-// input the same way the former `main.ts` did. Used by `composeSingleMode`
-// and by the `AiGuide` mode's board zone (a full copy, its own client).
+// input the same way the former `main.ts` did. Used by `composeHumanPlayMode`
+// and by the `AiPlay` mode's board zone (a full copy, its own client).
 //
 // This is the seam where the game slice (`createGameClient`) meets the `app/`
 // composition. It owns the DOM it creates, the input listeners it registers,
@@ -43,10 +43,10 @@ export interface GameAreaOptions {
    * per-game state (history, session id). */
   onNewGame?: () => void;
   /** Called before a new game (smiley / difficulty) is confirmed; return false
-   * to cancel. The AiGuide mode uses it to guard a guide-history discard. */
+   * to cancel. The AiPlay mode uses it to guard a discard of a non-empty Session. */
   beforeNewGame?: () => boolean;
   /** Called after the Board renders a fresh snapshot (initial load and every
-   * action response). The AiGuide mode uses it to keep its axis labels in sync
+   * action response). The AiPlay mode uses it to keep its axis labels in sync
    * with the live Board size. */
   onRender?: (snapshot: GameSnapshot) => void;
 }

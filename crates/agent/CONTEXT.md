@@ -34,6 +34,10 @@ _Avoid_: preflight, pre-flight, preamble
 One Send together with the reply: the committed `user` / `assistant` pair. A Turn enters a Session as a unit.
 _Avoid_: round, exchange, message pair
 
+**Reply**:
+The assistant's half of a Turn — the Agent's answer to a Send.
+_Avoid_: response, answer, completion, message
+
 **InterruptReason**:
 Why a stream stopped early: the caller cancelled it, or the Provider failed mid-stream (rate limit, timeout, upstream error).
 _Avoid_: error kind, failure reason, stop reason

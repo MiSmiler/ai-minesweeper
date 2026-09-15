@@ -1,5 +1,7 @@
 # The AI Session is backend-owned and bound to one Game
 
+> Renamed by ADR-0019: `Guide` is now `AiPlayer`; the decision below is unchanged.
+
 The advisor used to hold no conversation: `Guide::suggest` built a throwaway
 `Session` per analysis, so history never accumulated and the `SessionStrategy`
 dropdown named that fact as `per-analysis`. We replace it with one first-class

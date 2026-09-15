@@ -10,7 +10,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use agent::{Agent, ContentBlock, DeepSeek, DeepSeekConfig, Message, ProviderSet, Session};
-use ai_player::Guide;
+use ai_player::AiPlayer;
 use game::{Difficulty, Features, Game, GameConfig, Seed};
 
 /// Command-line options for the game server.
@@ -94,16 +94,16 @@ async fn main() {
     let game: Arc<Mutex<Game>> = Arc::new(Mutex::new(game));
 
     // The AI assembly belongs to the ai-player context (the product's provider
-    // and model choice): the app asks for a configured Guide and never sees
+    // and model choice): the app asks for a configured AiPlayer and never sees
     // the Provider, the model, or the Agent. Absent `DEEPSEEK_API_KEY` the
-    // Guide still builds — its Load then fails at session creation with a
+    // AiPlayer still builds — its Load then fails at session creation with a
     // `config` ProviderError, so the AI is reported unconfigured before any
-    // Send. The Guide holds the agent behind a `tokio::sync::Mutex` so its
+    // Send. The AiPlayer holds the agent behind a `tokio::sync::Mutex` so its
     // guard (held across the streaming network call) is `Send` for the axum
     // handler.
-    let guide = Guide::from_env();
+    let ai_player = AiPlayer::from_env();
 
-    let state = Arc::new(server::AppState { game, guide });
+    let state = Arc::new(server::AppState { game, ai_player });
 
     // The built frontend (frontend/dist) is served at the root; unknown
     // paths fall back to index.html so client-side routing never 404s.

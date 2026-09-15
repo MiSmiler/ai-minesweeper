@@ -1,5 +1,7 @@
 # Prompts live in `prompts/*.md`, embedded at compile time
 
+> Renamed by ADR-0019: the `Guide` references below read `AiPlayer`.
+
 The AI prompt text is content, not code: it is iterated on separately from the
 program logic and was easy to lose inside Rust string literals. It now lives as
 plain markdown in `prompts/*.md` — the shared system-prompt core

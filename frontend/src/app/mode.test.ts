@@ -18,7 +18,7 @@ function mockFetch(snapshot = makeGameSnapshot()): void {
 
 function makeDeps(): AppDeps {
   return {
-    getPlayMode: () => "single",
+    getPlayMode: () => "human",
     aiApi: {
       createSession: vi.fn(async () => ({ sessionId: "s" })),
       send: vi.fn(),
@@ -43,42 +43,42 @@ afterEach(() => {
 });
 
 describe("mountMode", () => {
-  it("mounts the single composition for 'single'", () => {
+  it("mounts the HumanPlay composition for 'human'", () => {
     mockFetch();
     const root = mount();
-    const composition = mountMode("single", root, makeDeps());
+    const composition = mountMode("human", root, makeDeps());
     expect(root.querySelector(".game-area")).toBeTruthy();
     expect(root.querySelector(".game-top-bar")).toBeTruthy();
     composition.dispose();
   });
 
-  it("mounts the guide composition for 'ai-guide'", () => {
+  it("mounts the AiPlay composition for 'ai'", () => {
     mockFetch();
     const root = mount();
-    const composition = mountMode("ai-guide", root, makeDeps());
-    expect(root.querySelector(".guide-layout")).toBeTruthy();
-    expect(root.querySelector(".guide-dashboard")).toBeTruthy();
-    expect(root.querySelector(".guide-dialog")).toBeTruthy();
+    const composition = mountMode("ai", root, makeDeps());
+    expect(root.querySelector(".ai-play-layout")).toBeTruthy();
+    expect(root.querySelector(".ai-play-dashboard")).toBeTruthy();
+    expect(root.querySelector(".ai-play-dialog")).toBeTruthy();
     composition.dispose();
   });
 
   it("returns a teardown that clears the mounted composition", () => {
     mockFetch();
     const root = mount();
-    const composition = mountMode("single", root, makeDeps());
+    const composition = mountMode("human", root, makeDeps());
     composition.dispose();
     expect(root.querySelector(".game-area")).toBeNull();
   });
 });
 
 describe("renderModeSwitcher", () => {
-  it("renders SinglePlay and AiGuide and marks the current active", () => {
+  it("renders Human and AI and marks the current active", () => {
     const root = document.createElement("div");
-    renderModeSwitcher(root, "single", vi.fn());
+    renderModeSwitcher(root, "human", vi.fn());
     const buttons = root.querySelectorAll<HTMLButtonElement>(".mode-btn");
     expect(buttons).toHaveLength(2);
-    expect(buttons[0].textContent).toBe("SinglePlay");
-    expect(buttons[1].textContent).toBe("AiGuide");
+    expect(buttons[0].textContent).toBe("Human");
+    expect(buttons[1].textContent).toBe("AI");
     expect(buttons[0].classList.contains("active")).toBe(true);
     expect(buttons[1].classList.contains("active")).toBe(false);
   });
@@ -86,16 +86,16 @@ describe("renderModeSwitcher", () => {
   it("calls onSwitch with the clicked mode", () => {
     const root = document.createElement("div");
     const onSwitch = vi.fn();
-    renderModeSwitcher(root, "single", onSwitch);
+    renderModeSwitcher(root, "human", onSwitch);
     const buttons = root.querySelectorAll<HTMLButtonElement>(".mode-btn");
     buttons[1].click();
-    expect(onSwitch).toHaveBeenCalledWith("ai-guide");
+    expect(onSwitch).toHaveBeenCalledWith("ai");
   });
 
   it("re-renders the active highlight when called with a new current", () => {
     const root = document.createElement("div");
-    renderModeSwitcher(root, "single", vi.fn());
-    renderModeSwitcher(root, "ai-guide", vi.fn());
+    renderModeSwitcher(root, "human", vi.fn());
+    renderModeSwitcher(root, "ai", vi.fn());
     const buttons = root.querySelectorAll<HTMLButtonElement>(".mode-btn");
     expect(buttons[0].classList.contains("active")).toBe(false);
     expect(buttons[1].classList.contains("active")).toBe(true);
