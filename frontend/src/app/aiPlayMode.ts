@@ -17,7 +17,7 @@ import type {
   ThinkingLevel,
 } from "../ai-player/api";
 import { createConversation } from "../ai-player/conversation";
-import { createBoardAxis, type AxisOverlay } from "../ai-player/axis";
+import { createBoardAxis, type BoardAxis } from "./boardAxis";
 import {
   createAiPlayerMachine,
   type AiPlayerState,
@@ -99,8 +99,8 @@ export function composeAiPlayMode(
   // The axis overlay needs `boardEl`, so it is created after the game area;
   // `onRender` may fire before the assignment below completes, but it only
   // fires once the initial snapshot loads asynchronously, by which time the
-  // `createBoardAxis` call has run (issue #118).
-  let axis: AxisOverlay | null = null;
+  // `createBoardAxis` call has run.
+  let axis: BoardAxis | null = null;
 
   const gameArea: GameArea = createGameArea(gameZone, {
     onNewGame: () => {
@@ -123,14 +123,13 @@ export function composeAiPlayMode(
       if (running) void machine.interrupt_by_user();
       return true;
     },
-    // Render the 0-based row/col labels for the live Board (issue #118). The
+    // Render the 0-based row/col labels for the live Board. The
     // axis is pure DOM and sits outside the Board, so it never affects the 4
     // AI input forms.
     onRender: (snapshot) => axis?.setRowsCols(snapshot.rows, snapshot.cols),
   });
   // Default off (user story #16): createBoardAxis starts hidden; the checkbox
-  // drives setVisible. The 0-based row/col labels are #118's product — rendered
-  // here (backed by the same axis above) once the board loads.
+  // drives setVisible.
   axis = createBoardAxis(gameArea.boardEl);
 
   // --- Bottom-left dashboard ---

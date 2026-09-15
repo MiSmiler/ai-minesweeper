@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import { createBoardAxis } from "./axis";
+import { createBoardAxis } from "./boardAxis";
 
 /** Builds a board host holding a `.board` grid of `rows`×`cols` cells. */
 function makeBoard(rows: number, cols: number): HTMLElement {

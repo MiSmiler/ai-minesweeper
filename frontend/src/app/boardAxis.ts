@@ -1,14 +1,18 @@
-// Board axis overlay seam (issue #114; the axis itself is issue #118).
+// The Board axis overlay: 0-based row/col labels ringing the Board, so the
+// HumanPlayer driving the AiPlayer can line a reply's `(row, col)` up with a
+// Cell. It is a temporary driver affordance (ADR-0019: the manual Send goes
+// when the tool loop lands), carries no ai-player vocabulary, and lives with
+// the composition that mounts it rather than in the `ai-player` slice.
 //
-// The dashboard's row/col axis checkbox needs to toggle the labels that ring
-// the board. #114 only delivers the structural shell: an absolutely-positioned,
-// `pointer-events:none` layer wrapped around `boardEl` but *outside* `.board`,
-// so it never intercepts a click and never appears in a screenshot of the
-// board. The actual 0-based row/col label rendering — `createBoardAxis(boardEl,
-// {visible})` + `setRowsCols`/`setVisible`/`destroy` — is #118's product; here
-// the API is stubbed to the contract shape so #118 fills in `setRowsCols`.
+// The label layer is a sibling of `boardEl` inside a `.board-axis-zone`
+// wrapper, absolutely positioned and `pointer-events: none`: it never
+// intercepts a Gesture and never appears in a screenshot of the Board.
+//
+// Known debt: `measure` reads the game slice's private DOM (`.board`) and
+// falls back to the `--cell-size`-derived pitch constant. The geometry should
+// come from the game slice (`measureBoard` / `BoardGeometry`).
 
-export interface AxisOverlay {
+export interface BoardAxis {
   /** Renders/refreshes the row/col labels for the given grid.
    * Renders `rows` 0-based row labels along the left edge and `cols`
    * 0-based col labels along the top edge. Re-renders on resize; a no-op
@@ -16,7 +20,9 @@ export interface AxisOverlay {
   setRowsCols(rows: number, cols: number): void;
   /** Shows or hides the axis label overlay (default off). */
   setVisible(visible: boolean): void;
-  /** Tears the overlay down (mode switch resets the AiPlayer state). */
+  /** Tears the overlay down (mode switch resets the AiPlayer state). The
+   * wrapper takes `boardEl` with it, so this is safe whether or not the board
+   * host is still attached. */
   destroy(): void;
 }
 
@@ -27,7 +33,7 @@ export interface AxisOverlay {
 export function createBoardAxis(
   boardEl: HTMLElement,
   opts: { visible?: boolean } = {},
-): AxisOverlay {
+): BoardAxis {
   let zone = boardEl.closest<HTMLElement>(".board-axis-zone");
   if (!zone) {
     zone = document.createElement("div");
