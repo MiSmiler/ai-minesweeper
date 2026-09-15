@@ -1,4 +1,4 @@
-// The guide state machine (issue #119, #133): owns the Send run's phase, the
+// The ai-player state machine (issue #119, #133): owns the Send run's phase, the
 // AI Session's `sessionState`, and the accumulated `reasoning` / `content`
 // text. It is deliberately thin — phase + text accumulation + session
 // lifecycle only. History binding, mode-change confirm, and the Load / Prepare
@@ -18,16 +18,16 @@
 import { isProviderError } from "./api";
 import type {
   AiApi,
-  GuideEvent,
+  ReplyEvent,
   InterruptReason,
   ProviderError,
   SendRequest,
 } from "./api";
 
-/** The phase of the guide: the Send run's own phases (`idle` / `running` /
+/** The phase of the AiPlayer: the Send run's own phases (`idle` / `running` /
  * `done` / `interrupted`) plus the two failures before any content —
  * `load-failed` (session creation) and `prepare-failed` (a Send). */
-export type GuidePhase =
+export type AiPlayerPhase =
   | "idle"
   | "running"
   | "done"
@@ -41,8 +41,8 @@ export type GuidePhase =
 export type SessionState = "none" | "empty" | "non-empty";
 
 /** The accumulated state of the current Send and its AI Session. */
-export interface GuideState {
-  phase: GuidePhase;
+export interface AiPlayerState {
+  phase: AiPlayerPhase;
   sessionState: SessionState;
   /** Accumulated reasoning stream (light, collapsible in the dialog). */
   reasoning: string;
@@ -58,21 +58,21 @@ export interface GuideState {
   providerError?: ProviderError;
 }
 
-export interface GuideMachine {
+export interface AiPlayerMachine {
   /** Loads the AI runtime and requests an empty AI Session from the backend. */
   newSession(): Promise<void>;
   /** Ends the live AI Session (New Game / PlayMode switch). */
   endSession(): void;
   /** Appends the current board to the live AI Session. */
   send(req: SendRequest): void;
-  /** User-initiated cancel: POST /ai/guide/:id/interrupt (the SSE stays open). */
+  /** User-initiated cancel: POST /ai/session/:id/interrupt (the SSE stays open). */
   interrupt_by_user(): Promise<void>;
   /** Subscribes to state changes; returns an unsubscribe. */
-  onState(cb: (state: GuideState) => void): () => void;
+  onState(cb: (state: AiPlayerState) => void): () => void;
 }
 
 /** An idle state with the given session state and no accumulated text. */
-function idleState(sessionState: SessionState): GuideState {
+function idleState(sessionState: SessionState): AiPlayerState {
   return {
     phase: "idle",
     sessionState,
@@ -82,20 +82,20 @@ function idleState(sessionState: SessionState): GuideState {
   };
 }
 
-/** Builds a `GuideMachine` over the given `AiApi`. The session id is issued by
+/** Builds an `AiPlayerMachine` over the given `AiApi`. The session id is issued by
  * the backend (`createSession`); the machine holds it for `send` / `interrupt`. */
-export function createGuideMachine(deps: { api: AiApi }): GuideMachine {
-  let state: GuideState = idleState("none");
+export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
+  let state: AiPlayerState = idleState("none");
   let generation = 0;
   let sessionId: string | null = null;
-  const listeners = new Set<(s: GuideState) => void>();
+  const listeners = new Set<(s: AiPlayerState) => void>();
 
   const emit = (): void => {
-    const snapshot: GuideState = { ...state };
+    const snapshot: AiPlayerState = { ...state };
     for (const cb of listeners) cb(snapshot);
   };
 
-  const onEvent = (g: number, e: GuideEvent): void => {
+  const onEvent = (g: number, e: ReplyEvent): void => {
     if (g !== generation) return; // a stale stream from a superseded run
     switch (e.kind) {
       case "reasoning":

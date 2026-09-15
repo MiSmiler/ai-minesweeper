@@ -1,10 +1,10 @@
-// Tests for the guide state machine (issue #119, #133): phase transitions, the
+// Tests for the ai-player state machine (issue #119, #133): phase transitions, the
 // AI Session lifecycle (`none` / `empty` / `non-empty`), text accumulation, and
 // generation-based invalidation of stale streams.
 
 import { describe, expect, it, vi } from "vitest";
-import type { GuideEvent, ProviderError } from "./api";
-import { createGuideMachine, type GuideState } from "./stateMachine";
+import type { ReplyEvent, ProviderError } from "./api";
+import { createAiPlayerMachine, type AiPlayerState } from "./stateMachine";
 
 interface Harness {
   api: {
@@ -13,11 +13,11 @@ interface Harness {
     interrupt_by_user: ReturnType<typeof vi.fn>;
   };
   handlers: Array<{
-    onEvent: (e: GuideEvent) => void;
+    onEvent: (e: ReplyEvent) => void;
     onProviderError: (e: ProviderError) => void;
   }>;
-  machine: ReturnType<typeof createGuideMachine>;
-  states: GuideState[];
+  machine: ReturnType<typeof createAiPlayerMachine>;
+  states: AiPlayerState[];
   unsubscribe: () => void;
 }
 
@@ -30,7 +30,7 @@ function setup(): Harness {
       (
         _sid: string,
         _req: unknown,
-        onEvent: (e: GuideEvent) => void,
+        onEvent: (e: ReplyEvent) => void,
         onProviderError: (e: ProviderError) => void,
       ) => {
         handlers.push({ onEvent, onProviderError });
@@ -38,15 +38,15 @@ function setup(): Harness {
     ),
     interrupt_by_user: vi.fn().mockResolvedValue(undefined),
   };
-  const machine = createGuideMachine({ api });
-  const states: GuideState[] = [];
+  const machine = createAiPlayerMachine({ api });
+  const states: AiPlayerState[] = [];
   const unsubscribe = machine.onState((s) => states.push(s));
   return { api, handlers, machine, states, unsubscribe };
 }
 
-const last = (h: Harness): GuideState => h.states.at(-1)!;
+const last = (h: Harness): AiPlayerState => h.states.at(-1)!;
 
-describe("createGuideMachine session lifecycle", () => {
+describe("createAiPlayerMachine session lifecycle", () => {
   it("starts with no session and does not call the backend", () => {
     const h = setup();
     expect(h.api.createSession).not.toHaveBeenCalled();
@@ -156,7 +156,7 @@ describe("createGuideMachine session lifecycle", () => {
   });
 });
 
-describe("createGuideMachine run transitions", () => {
+describe("createAiPlayerMachine run transitions", () => {
   async function emptySession(): Promise<Harness> {
     const h = setup();
     await h.machine.newSession();

@@ -4,6 +4,8 @@
 > `crates/agent` (was `src/ai/`) and `crates/ai-player` (was `src/ai_adapter/`),
 > and the decision below is unchanged. Read its `ai` / `ai_adapter` / `core`
 > references as `agent` / `ai-player` / `game`.
+>
+> Renamed by ADR-0019 (the guide rename): `Guide` is now `AiPlayer`, the second PlayMode is `AiPlay`, the future mode this record calls `AiPlayWithMe` is now `HumanVsAiPlay`, and the `/ai/guide/...` routes are now `/ai/session/...`.
 
 The AI feature set — the `AiHelpMePlay` advisor mode now, and the future `AiPlay` / `AiPlayWithMe` modes — is organized as two layers rather than as `assist`-flavored modules inside `core` or `server`. `src/ai/` is a generic agent runtime that is deliberately decoupled from the core game: it knows nothing about Minesweeper, reuses nothing from `core`, and exposes only a `Tool` abstraction, a `Session` / message-history, a `Provider` seam, and a `run_loop`. `src/ai_adapter/` is the Minesweeper binding that depends on both `core` and `ai`: it renders the board per the `InputMode` (ADR-0016), builds the mode's system prompt, and wraps `core`'s `reveal` / `toggle_flag` / `chord` into `ai::Tool`s. `server` stays a thin transport layer that owns the `/ai/...` SSE routes and calls into `ai_adapter`; `ai_adapter` never depends on `server`, and `main` composes everything (build the `Game`, build the `ai` agent, register the tools via `ai_adapter`, wire the routes).
 

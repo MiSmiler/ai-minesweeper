@@ -1,15 +1,15 @@
 // The `app/` composition layer seam (ADR-0012): how a PlayMode is named,
-// mounted, and switched. The concept `PlayMode` (camel `SinglePlay`/`AiGuide`)
-// and its runtime identifier `PlayModeName` (kebab `single`/`ai-guide`) are
+// mounted, and switched. The concept `PlayMode` (camel `HumanPlay`/`AiPlay`)
+// and its runtime identifier `PlayModeName` (`human`/`ai`) are
 // deliberately not unified: one is the UI-facing concept, the other is the
 // runtime key.
 
 import type { AiApi } from "../ai-player/api";
-import { composeGuideMode } from "./guideMode";
-import { composeSingleMode } from "./singleMode";
+import { composeAiPlayMode } from "./aiPlayMode";
+import { composeHumanPlayMode } from "./humanPlayMode";
 
-/** The runtime identifier of a PlayMode (kebab). */
-export type PlayModeName = "single" | "ai-guide";
+/** The runtime identifier of a PlayMode. */
+export type PlayModeName = "human" | "ai";
 
 /** Screenshots the board into a data URL — the `ai-player/screenshot.ts` signature.
  * Injected (rather than imported) so jsdom tests can substitute it, since the
@@ -32,7 +32,7 @@ export interface AppDeps {
 
 /** A mounted PlayMode composition, with an optional guard the shell consults
  * before discarding it (mode switch) or on a page unload (refresh). Only the
- * AiGuide composition implements the guard — it is the only one that holds a
+ * AiPlay composition implements the guard — it is the only one that holds a
  * live AI Session whose loss a refresh / switch would silently discard
  * (issue #112 US-32: any clearing operation asks first). */
 export interface Composition {
@@ -40,7 +40,7 @@ export interface Composition {
   dispose(): void;
   /** True while the composition holds a non-empty AI Session a refresh/switch
    * would discard. */
-  hasGuideHistory?(): boolean;
+  hasSessionHistory?(): boolean;
   /** Blocking confirm before discarding the non-empty AI Session; returns true
    * to proceed. `message` is context-specific. Absent when there is nothing
    * to discard — callers treat `undefined` as "proceed". */
@@ -56,17 +56,17 @@ export function mountMode(
   root: HTMLElement,
   deps: AppDeps,
 ): Composition {
-  return mode === "ai-guide"
-    ? composeGuideMode(root, deps)
-    : composeSingleMode(root, deps);
+  return mode === "ai"
+    ? composeAiPlayMode(root, deps)
+    : composeHumanPlayMode(root, deps);
 }
 
 const MODES: ReadonlyArray<[PlayModeName, string]> = [
-  ["single", "SinglePlay"],
-  ["ai-guide", "AiGuide"],
+  ["human", "Human"],
+  ["ai", "AI"],
 ];
 
-/** Renders the top-bar mode switcher (SinglePlay / AiGuide) into `root`,
+/** Renders the top-bar mode switcher (Human / AI) into `root`,
  * highlighting `current`, and calls `onSwitch` with the clicked mode. */
 export function renderModeSwitcher(
   root: HTMLElement,

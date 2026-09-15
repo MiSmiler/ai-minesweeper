@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { composeSingleMode } from "./singleMode";
+import { composeHumanPlayMode } from "./humanPlayMode";
 import type { AppDeps } from "./mode";
 import { makeGameSnapshot } from "../game/testUtils";
 
@@ -19,7 +19,7 @@ function mockFetch(snapshot = makeGameSnapshot()): void {
 
 function makeDeps(): AppDeps {
   return {
-    getPlayMode: () => "single",
+    getPlayMode: () => "human",
     aiApi: {
       createSession: vi.fn(async () => ({ sessionId: "s" })),
       send: vi.fn(),
@@ -37,12 +37,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("composeSingleMode", () => {
+describe("composeHumanPlayMode", () => {
   it("mounts a single game area", () => {
     mockFetch();
     const root = document.createElement("div");
     document.body.appendChild(root);
-    const { dispose } = composeSingleMode(root, makeDeps());
+    const { dispose } = composeHumanPlayMode(root, makeDeps());
     expect(root.querySelector(".game-area")).toBeTruthy();
     expect(root.querySelector(".game-top-bar")).toBeTruthy();
     expect(root.querySelector(".difficulty-row")).toBeTruthy();
@@ -53,7 +53,7 @@ describe("composeSingleMode", () => {
     mockFetch();
     const root = document.createElement("div");
     document.body.appendChild(root);
-    const { dispose } = composeSingleMode(root, makeDeps());
+    const { dispose } = composeHumanPlayMode(root, makeDeps());
     dispose();
     expect(root.querySelector(".game-area")).toBeNull();
   });

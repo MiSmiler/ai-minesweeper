@@ -1,7 +1,7 @@
-// The `AiGuide` composition (ADR-0012): the top-left game area (a full copy
-// of SinglePlay with its own independent game client), the bottom-left
+// The `AiPlay` composition (ADR-0012): the top-left game area (a full copy
+// of HumanPlay with its own independent game client), the bottom-left
 // dashboard (send/interrupt, new session, input mode, row/col axis, history),
-// and the right dialog shell. The "发送" button drives the `GuideMachine`
+// and the right dialog shell. The "发送" button drives the `AiPlayerMachine`
 // (issue #119) which consumes the real SSE stream; the dialog is rendered by
 // `createConversation`.
 //
@@ -19,8 +19,8 @@ import type {
 import { createConversation } from "../ai-player/conversation";
 import { createBoardAxis, type AxisOverlay } from "../ai-player/axis";
 import {
-  createGuideMachine,
-  type GuideState,
+  createAiPlayerMachine,
+  type AiPlayerState,
   type SessionState,
 } from "../ai-player/stateMachine";
 import { createGameArea, type GameArea } from "../game/gameArea";
@@ -44,7 +44,7 @@ function labeledField(caption: string, control: HTMLElement): HTMLElement {
   const row = document.createElement("label");
   row.className = "field-row";
   const text = document.createElement("span");
-  text.className = "guide-dash-label";
+  text.className = "ai-play-dash-label";
   text.textContent = caption;
   row.append(text, control);
   return row;
@@ -67,31 +67,31 @@ function providerAlertMessage(e: ProviderError): string {
   return `分析失败：${e.message}`;
 }
 
-/** Mounts the AiGuide composition (game area + dashboard + dialog) into `root`. */
-export function composeGuideMode(
+/** Mounts the AiPlay composition (game area + dashboard + dialog) into `root`. */
+export function composeAiPlayMode(
   root: HTMLElement,
   deps: AppDeps,
 ): Composition {
   const container = document.createElement("div");
-  container.className = "guide-layout";
+  container.className = "ai-play-layout";
   root.replaceChildren(container);
 
-  // The game + dashboard stack into one grid cell (`.guide-left`) so the dialog
+  // The game + dashboard stack into one grid cell (`.ai-play-left`) so the dialog
   // (a sibling cell) growing never shifts them (issue #119).
   const left = document.createElement("div");
-  left.className = "guide-left";
+  left.className = "ai-play-left";
   container.appendChild(left);
 
   // --- Top-left game area: an independent game area + its axis labels ---
   const gameZone = document.createElement("div");
-  gameZone.className = "guide-game";
+  gameZone.className = "ai-play-game";
   left.appendChild(gameZone);
 
   let currentMode: InputMode = "plain";
   // The reasoning depth (issue #122): default low, session-persistent, and
   // independent of the input mode — changing it never invalidates a session.
   let currentLevel: ThinkingLevel = "low";
-  let history: Array<{ mode: InputMode; state: GuideState }> = [];
+  let history: Array<{ mode: InputMode; state: AiPlayerState }> = [];
   let running = false;
   // Mirrors the machine's `sessionState` so the synchronous predicates
   // (`beforeNewGame`, `confirmDiscard`) can read it without a subscription.
@@ -135,7 +135,7 @@ export function composeGuideMode(
 
   // --- Bottom-left dashboard ---
   const dashboard = document.createElement("div");
-  dashboard.className = "guide-dashboard";
+  dashboard.className = "ai-play-dashboard";
   left.appendChild(dashboard);
 
   // Send / interrupt button (dual state, user story #34) next to the new
@@ -217,7 +217,7 @@ export function composeGuideMode(
 
   // --- Right dialog shell ---
   const dialog = document.createElement("div");
-  dialog.className = "guide-dialog";
+  dialog.className = "ai-play-dialog";
   const dialogTitle = document.createElement("h3");
   dialogTitle.textContent = "AI 对话";
   const dialogStream = document.createElement("div");
@@ -226,7 +226,7 @@ export function composeGuideMode(
   container.appendChild(dialog);
 
   const conversation = createConversation(dialogStream);
-  const machine = createGuideMachine({ api: deps.aiApi });
+  const machine = createAiPlayerMachine({ api: deps.aiApi });
 
   function setRunning(next: boolean): void {
     running = next;
@@ -339,7 +339,7 @@ export function composeGuideMode(
   return {
     dispose,
     /** True while the AI Session holds Turns a refresh / mode switch would clear. */
-    hasGuideHistory: () => sessionState === "non-empty",
+    hasSessionHistory: () => sessionState === "non-empty",
     /** Blocking confirm before discarding a non-empty AI Session (mode switch). */
     confirmDiscard: (message) =>
       sessionState !== "non-empty" || window.confirm(message),

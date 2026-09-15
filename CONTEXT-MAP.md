@@ -14,8 +14,8 @@ A context is a language boundary, not a directory: it can span both stacks (`gam
 ## App-level language
 
 **PlayMode**:
-The perspective a single Game is shown from, independent of the rule set and of which Features are on: `SinglePlay` — the player plays unaided; `AiHelpMePlay` — the player plays while DeepSeek watches and suggests. The set is open and may grow (e.g. `AiPlay`, `AiPlayWithMe`); a Game has exactly one PlayMode at a time.
-_Avoid_: PlaySurface, view, perspective (when meaning the mode)
+The perspective a single Game is shown from, independent of the rule set and of which Features are on: `HumanPlay` — the HumanPlayer plays unaided; `AiPlay` — an AiPlayer plays the Game, driven by hand for now. The set is open and may grow (e.g. `HumanVsAiPlay`); a Game has exactly one PlayMode at a time.
+_Avoid_: PlaySurface, AiGuide, AiHelpMePlay, view, perspective (when meaning the mode)
 
 **Composition**:
 The app's mounting of one PlayMode: the assembled game area, dashboard and dialog for that mode, with its own teardown. The app holds one Composition at a time; switching PlayMode disposes the current one and mounts a new one.

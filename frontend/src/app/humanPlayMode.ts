@@ -1,12 +1,12 @@
-// The `SinglePlay` composition (the existing single-mode UI, extracted from
+// The `HumanPlay` composition (the existing single-mode UI, extracted from
 // the old `main.ts`). It is the game area alone — the player plays unaided.
 
 import { createGameArea } from "../game/gameArea";
 import type { AppDeps, Composition } from "./mode";
 
-/** Mounts the SinglePlay composition (an independent game area) into `root`.
- * `deps` is part of the seam but unused here — SinglePlay touches no AI. */
-export function composeSingleMode(
+/** Mounts the HumanPlay composition (an independent game area) into `root`.
+ * `deps` is part of the seam but unused here — HumanPlay touches no AI. */
+export function composeHumanPlayMode(
   root: HTMLElement,
   deps: AppDeps,
 ): Composition {

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AiApi, GuideEvent, ProviderError } from "../ai-player/api";
-import { composeGuideMode } from "./guideMode";
+import type { AiApi, ReplyEvent, ProviderError } from "../ai-player/api";
+import { composeAiPlayMode } from "./aiPlayMode";
 import type { AppDeps } from "./mode";
 import { makeGameSnapshot } from "../game/testUtils";
 
@@ -21,18 +21,18 @@ function mockFetch(snapshot = makeGameSnapshot()): void {
   );
 }
 
-interface GuideHarness {
+interface AiPlayHarness {
   deps: AppDeps;
   aiApi: AiApi & {
     createSession: ReturnType<typeof vi.fn>;
     send: ReturnType<typeof vi.fn>;
   };
-  onEventCalls: Array<(e: GuideEvent) => void>;
+  onEventCalls: Array<(e: ReplyEvent) => void>;
   onProviderErrorCalls: Array<(e: ProviderError) => void>;
 }
 
-function makeHarness(): GuideHarness {
-  const onEventCalls: Array<(e: GuideEvent) => void> = [];
+function makeHarness(): AiPlayHarness {
+  const onEventCalls: Array<(e: ReplyEvent) => void> = [];
   const onProviderErrorCalls: Array<(e: ProviderError) => void> = [];
   let seq = 0;
   const aiApi = {
@@ -47,7 +47,7 @@ function makeHarness(): GuideHarness {
     send: ReturnType<typeof vi.fn>;
   };
   const deps: AppDeps = {
-    getPlayMode: () => "ai-guide",
+    getPlayMode: () => "ai",
     aiApi,
     captureBoardImage: vi.fn().mockResolvedValue("data:image/png;base64,xxx"),
   };
@@ -73,7 +73,7 @@ async function startSession(root: HTMLElement): Promise<void> {
 /** Creates a session and commits one Send so the session is non-empty. */
 async function seedOneHistoryEntry(
   root: HTMLElement,
-  h: GuideHarness,
+  h: AiPlayHarness,
 ): Promise<void> {
   await startSession(root);
   root.querySelector<HTMLButtonElement>(".send-btn")!.click();
@@ -90,25 +90,25 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("composeGuideMode layout", () => {
+describe("composeAiPlayMode layout", () => {
   it("builds the three zones", () => {
     mockFetch();
     const root = mount();
-    composeGuideMode(root, makeHarness().deps);
-    const layout = root.querySelector(".guide-layout")!;
-    expect(layout.querySelector(".guide-game")).toBeTruthy();
-    expect(layout.querySelector(".guide-dashboard")).toBeTruthy();
-    expect(layout.querySelector(".guide-dialog")).toBeTruthy();
+    composeAiPlayMode(root, makeHarness().deps);
+    const layout = root.querySelector(".ai-play-layout")!;
+    expect(layout.querySelector(".ai-play-game")).toBeTruthy();
+    expect(layout.querySelector(".ai-play-dashboard")).toBeTruthy();
+    expect(layout.querySelector(".ai-play-dialog")).toBeTruthy();
     // The game zone holds a fully independent game area.
-    expect(layout.querySelector(".guide-game .game-area")).toBeTruthy();
-    expect(layout.querySelector(".guide-game .game-top-bar")).toBeTruthy();
+    expect(layout.querySelector(".ai-play-game .game-area")).toBeTruthy();
+    expect(layout.querySelector(".ai-play-game .game-top-bar")).toBeTruthy();
   });
 
   it("dashboard has send, new session, input mode, axis, history — no strategy", () => {
     mockFetch();
     const root = mount();
-    composeGuideMode(root, makeHarness().deps);
-    const dash = $(root, ".guide-dashboard");
+    composeAiPlayMode(root, makeHarness().deps);
+    const dash = $(root, ".ai-play-dashboard");
     expect(dash.querySelector(".send-btn")).toBeTruthy();
     expect(dash.querySelector(".new-session-btn")).toBeTruthy();
     expect(dash.querySelector(".input-mode-select")).toBeTruthy();
@@ -122,7 +122,7 @@ describe("composeGuideMode layout", () => {
   it("places the new-session button to the left of Send", () => {
     mockFetch();
     const root = mount();
-    composeGuideMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeHarness().deps);
     const row = $(root, ".button-row");
     expect(row.children[0]?.classList.contains("new-session-btn")).toBe(true);
     expect(row.children[1]?.classList.contains("send-btn")).toBe(true);
@@ -131,7 +131,7 @@ describe("composeGuideMode layout", () => {
   it("input mode select offers all three modes", () => {
     mockFetch();
     const root = mount();
-    composeGuideMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeHarness().deps);
     const opts = $(root, ".input-mode-select").querySelectorAll("option");
     expect(opts).toHaveLength(3);
     expect(Array.from(opts).map((o) => o.value)).toEqual([
@@ -144,7 +144,7 @@ describe("composeGuideMode layout", () => {
   it("level select offers the four levels, default low", () => {
     mockFetch();
     const root = mount();
-    composeGuideMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeHarness().deps);
     const select = $(root, ".level-select") as HTMLSelectElement;
     const opts = select.querySelectorAll("option");
     expect(opts).toHaveLength(4);
@@ -160,7 +160,7 @@ describe("composeGuideMode layout", () => {
   it("history starts empty", () => {
     mockFetch();
     const root = mount();
-    composeGuideMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeHarness().deps);
     expect($(root, ".history-empty")).toBeTruthy();
     expect(
       $(root, ".history-list").querySelectorAll(".history-entry"),
@@ -170,7 +170,7 @@ describe("composeGuideMode layout", () => {
   it("the axis layer is hidden by default", () => {
     mockFetch();
     const root = mount();
-    composeGuideMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeHarness().deps);
     const layer = root.querySelector(".axis-label-layer")!;
     expect(layer.classList.contains("hidden")).toBe(true);
   });
@@ -178,7 +178,7 @@ describe("composeGuideMode layout", () => {
   it("renders 0-based row/col labels for the loaded board (issue #118)", async () => {
     mockFetch();
     const root = mount();
-    composeGuideMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeHarness().deps);
     await flush(); // let the board load, which fires onRender → setRowsCols
     const layer = root.querySelector(".axis-label-layer")!;
     const rows = layer.querySelectorAll(".axis-row");
@@ -190,11 +190,11 @@ describe("composeGuideMode layout", () => {
   });
 });
 
-describe("composeGuideMode session controls", () => {
+describe("composeAiPlayMode session controls", () => {
   it("disables Send with no session and leaves the InputMode select enabled", () => {
     mockFetch();
     const root = mount();
-    composeGuideMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeHarness().deps);
     const send = $(root, ".send-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
     expect(send.disabled).toBe(true);
@@ -204,7 +204,7 @@ describe("composeGuideMode session controls", () => {
   it("a new session enables Send and keeps the InputMode select enabled", async () => {
     mockFetch();
     const root = mount();
-    composeGuideMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeHarness().deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
@@ -216,7 +216,7 @@ describe("composeGuideMode session controls", () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
@@ -234,7 +234,7 @@ describe("composeGuideMode session controls", () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
@@ -250,18 +250,18 @@ describe("composeGuideMode session controls", () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     ($(root, ".send-btn") as HTMLButtonElement).click();
     expect(h.aiApi.send).not.toHaveBeenCalled();
   });
 });
 
-describe("composeGuideMode send flow", () => {
+describe("composeAiPlayMode send flow", () => {
   it("streams events into the dialog and records history on done", async () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
 
@@ -284,7 +284,7 @@ describe("composeGuideMode send flow", () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
     send.click();
@@ -299,7 +299,7 @@ describe("composeGuideMode send flow", () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await startSession(root);
     const select = root.querySelector<HTMLSelectElement>(".input-mode-select")!;
     select.value = "image";
@@ -321,7 +321,7 @@ describe("composeGuideMode send flow", () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
 
@@ -354,7 +354,7 @@ describe("composeGuideMode send flow", () => {
     const root = mount();
     const h = makeHarness();
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
     send.click();
@@ -371,7 +371,7 @@ describe("composeGuideMode send flow", () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await startSession(root);
     ($(root, ".send-btn") as HTMLButtonElement).click();
     h.onEventCalls[0]!({ kind: "user", text: "........." });
@@ -382,7 +382,7 @@ describe("composeGuideMode send flow", () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await startSession(root);
     const select = root.querySelector<HTMLSelectElement>(".input-mode-select")!;
     select.value = "image";
@@ -395,7 +395,7 @@ describe("composeGuideMode send flow", () => {
   });
 });
 
-describe("composeGuideMode session lifecycle", () => {
+describe("composeAiPlayMode session lifecycle", () => {
   it("a failed new session alerts and leaves Send disabled", async () => {
     mockFetch();
     const root = mount();
@@ -406,7 +406,7 @@ describe("composeGuideMode session lifecycle", () => {
       code: null,
       message: "no provider",
     });
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await startSession(root);
     expect(alertSpy).toHaveBeenCalled();
     expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
@@ -417,7 +417,7 @@ describe("composeGuideMode session lifecycle", () => {
     const root = mount();
     const h = makeHarness();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await seedOneHistoryEntry(root, h);
     expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
 
@@ -433,7 +433,7 @@ describe("composeGuideMode session lifecycle", () => {
     const root = mount();
     const h = makeHarness();
     vi.spyOn(window, "confirm").mockReturnValue(false);
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await seedOneHistoryEntry(root, h);
 
     await startSession(root);
@@ -446,7 +446,7 @@ describe("composeGuideMode session lifecycle", () => {
     const root = mount();
     const h = makeHarness();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await startSession(root);
     confirmSpy.mockClear();
     await startSession(root);
@@ -457,7 +457,7 @@ describe("composeGuideMode session lifecycle", () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await startSession(root);
     ($(root, ".send-btn") as HTMLButtonElement).click(); // running
 
@@ -471,7 +471,7 @@ describe("composeGuideMode session lifecycle", () => {
     const root = mount();
     const h = makeHarness();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await flush(); // init done, so the game area click listener is live
     await seedOneHistoryEntry(root, h);
     expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
@@ -491,7 +491,7 @@ describe("composeGuideMode session lifecycle", () => {
     const root = mount();
     const h = makeHarness();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await flush();
     await seedOneHistoryEntry(root, h);
 
@@ -510,7 +510,7 @@ describe("composeGuideMode session lifecycle", () => {
     const root = mount();
     const h = makeHarness();
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await flush();
     await seedOneHistoryEntry(root, h);
 
@@ -526,7 +526,7 @@ describe("composeGuideMode session lifecycle", () => {
     const root = mount();
     const h = makeHarness();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await flush();
     await startSession(root);
     ($(root, ".send-btn") as HTMLButtonElement).click(); // running, still empty
@@ -543,7 +543,7 @@ describe("composeGuideMode session lifecycle", () => {
     const root = mount();
     const h = makeHarness();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     await startSession(root);
     confirmSpy.mockClear();
 
@@ -555,12 +555,12 @@ describe("composeGuideMode session lifecycle", () => {
     expect(select.value).toBe("emoji");
   });
 
-  it("guards refresh / mode switch via hasGuideHistory and confirmDiscard", async () => {
+  it("guards refresh / mode switch via hasSessionHistory and confirmDiscard", async () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
-    const composition = composeGuideMode(root, h.deps);
-    expect(composition.hasGuideHistory!()).toBe(false);
+    const composition = composeAiPlayMode(root, h.deps);
+    expect(composition.hasSessionHistory!()).toBe(false);
     // Nothing to discard: confirmDiscard proceeds without asking.
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     expect(composition.confirmDiscard!("msg")).toBe(true);
@@ -568,10 +568,10 @@ describe("composeGuideMode session lifecycle", () => {
 
     // An empty (created but uncommitted) session does not guard either.
     await startSession(root);
-    expect(composition.hasGuideHistory!()).toBe(false);
+    expect(composition.hasSessionHistory!()).toBe(false);
 
     await seedOneHistoryEntry(root, h);
-    expect(composition.hasGuideHistory!()).toBe(true);
+    expect(composition.hasSessionHistory!()).toBe(true);
     confirmSpy.mockReturnValue(false);
     expect(composition.confirmDiscard!("msg")).toBe(false);
     expect(confirmSpy).toHaveBeenCalledWith("msg");
@@ -583,7 +583,7 @@ describe("composeGuideMode session lifecycle", () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
-    composeGuideMode(root, h.deps);
+    composeAiPlayMode(root, h.deps);
     const checkbox = root.querySelector<HTMLInputElement>(".axis-checkbox")!;
     const layer = root.querySelector(".axis-label-layer")!;
     expect(layer.classList.contains("hidden")).toBe(true);
@@ -599,8 +599,8 @@ describe("composeGuideMode session lifecycle", () => {
     mockFetch();
     const root = mount();
     const h = makeHarness();
-    const { dispose } = composeGuideMode(root, h.deps);
+    const { dispose } = composeAiPlayMode(root, h.deps);
     dispose();
-    expect(root.querySelector(".guide-layout")).toBeNull();
+    expect(root.querySelector(".ai-play-layout")).toBeNull();
   });
 });

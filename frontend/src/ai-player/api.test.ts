@@ -1,12 +1,12 @@
 // Tests for the real SSE `AiApi` (issue #119, #133): `createSession` POSTs
-// `/ai/session`, `send` consumes the backend `/ai/guide/:id` SSE stream into
-// `GuideEvent`s, and `interrupt_by_user` POSTs the interrupt route.
+// `/ai/session`, `send` consumes the backend `/ai/session/:id/send` SSE stream into
+// `ReplyEvent`s, and `interrupt_by_user` POSTs the interrupt route.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createAiApi,
   isProviderError,
-  type GuideEvent,
+  type ReplyEvent,
   type ProviderError,
 } from "./api";
 
@@ -57,9 +57,9 @@ function collect(
   sid: string,
   req: Parameters<ReturnType<typeof createAiApi>["send"]>[1],
   providerErrors: ProviderError[] = [],
-): Promise<GuideEvent[]> {
+): Promise<ReplyEvent[]> {
   return new Promise((resolve) => {
-    const events: GuideEvent[] = [];
+    const events: ReplyEvent[] = [];
     api.send(
       sid,
       req,
@@ -82,7 +82,7 @@ afterEach(() => {
 });
 
 describe("createAiApi.send (SSE consumer)", () => {
-  it("streams reasoning, content and [DONE] into GuideEvents", async () => {
+  it("streams reasoning, content and [DONE] into ReplyEvents", async () => {
     const api = createAiApi();
     vi.stubGlobal(
       "fetch",
@@ -106,7 +106,7 @@ describe("createAiApi.send (SSE consumer)", () => {
     ]);
     // The request POSTs to the session route with the input_mode body.
     const [url, init] = vi.mocked(fetch).mock.calls[0]!;
-    expect(url).toBe("/ai/guide/s1");
+    expect(url).toBe("/ai/session/s1/send");
     expect(JSON.parse(init!.body as string)).toEqual({ input_mode: "emoji" });
   });
 
@@ -292,7 +292,7 @@ describe("createAiApi.interrupt_by_user", () => {
     );
 
     await api.interrupt_by_user("s1");
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith("/ai/guide/s1/interrupt", {
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith("/ai/session/s1/interrupt", {
       method: "POST",
     });
   });

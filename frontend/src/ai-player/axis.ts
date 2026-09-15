@@ -16,7 +16,7 @@ export interface AxisOverlay {
   setRowsCols(rows: number, cols: number): void;
   /** Shows or hides the axis label overlay (default off). */
   setVisible(visible: boolean): void;
-  /** Tears the overlay down (mode switch resets the guide state). */
+  /** Tears the overlay down (mode switch resets the AiPlayer state). */
   destroy(): void;
 }
 
@@ -41,7 +41,7 @@ export function createBoardAxis(
   labelLayer.className = "axis-label-layer";
   zone.appendChild(labelLayer);
 
-  // Default off (user story #16); the guide-mode checkbox drives setVisible.
+  // Default off (user story #16); the AiPlay mode's checkbox drives setVisible.
   if (opts.visible ?? false) {
     labelLayer.classList.remove("hidden");
   } else {

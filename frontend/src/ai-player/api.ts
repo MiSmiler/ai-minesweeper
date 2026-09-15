@@ -3,12 +3,12 @@ import { log } from "../infra/log";
 // Frontend wire type contract for the AI Session transport (issue #114, #131)
 // and the real SSE consumer (issue #119).
 //
-// The backend wire events are isomorphic to the server's `GuideEventDto`
+// The backend wire events are isomorphic to the server's `ReplyEvent`
 // ([src/server/ai_routes.rs](/src/server/ai_routes.rs)). `send` POSTs
-// `/ai/guide/:id` and parses the SSE stream: each `data:` payload is either
+// `/ai/session/:id/send` and parses the SSE stream: each `data:` payload is either
 // `[DONE]` (synthesized locally as `{kind:"sse_done"}` — the backend
-// `GuideEventDto` has no `Done` variant, a finished stream just ends as
-// `data: [DONE]`) or a `GuideEventDto` JSON. The backend domain event is the
+// `ReplyEvent` has no `Done` variant, a finished stream just ends as
+// `data: [DONE]`) or a `ReplyEvent` JSON. The backend domain event is the
 // shared `StreamChunk` (`Ok(StreamChunk)` = delta / Done; a mid-stream break
 // is `Err(InterruptReason)`).
 
@@ -28,7 +28,7 @@ export type InterruptReason =
 /** A frontend-consumed wire event. `sse_done` is synthesized locally when the
  * SSE `[DONE]` is read; the wire never emits it. `user` is the backend echo of
  * the player's message (issue #124), emitted first on the stream. */
-export type GuideEvent =
+export type ReplyEvent =
   | { kind: "reasoning"; text: string }
   | { kind: "content"; text: string }
   | { kind: "user"; text: string }
@@ -54,7 +54,7 @@ export interface SendRequest {
 
 /** The ai-player slice entry point, injected via `AppDeps`. The real implementation
  * (`createAiApi`) talks to the backend AI Session routes: `createSession`
- * POSTs `/ai/session`, `send` POSTs `/ai/guide/{id}` (issue #131, #133). */
+ * POSTs `/ai/session`, `send` POSTs `/ai/session/{id}/send` (issue #131, #133). */
 export interface AiApi {
   /** Loads the AI runtime, then creates an EMPTY AI Session (no InputMode
    * bound yet) and returns its id. A load failure rejects with a
@@ -64,7 +64,7 @@ export interface AiApi {
   send(
     sessionId: string,
     req: SendRequest,
-    onEvent: (e: GuideEvent) => void,
+    onEvent: (e: ReplyEvent) => void,
     onProviderError: (e: ProviderError) => void,
   ): void;
   /** Cancels the in-flight Send of that AI Session. */
@@ -93,21 +93,21 @@ export function createAiApi(): AiApi {
       return { sessionId: body.session_id };
     },
     send(sessionId, req, onEvent, onProviderError) {
-      void consumeGuide(sessionId, req, onEvent, onProviderError);
+      void consumeEvents(sessionId, req, onEvent, onProviderError);
     },
     async interrupt_by_user(sessionId) {
       try {
-        const res = await fetch(`/ai/guide/${sessionId}/interrupt`, {
+        const res = await fetch(`/ai/session/${sessionId}/interrupt`, {
           method: "POST",
         });
         if (!res.ok) {
           log.error(
-            `POST /ai/guide/${sessionId}/interrupt failed: ${res.status}`,
+            `POST /ai/session/${sessionId}/interrupt failed: ${res.status}`,
           );
         }
         return res;
       } catch (err) {
-        log.error("POST /ai/guide/:id/interrupt failed", err);
+        log.error("POST /ai/session/:id/interrupt failed", err);
         return null;
       }
     },
@@ -126,15 +126,15 @@ function wireRequest(req: SendRequest): Record<string, unknown> {
 }
 
 /** POSTs the Send request and forwards the SSE stream to `onEvent`. */
-async function consumeGuide(
+async function consumeEvents(
   sessionId: string,
   req: SendRequest,
-  onEvent: (e: GuideEvent) => void,
+  onEvent: (e: ReplyEvent) => void,
   onProviderError: (e: ProviderError) => void,
 ): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`/ai/guide/${encodeURIComponent(sessionId)}`, {
+    res = await fetch(`/ai/session/${encodeURIComponent(sessionId)}/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(wireRequest(req)),
@@ -171,7 +171,7 @@ export function isProviderError(value: unknown): value is ProviderError {
   );
 }
 
-/** Parses a non-OK guide response into a `ProviderError` (or a fallback). */
+/** Parses a non-OK send response into a `ProviderError` (or a fallback). */
 async function readProviderError(res: Response): Promise<ProviderError> {
   try {
     const body: unknown = await res.json();
@@ -184,14 +184,14 @@ async function readProviderError(res: Response): Promise<ProviderError> {
   return {
     kind: "upstream",
     code: res.status,
-    message: `AI guide request failed (HTTP ${res.status})`,
+    message: `AI request failed (HTTP ${res.status})`,
   };
 }
 
-/** Reads the response body as an SSE stream and emits `GuideEvent`s. */
+/** Reads the response body as an SSE stream and emits `ReplyEvent`s. */
 async function consumeSse(
   res: Response,
-  onEvent: (e: GuideEvent) => void,
+  onEvent: (e: ReplyEvent) => void,
 ): Promise<void> {
   if (!res.body) return;
   const reader = res.body.getReader();
@@ -214,7 +214,7 @@ async function consumeSse(
         return; // A finished stream ends here; stop reading.
       }
       try {
-        onEvent(JSON.parse(data) as GuideEvent);
+        onEvent(JSON.parse(data) as ReplyEvent);
       } catch (err) {
         log.error(`Failed to parse SSE event: ${data}`, err);
       }

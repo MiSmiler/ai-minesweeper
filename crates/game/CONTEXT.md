@@ -10,6 +10,14 @@ the pure rules in `crates/game`, their UI in `frontend/src/game`.
 A single playthrough created from a Difficulty; the player Reveals Cells until the game is Won or Lost.
 _Avoid_: Round, match, session
 
+**Player**:
+One of the parties playing a Game: a HumanPlayer or an AiPlayer. A Player Reveals Cells, places Flags and Chords.
+_Avoid_: user, participant, actor, opponent
+
+**HumanPlayer**:
+A Player who plays by hand, through the Board's Gestures with the mouse.
+_Avoid_: user, the human, real player
+
 **Board**:
 A rectangular grid of Cells, sized by the active Difficulty. The Cells are interactively contiguous — the hairline between them is decorative and does not affect input: every pointer position on the Board maps to a Cell.
 _Avoid_: Grid, field, minefield

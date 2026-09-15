@@ -8,6 +8,10 @@ committed Turn, a New Game ending the Session — lives in this context's ADRs
 
 ## Language
 
+**AiPlayer**:
+A Player that plays a Game by deciding its moves with an Agent. One AiPlayer exists per app instance, and today it is driven by the HumanPlayer, who sends the Board and applies the reply.
+_Avoid_: AI, agent, bot, AI opponent, guide, advisor
+
 **InputMode**:
 The way the Board is put in front of DeepSeek: `Plain` (the character grid), `Emoji`, or `Image` (a screenshot of the Board). Distinct from **PlayMode**, which is the perspective the player sees.
 _Avoid_: BoardFormat, format, input format
