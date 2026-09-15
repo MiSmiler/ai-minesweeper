@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AiApi, ReplyEvent, ProviderError } from "../ai-player/api";
 import { composeAiPlayMode } from "./aiPlayMode";
 import type { AppDeps } from "./mode";
 import { makeGameSnapshot } from "../game/testUtils";
@@ -21,38 +20,30 @@ function mockFetch(snapshot = makeGameSnapshot()): void {
   );
 }
 
-interface AiPlayHarness {
-  deps: AppDeps;
-  aiApi: AiApi & {
-    createSession: ReturnType<typeof vi.fn>;
-    send: ReturnType<typeof vi.fn>;
-  };
-  onEventCalls: Array<(e: ReplyEvent) => void>;
-  onProviderErrorCalls: Array<(e: ProviderError) => void>;
-}
-
-function makeHarness(): AiPlayHarness {
-  const onEventCalls: Array<(e: ReplyEvent) => void> = [];
-  const onProviderErrorCalls: Array<(e: ProviderError) => void> = [];
+/**
+ * The composition's dependencies over a stubbed `AiApi`. Its Send records the
+ * callbacks the composition hands it, and the first session one fixture
+ * creates is always `session-0`.
+ */
+function makeDeps(): AppDeps {
   let seq = 0;
-  const aiApi = {
-    createSession: vi.fn(async () => ({ sessionId: `session-${seq++}` })),
-    send: vi.fn((_sid, _req, onEvent, onProviderError) => {
-      onEventCalls.push(onEvent);
-      onProviderErrorCalls.push(onProviderError);
-    }),
-    interrupt_by_user: vi.fn().mockResolvedValue(undefined),
-  } as AiApi & {
-    createSession: ReturnType<typeof vi.fn>;
-    send: ReturnType<typeof vi.fn>;
-  };
-  const deps: AppDeps = {
+  return {
     getPlayMode: () => "ai",
-    aiApi,
+    aiApi: {
+      createSession: vi.fn(async () => ({ sessionId: `session-${seq++}` })),
+      send: vi.fn(),
+      interrupt_by_user: vi.fn().mockResolvedValue(undefined),
+    },
     captureBoardImage: vi.fn().mockResolvedValue("data:image/png;base64,xxx"),
   };
-  return { deps, aiApi, onEventCalls, onProviderErrorCalls };
 }
+
+/** The `onEvent` / `onProviderError` callbacks the composition hands to the
+ * Nth Send (the 3rd and 4th arguments of `AiApi.send`). */
+const onEvent = (deps: AppDeps, n = 0) =>
+  vi.mocked(deps.aiApi.send).mock.calls[n][2];
+const onProviderError = (deps: AppDeps, n = 0) =>
+  vi.mocked(deps.aiApi.send).mock.calls[n][3];
 
 function mount(): HTMLElement {
   const root = document.createElement("div");
@@ -73,12 +64,12 @@ async function startSession(root: HTMLElement): Promise<void> {
 /** Creates a session and commits one Send so the session is non-empty. */
 async function seedOneHistoryEntry(
   root: HTMLElement,
-  h: AiPlayHarness,
+  deps: AppDeps,
 ): Promise<void> {
   await startSession(root);
   root.querySelector<HTMLButtonElement>(".send-btn")!.click();
-  h.onEventCalls[0]!({ kind: "content", text: "analysis result" });
-  h.onEventCalls[0]!({ kind: "sse_done" });
+  onEvent(deps)({ kind: "content", text: "(2,3)" });
+  onEvent(deps)({ kind: "sse_done" });
   await flush();
 }
 
@@ -94,11 +85,11 @@ describe("composeAiPlayMode layout", () => {
   it("builds the three zones", () => {
     mockFetch();
     const root = mount();
-    composeAiPlayMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeDeps());
     const layout = root.querySelector(".ai-play-layout")!;
     expect(layout.querySelector(".ai-play-game")).toBeTruthy();
     expect(layout.querySelector(".ai-play-dashboard")).toBeTruthy();
-    expect(layout.querySelector(".ai-play-dialog")).toBeTruthy();
+    expect(layout.querySelector(".ai-play-session-box")).toBeTruthy();
     // The game zone holds a fully independent game area.
     expect(layout.querySelector(".ai-play-game .game-area")).toBeTruthy();
     expect(layout.querySelector(".ai-play-game .game-top-bar")).toBeTruthy();
@@ -107,7 +98,7 @@ describe("composeAiPlayMode layout", () => {
   it("dashboard has send, new session, input mode, axis, history — no strategy", () => {
     mockFetch();
     const root = mount();
-    composeAiPlayMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeDeps());
     const dash = $(root, ".ai-play-dashboard");
     expect(dash.querySelector(".send-btn")).toBeTruthy();
     expect(dash.querySelector(".new-session-btn")).toBeTruthy();
@@ -122,7 +113,7 @@ describe("composeAiPlayMode layout", () => {
   it("places the new-session button to the left of Send", () => {
     mockFetch();
     const root = mount();
-    composeAiPlayMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeDeps());
     const row = $(root, ".button-row");
     expect(row.children[0]?.classList.contains("new-session-btn")).toBe(true);
     expect(row.children[1]?.classList.contains("send-btn")).toBe(true);
@@ -131,7 +122,7 @@ describe("composeAiPlayMode layout", () => {
   it("input mode select offers all three modes", () => {
     mockFetch();
     const root = mount();
-    composeAiPlayMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeDeps());
     const opts = $(root, ".input-mode-select").querySelectorAll("option");
     expect(opts).toHaveLength(3);
     expect(Array.from(opts).map((o) => o.value)).toEqual([
@@ -144,7 +135,7 @@ describe("composeAiPlayMode layout", () => {
   it("level select offers the four levels, default low", () => {
     mockFetch();
     const root = mount();
-    composeAiPlayMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeDeps());
     const select = $(root, ".level-select") as HTMLSelectElement;
     const opts = select.querySelectorAll("option");
     expect(opts).toHaveLength(4);
@@ -160,7 +151,7 @@ describe("composeAiPlayMode layout", () => {
   it("history starts empty", () => {
     mockFetch();
     const root = mount();
-    composeAiPlayMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeDeps());
     expect($(root, ".history-empty")).toBeTruthy();
     expect(
       $(root, ".history-list").querySelectorAll(".history-entry"),
@@ -170,7 +161,7 @@ describe("composeAiPlayMode layout", () => {
   it("the axis layer is hidden by default", () => {
     mockFetch();
     const root = mount();
-    composeAiPlayMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeDeps());
     const layer = root.querySelector(".axis-label-layer")!;
     expect(layer.classList.contains("hidden")).toBe(true);
   });
@@ -178,7 +169,7 @@ describe("composeAiPlayMode layout", () => {
   it("renders 0-based row/col labels for the loaded board (issue #118)", async () => {
     mockFetch();
     const root = mount();
-    composeAiPlayMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeDeps());
     await flush(); // let the board load, which fires onRender → setRowsCols
     const layer = root.querySelector(".axis-label-layer")!;
     const rows = layer.querySelectorAll(".axis-row");
@@ -194,7 +185,7 @@ describe("composeAiPlayMode session controls", () => {
   it("disables Send with no session and leaves the InputMode select enabled", () => {
     mockFetch();
     const root = mount();
-    composeAiPlayMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeDeps());
     const send = $(root, ".send-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
     expect(send.disabled).toBe(true);
@@ -204,7 +195,7 @@ describe("composeAiPlayMode session controls", () => {
   it("a new session enables Send and keeps the InputMode select enabled", async () => {
     mockFetch();
     const root = mount();
-    composeAiPlayMode(root, makeHarness().deps);
+    composeAiPlayMode(root, makeDeps());
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
@@ -215,8 +206,8 @@ describe("composeAiPlayMode session controls", () => {
   it("the first committed Send locks the InputMode", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
-    composeAiPlayMode(root, h.deps);
+    const deps = makeDeps();
+    composeAiPlayMode(root, deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
@@ -224,7 +215,7 @@ describe("composeAiPlayMode session controls", () => {
     send.click(); // running: locked while the Send is in flight
     expect(mode.disabled).toBe(true);
     expect(send.textContent).toBe("中断");
-    h.onEventCalls[0]!({ kind: "sse_done" });
+    onEvent(deps)({ kind: "sse_done" });
     expect(mode.disabled).toBe(true); // committed: still locked
     expect(send.textContent).toBe("发送");
     expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
@@ -233,73 +224,75 @@ describe("composeAiPlayMode session controls", () => {
   it("an interrupted first Send leaves the InputMode editable", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
-    composeAiPlayMode(root, h.deps);
+    const deps = makeDeps();
+    composeAiPlayMode(root, deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
 
     send.click();
-    h.onEventCalls[0]!({ kind: "interrupt", reason: "user_interrupt" });
+    onEvent(deps)({ kind: "interrupt", reason: "user_interrupt" });
     expect(mode.disabled).toBe(false);
-    expect($(root, ".dialog-interrupt").textContent).toContain("已中断");
+    expect($(root, ".session-interrupt").textContent).toContain("已中断");
     expect(root.querySelectorAll(".history-entry")).toHaveLength(0);
   });
 
   it("Send is a no-op with no session", () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
-    composeAiPlayMode(root, h.deps);
+    const deps = makeDeps();
+    composeAiPlayMode(root, deps);
     ($(root, ".send-btn") as HTMLButtonElement).click();
-    expect(h.aiApi.send).not.toHaveBeenCalled();
+    expect(deps.aiApi.send).not.toHaveBeenCalled();
   });
 });
 
 describe("composeAiPlayMode send flow", () => {
-  it("streams events into the dialog and records history on done", async () => {
+  it("streams events into the box and records history on done", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
-    composeAiPlayMode(root, h.deps);
+    const deps = makeDeps();
+    composeAiPlayMode(root, deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
 
     send.click();
-    expect(h.aiApi.send).toHaveBeenCalledTimes(1);
-    const req = h.aiApi.send.mock.calls[0][1] as { inputMode: string };
+    expect(deps.aiApi.send).toHaveBeenCalledTimes(1);
+    const req = vi.mocked(deps.aiApi.send).mock.calls[0][1] as {
+      inputMode: string;
+    };
     expect(req.inputMode).toBe("plain");
-    expect(h.aiApi.send.mock.calls[0][0]).toBe("session-0");
+    expect(vi.mocked(deps.aiApi.send).mock.calls[0][0]).toBe("session-0");
 
-    h.onEventCalls[0]!({ kind: "reasoning", text: "think" });
-    h.onEventCalls[0]!({ kind: "content", text: "(2,3)" });
-    expect($(root, ".dialog-reasoning").textContent).toBe("think");
-    expect($(root, ".dialog-content").textContent).toBe("(2,3)");
+    onEvent(deps)({ kind: "reasoning", text: "think" });
+    onEvent(deps)({ kind: "content", text: "(2,3)" });
+    expect($(root, ".session-reasoning").textContent).toBe("think");
+    expect($(root, ".session-content").textContent).toBe("(2,3)");
 
-    h.onEventCalls[0]!({ kind: "sse_done" });
+    onEvent(deps)({ kind: "sse_done" });
     expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
   });
 
   it("interrupt calls interrupt_by_user and the event reverts the button", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
-    composeAiPlayMode(root, h.deps);
+    const deps = makeDeps();
+    composeAiPlayMode(root, deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
     send.click();
     send.click(); // send → interrupt
-    expect(h.aiApi.interrupt_by_user).toHaveBeenCalledTimes(1);
+    expect(deps.aiApi.interrupt_by_user).toHaveBeenCalledTimes(1);
 
-    h.onEventCalls[0]!({ kind: "interrupt", reason: "user_interrupt" });
+    onEvent(deps)({ kind: "interrupt", reason: "user_interrupt" });
     expect(send.textContent).toBe("发送");
   });
 
   it("captures a screenshot for the image mode", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
-    composeAiPlayMode(root, h.deps);
+    const deps = makeDeps();
+    composeAiPlayMode(root, deps);
     await startSession(root);
     const select = root.querySelector<HTMLSelectElement>(".input-mode-select")!;
     select.value = "image";
@@ -308,8 +301,8 @@ describe("composeAiPlayMode send flow", () => {
     const send = $(root, ".send-btn") as HTMLButtonElement;
     send.click();
     await flush();
-    expect(h.deps.captureBoardImage).toHaveBeenCalled();
-    const req = h.aiApi.send.mock.calls[0][1] as {
+    expect(deps.captureBoardImage).toHaveBeenCalled();
+    const req = vi.mocked(deps.aiApi.send).mock.calls[0][1] as {
       inputMode: string;
       imageDataUrl?: string;
     };
@@ -320,18 +313,18 @@ describe("composeAiPlayMode send flow", () => {
   it("sends the selected thinking level and keeps history on change", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
-    composeAiPlayMode(root, h.deps);
+    const deps = makeDeps();
+    composeAiPlayMode(root, deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
 
     send.click();
-    let req = h.aiApi.send.mock.calls[0][1] as {
+    let req = vi.mocked(deps.aiApi.send).mock.calls[0][1] as {
       inputMode: string;
       thinkingLevel: string;
     };
     expect(req.thinkingLevel).toBe("low");
-    h.onEventCalls[0]!({ kind: "sse_done" });
+    onEvent(deps)({ kind: "sse_done" });
     expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
 
     // Switch the level: no confirm, history kept.
@@ -342,7 +335,7 @@ describe("composeAiPlayMode send flow", () => {
 
     // The next Send carries the new level.
     send.click();
-    req = h.aiApi.send.mock.calls[1][1] as {
+    req = vi.mocked(deps.aiApi.send).mock.calls[1][1] as {
       inputMode: string;
       thinkingLevel: string;
     };
@@ -352,13 +345,13 @@ describe("composeAiPlayMode send flow", () => {
   it("a provider error alerts and reverts the button", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
+    const deps = makeDeps();
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-    composeAiPlayMode(root, h.deps);
+    composeAiPlayMode(root, deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
     send.click();
-    h.onProviderErrorCalls[0]!({
+    onProviderError(deps)({
       kind: "config",
       code: null,
       message: "no provider",
@@ -367,29 +360,29 @@ describe("composeAiPlayMode send flow", () => {
     expect(send.textContent).toBe("发送");
   });
 
-  it("streams the user message into the dialog box", async () => {
+  it("streams the user message into the box", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
-    composeAiPlayMode(root, h.deps);
+    const deps = makeDeps();
+    composeAiPlayMode(root, deps);
     await startSession(root);
     ($(root, ".send-btn") as HTMLButtonElement).click();
-    h.onEventCalls[0]!({ kind: "user", text: "........." });
-    expect($(root, ".dialog-user-text").textContent).toBe(".........");
+    onEvent(deps)({ kind: "user", text: "........." });
+    expect($(root, ".session-user-text").textContent).toBe(".........");
   });
 
-  it("shows an image thumbnail in the dialog for the image form", async () => {
+  it("shows an image thumbnail in the box for the image form", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
-    composeAiPlayMode(root, h.deps);
+    const deps = makeDeps();
+    composeAiPlayMode(root, deps);
     await startSession(root);
     const select = root.querySelector<HTMLSelectElement>(".input-mode-select")!;
     select.value = "image";
     select.dispatchEvent(new Event("change"));
     ($(root, ".send-btn") as HTMLButtonElement).click();
     await flush(); // let captureBoardImage resolve; send seeds userImageUrl
-    const img = root.querySelector(".dialog-user-image") as HTMLImageElement;
+    const img = root.querySelector(".session-user-image") as HTMLImageElement;
     expect(img.hidden).toBe(false);
     expect(img.src).toBe("data:image/png;base64,xxx");
   });
@@ -399,14 +392,14 @@ describe("composeAiPlayMode session lifecycle", () => {
   it("a failed new session alerts and leaves Send disabled", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
+    const deps = makeDeps();
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-    h.aiApi.createSession.mockRejectedValueOnce({
+    vi.mocked(deps.aiApi.createSession).mockRejectedValueOnce({
       kind: "config",
       code: null,
       message: "no provider",
     });
-    composeAiPlayMode(root, h.deps);
+    composeAiPlayMode(root, deps);
     await startSession(root);
     expect(alertSpy).toHaveBeenCalled();
     expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
@@ -415,38 +408,38 @@ describe("composeAiPlayMode session lifecycle", () => {
   it("a new session clears history after confirmation", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
+    const deps = makeDeps();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    composeAiPlayMode(root, h.deps);
-    await seedOneHistoryEntry(root, h);
+    composeAiPlayMode(root, deps);
+    await seedOneHistoryEntry(root, deps);
     expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
 
     await startSession(root);
     expect(confirmSpy).toHaveBeenCalled();
     expect(root.querySelectorAll(".history-entry")).toHaveLength(0);
     expect($(root, ".history-empty")).toBeTruthy();
-    expect(h.aiApi.createSession).toHaveBeenCalledTimes(2);
+    expect(deps.aiApi.createSession).toHaveBeenCalledTimes(2);
   });
 
   it("declining a new session keeps history and the current session", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
+    const deps = makeDeps();
     vi.spyOn(window, "confirm").mockReturnValue(false);
-    composeAiPlayMode(root, h.deps);
-    await seedOneHistoryEntry(root, h);
+    composeAiPlayMode(root, deps);
+    await seedOneHistoryEntry(root, deps);
 
     await startSession(root);
     expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
-    expect(h.aiApi.createSession).toHaveBeenCalledTimes(1);
+    expect(deps.aiApi.createSession).toHaveBeenCalledTimes(1);
   });
 
   it("a new session never confirms while the session is empty", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
+    const deps = makeDeps();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    composeAiPlayMode(root, h.deps);
+    composeAiPlayMode(root, deps);
     await startSession(root);
     confirmSpy.mockClear();
     await startSession(root);
@@ -456,24 +449,24 @@ describe("composeAiPlayMode session lifecycle", () => {
   it("a new session interrupts an in-flight Send first", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
-    composeAiPlayMode(root, h.deps);
+    const deps = makeDeps();
+    composeAiPlayMode(root, deps);
     await startSession(root);
     ($(root, ".send-btn") as HTMLButtonElement).click(); // running
 
     await startSession(root);
-    expect(h.aiApi.interrupt_by_user).toHaveBeenCalledTimes(1);
+    expect(deps.aiApi.interrupt_by_user).toHaveBeenCalledTimes(1);
     expect($(root, ".send-btn") as HTMLButtonElement).toBeTruthy();
   });
 
   it("a new game clears history after confirmation", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
+    const deps = makeDeps();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    composeAiPlayMode(root, h.deps);
+    composeAiPlayMode(root, deps);
     await flush(); // init done, so the game area click listener is live
-    await seedOneHistoryEntry(root, h);
+    await seedOneHistoryEntry(root, deps);
     expect(root.querySelectorAll(".history-entry")).toHaveLength(1);
 
     const difficulty = root.querySelector<HTMLButtonElement>(
@@ -489,11 +482,11 @@ describe("composeAiPlayMode session lifecycle", () => {
   it("declining a new game keeps history and does not start one", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
+    const deps = makeDeps();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    composeAiPlayMode(root, h.deps);
+    composeAiPlayMode(root, deps);
     await flush();
-    await seedOneHistoryEntry(root, h);
+    await seedOneHistoryEntry(root, deps);
 
     const difficulty = root.querySelector<HTMLButtonElement>(
       '[data-difficulty="beginner"]',
@@ -508,11 +501,11 @@ describe("composeAiPlayMode session lifecycle", () => {
   it("the smiley starts a new game after confirmation", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
+    const deps = makeDeps();
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    composeAiPlayMode(root, h.deps);
+    composeAiPlayMode(root, deps);
     await flush();
-    await seedOneHistoryEntry(root, h);
+    await seedOneHistoryEntry(root, deps);
 
     const smiley = root.querySelector<HTMLButtonElement>(".smiley")!;
     smiley.click();
@@ -524,9 +517,9 @@ describe("composeAiPlayMode session lifecycle", () => {
   it("a new game on an in-flight first Send interrupts without confirming", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
+    const deps = makeDeps();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    composeAiPlayMode(root, h.deps);
+    composeAiPlayMode(root, deps);
     await flush();
     await startSession(root);
     ($(root, ".send-btn") as HTMLButtonElement).click(); // running, still empty
@@ -535,15 +528,15 @@ describe("composeAiPlayMode session lifecycle", () => {
     smiley.click();
     await flush();
     expect(confirmSpy).not.toHaveBeenCalled();
-    expect(h.aiApi.interrupt_by_user).toHaveBeenCalledTimes(1);
+    expect(deps.aiApi.interrupt_by_user).toHaveBeenCalledTimes(1);
   });
 
   it("changing the InputMode while empty does not confirm or clear", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
+    const deps = makeDeps();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    composeAiPlayMode(root, h.deps);
+    composeAiPlayMode(root, deps);
     await startSession(root);
     confirmSpy.mockClear();
 
@@ -558,8 +551,8 @@ describe("composeAiPlayMode session lifecycle", () => {
   it("guards refresh / mode switch via hasSessionHistory and confirmDiscard", async () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
-    const composition = composeAiPlayMode(root, h.deps);
+    const deps = makeDeps();
+    const composition = composeAiPlayMode(root, deps);
     expect(composition.hasSessionHistory!()).toBe(false);
     // Nothing to discard: confirmDiscard proceeds without asking.
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
@@ -570,7 +563,7 @@ describe("composeAiPlayMode session lifecycle", () => {
     await startSession(root);
     expect(composition.hasSessionHistory!()).toBe(false);
 
-    await seedOneHistoryEntry(root, h);
+    await seedOneHistoryEntry(root, deps);
     expect(composition.hasSessionHistory!()).toBe(true);
     confirmSpy.mockReturnValue(false);
     expect(composition.confirmDiscard!("msg")).toBe(false);
@@ -582,8 +575,8 @@ describe("composeAiPlayMode session lifecycle", () => {
   it("the axis checkbox toggles the axis layer", () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
-    composeAiPlayMode(root, h.deps);
+    const deps = makeDeps();
+    composeAiPlayMode(root, deps);
     const checkbox = root.querySelector<HTMLInputElement>(".axis-checkbox")!;
     const layer = root.querySelector(".axis-label-layer")!;
     expect(layer.classList.contains("hidden")).toBe(true);
@@ -598,8 +591,8 @@ describe("composeAiPlayMode session lifecycle", () => {
   it("dispose tears down the composition", () => {
     mockFetch();
     const root = mount();
-    const h = makeHarness();
-    const { dispose } = composeAiPlayMode(root, h.deps);
+    const deps = makeDeps();
+    const { dispose } = composeAiPlayMode(root, deps);
     dispose();
     expect(root.querySelector(".ai-play-layout")).toBeNull();
   });

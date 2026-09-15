@@ -332,9 +332,9 @@ button:disabled:hover {
 .ai-play-layout {
   display: grid;
   grid-template-columns: auto auto;
-  /* Single row: the left cell (game + dashboard) and the dialog are sibling
-     grid items. Keeping the dialog out of the left cell's rows means a taller
-     dialog never shifts the dashboard down (issue #119). */
+  /* Single row: the left cell (game + dashboard) and the box are sibling
+     grid items. Keeping the box out of the left cell's rows means a taller
+     box never shifts the dashboard down (issue #119). */
   grid-template-rows: auto;
   gap: 12px;
   align-items: start;
@@ -402,7 +402,7 @@ button:disabled:hover {
 }
 
 .history h3,
-.ai-play-dialog h3 {
+.ai-play-session-box h3 {
   margin: 0 0 6px;
   font-size: 13px;
 }
@@ -437,14 +437,14 @@ button:disabled:hover {
   padding: 2px 4px;
 }
 
-.ai-play-dialog {
+.ai-play-session-box {
   grid-column: 2;
   grid-row: 1;
   display: flex;
   flex-direction: column;
   width: 460px;
-  /* Bound the dialog to the viewport (body 16px padding + mode-switcher
-     chrome ≈ 57px + bottom margin) so `.dialog-stream` scrolls internally
+  /* Bound the box to the viewport (body 16px padding + mode-switcher
+     chrome ≈ 57px + bottom margin) so `.session-stream` scrolls internally
      instead of stretching the page (issue #119). */
   max-height: calc(100vh - 73px);
   padding: 10px;
@@ -455,7 +455,7 @@ button:disabled:hover {
     inset -1px -1px 0 var(--hidden-dark);
 }
 
-.dialog-stream {
+.session-stream {
   flex: 1;
   overflow-y: auto;
   display: flex;
@@ -467,7 +467,7 @@ button:disabled:hover {
   border-radius: 4px;
 }
 
-.dialog-block {
+.session-block {
   padding: 6px 8px;
   border-radius: 4px;
   font-size: 13px;
@@ -475,39 +475,39 @@ button:disabled:hover {
 }
 
 /* Reasoning: light, smaller, collapsible (user story #10). The whole block is
-   one <details>/<summary> (issue #119); the body is .dialog-reasoning. */
-.dialog-collapse {
+   one <details>/<summary> (issue #119); the body is .session-reasoning. */
+.session-collapse {
   border-radius: 4px;
 }
-.dialog-collapse summary {
+.session-collapse summary {
   cursor: pointer;
   font-size: 11px;
   color: #6a6a72;
   user-select: none;
   padding: 2px 4px;
 }
-.dialog-reasoning {
+.session-reasoning {
   /* Issue #124: assistant reasoning is plain light small text, no box. */
   color: #6a6a72;
   font-size: 12px;
 }
 
-.dialog-content {
+.session-content {
   /* Issue #124: assistant content is plain normal text (inherits the
-     .dialog-block 13px), no box. */
+     .session-block 13px), no box. */
 }
 
 /* Issue #124: the player message is the only boxed turn — a deeper panel that
    clearly separates the user's half from the unboxed AI text. */
-.dialog-user {
+.session-user {
   background: #cfd8ea;
 }
 
-.dialog-user-text {
+.session-user-text {
   white-space: pre-wrap;
 }
 
-.dialog-user-image {
+.session-user-image {
   max-width: 100%;
   max-height: 120px;
   border-radius: 3px;
@@ -515,7 +515,7 @@ button:disabled:hover {
   margin-top: 4px;
 }
 
-.dialog-lightbox {
+.session-lightbox {
   position: fixed;
   inset: 0;
   display: flex;
@@ -526,12 +526,12 @@ button:disabled:hover {
   z-index: 1000;
 }
 
-.dialog-lightbox img {
+.session-lightbox img {
   max-width: 90vw;
   max-height: 90vh;
 }
 
-.dialog-interrupt {
+.session-interrupt {
   color: #cc0000;
   background: transparent;
 }

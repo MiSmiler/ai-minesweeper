@@ -1,5 +1,5 @@
-//! The agent context: a provider-agnostic runtime for running an AI
-//! conversation (ADR-0013). It is deliberately ignorant of Minesweeper — the
+//! The agent context: a provider-agnostic runtime that answers Sends
+//! (ADR-0013). It is deliberately ignorant of Minesweeper — the
 //! `game` crate is not a dependency, so that claim is enforced by Cargo rather
 //! than by convention — and it exposes only a `Provider` seam, a `Tool`
 //! abstraction, a `Session` message history, and a `run_loop`.

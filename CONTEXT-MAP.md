@@ -18,5 +18,9 @@ The perspective a single Game is shown from, independent of the rule set and of 
 _Avoid_: PlaySurface, AiGuide, AiHelpMePlay, view, perspective (when meaning the mode)
 
 **Composition**:
-The app's mounting of one PlayMode: the assembled game area, dashboard and dialog for that mode, with its own teardown. The app holds one Composition at a time; switching PlayMode disposes the current one and mounts a new one.
+The app's mounting of one PlayMode: the assembled game area, dashboard and SessionBox for that mode, with its own teardown. The app holds one Composition at a time; switching PlayMode disposes the current one and mounts a new one.
 _Avoid_: view, screen, layout
+
+**SessionBox**:
+The panel of a Composition that shows an Agent's Session.
+_Avoid_: conversation, dialog, chat, transcript

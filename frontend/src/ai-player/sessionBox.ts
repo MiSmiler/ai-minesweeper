@@ -1,4 +1,4 @@
-// The dual-stream dialog renderer (issue #119): `reasoning` is a light,
+// The SessionBox renderer (issue #119): `reasoning` is a light,
 // smaller, whole-block collapsible; `content` is normal font and never
 // collapses; the trailing `(row,col)` coordinate is plain text — never parsed,
 // never highlighted (issue #95). A mid-stream interrupt renders
@@ -8,24 +8,24 @@
 
 import type { AiPlayerState } from "./stateMachine";
 
-/** The slice of `AiPlayerState` the dialog renders. The AI Session's
- * `sessionState` drives the dashboard, not the dialog, so it is omitted. */
-export type ConversationState = Omit<AiPlayerState, "sessionState">;
+/** The slice of `AiPlayerState` the box renders. The AI Session's
+ * `sessionState` drives the dashboard, not the box, so it is omitted. */
+export type SessionBoxState = Omit<AiPlayerState, "sessionState">;
 
-export interface Conversation {
-  render(state: ConversationState): void;
+export interface SessionBox {
+  render(state: SessionBoxState): void;
 }
 
-/** Mounts the dialog into `container` and returns a renderer that updates it
+/** Mounts the box into `container` and returns a renderer that updates it
  * in place. The elements are kept across renders so the reasoning block's
  * collapse/expand state survives streaming. */
-export function createConversation(container: HTMLElement): Conversation {
+export function createSessionBox(container: HTMLElement): SessionBox {
   // The auto-scroll lock (issue #128): `pinned` is derived from the container's
   // own scroll position, so any `scroll` (user drag / wheel / keyboard, or our
   // own programmatic scroll below) recomputes it. Dragging the scrollbar away
   // releases the lock; dragging it back re-engages it.
   const SCROLL_BOTTOM_TOL = 2; // 2px: absorbs sub-pixel / scrollbar-width jitter
-  let pinned = true; // a fresh dialog is pinned to the bottom
+  let pinned = true; // a fresh box is pinned to the bottom
   const isAtBottom = (): boolean =>
     container.scrollHeight - container.scrollTop - container.clientHeight <=
     SCROLL_BOTTOM_TOL;
@@ -36,45 +36,45 @@ export function createConversation(container: HTMLElement): Conversation {
   });
 
   // Reasoning: the whole block is one collapsible (<details>) whose body holds
-  // the text. The `.dialog-reasoning` class stays on the text element so the
+  // the text. The `.session-reasoning` class stays on the text element so the
   // existing styling/test selectors keep working.
   const collapse = document.createElement("details");
-  collapse.className = "dialog-collapse";
+  collapse.className = "session-collapse";
   // The reasoning block is expanded by default (user story #10); the user may
   // collapse it via the <summary> toggle, which `render` leaves untouched.
   collapse.open = true;
   const summary = document.createElement("summary");
-  summary.className = "dialog-reasoning-summary";
+  summary.className = "session-reasoning-summary";
   summary.textContent = "推理";
   const reasoningBlock = document.createElement("div");
-  reasoningBlock.className = "dialog-block dialog-reasoning";
+  reasoningBlock.className = "session-block session-reasoning";
   collapse.append(summary, reasoningBlock);
 
   const contentBlock = document.createElement("div");
-  contentBlock.className = "dialog-block dialog-content";
+  contentBlock.className = "session-block session-content";
 
   const interruptBlock = document.createElement("div");
-  interruptBlock.className = "dialog-interrupt";
+  interruptBlock.className = "session-interrupt";
 
   // The player's message is wrapped in the only boxed turn (issue #124): a
   // deeper panel, distinct from the unboxed AI reasoning/content text.
   const userBlock = document.createElement("div");
-  userBlock.className = "dialog-block dialog-user";
+  userBlock.className = "session-block session-user";
   const userText = document.createElement("div");
-  userText.className = "dialog-user-text";
+  userText.className = "session-user-text";
   const userImage = document.createElement("img");
-  userImage.className = "dialog-user-image";
+  userImage.className = "session-user-image";
   userImage.alt = "玩家发送的棋盘截图";
   userImage.hidden = true;
   userBlock.append(userText, userImage);
 
   // A full-size overlay for the image form's thumbnail (issue #124). It lives
-  // inside `.dialog-stream` with `position: fixed`, so it overlays the viewport
-  // and is torn down with the dialog container on dispose. Visibility is driven
+  // inside `.session-stream` with `position: fixed`, so it overlays the viewport
+  // and is torn down with the box container on dispose. Visibility is driven
   // by `style.display` (not the `hidden` attribute) because the CSS
   // `display: flex` would otherwise override `hidden`.
   const lightbox = document.createElement("div");
-  lightbox.className = "dialog-lightbox";
+  lightbox.className = "session-lightbox";
   lightbox.style.display = "none";
   const lightboxImg = document.createElement("img");
   lightbox.append(lightboxImg);
@@ -94,7 +94,7 @@ export function createConversation(container: HTMLElement): Conversation {
     lightbox,
   );
 
-  const render = (state: ConversationState): void => {
+  const render = (state: SessionBoxState): void => {
     // The player's boxed turn: show only when there is text or a screenshot.
     const hasUser = state.user !== "" || state.userImageUrl !== undefined;
     if (hasUser) {

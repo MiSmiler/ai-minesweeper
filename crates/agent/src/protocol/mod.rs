@@ -23,7 +23,7 @@
 
 use serde::Serialize;
 
-/// A message in a conversation, tagged on the wire by its `role`.
+/// A message in a Session, tagged on the wire by its `role`.
 ///
 /// `Message` is the single role-carrying unit the runtime and any provider
 /// agree on. It serializes with `serde(tag = "role", rename_all =

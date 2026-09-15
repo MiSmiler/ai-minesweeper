@@ -44,7 +44,7 @@ export type SessionState = "none" | "empty" | "non-empty";
 export interface AiPlayerState {
   phase: AiPlayerPhase;
   sessionState: SessionState;
-  /** Accumulated reasoning stream (light, collapsible in the dialog). */
+  /** Accumulated reasoning stream (light, collapsible in the box). */
   reasoning: string;
   /** Accumulated content stream (normal font, not collapsible). */
   content: string;

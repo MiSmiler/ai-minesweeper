@@ -261,7 +261,7 @@ impl Drop for TurnGuard {
 /// The AiPlayer: owns the live AI Session (ADR-0017) and its one in-flight Send.
 ///
 /// The adapter holds the *binding* — the id and the InputMode lock — while the
-/// conversation itself lives in the agent's [`Session`]. Cloned into the
+/// messages themselves live in the agent's [`Session`]. Cloned into the
 /// `AppState`, so every field sits behind an `Arc`. A `tokio::sync::Mutex`
 /// guards the `Agent`, so the guard held across the `agent.stream(...).await`
 /// network round trip is `Send` for the axum handlers.

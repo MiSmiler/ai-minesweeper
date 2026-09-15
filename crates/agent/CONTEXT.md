@@ -1,6 +1,6 @@
 # agent
 
-The runtime that runs an AI conversation: it owns the model and the Provider,
+The runtime behind an AI Session: it owns the model and the Provider,
 holds the messages, and answers Sends. It is deliberately ignorant of
 Minesweeper — `game` is not one of its dependencies.
 

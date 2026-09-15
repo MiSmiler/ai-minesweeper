@@ -58,7 +58,7 @@ describe("mountMode", () => {
     const composition = mountMode("ai", root, makeDeps());
     expect(root.querySelector(".ai-play-layout")).toBeTruthy();
     expect(root.querySelector(".ai-play-dashboard")).toBeTruthy();
-    expect(root.querySelector(".ai-play-dialog")).toBeTruthy();
+    expect(root.querySelector(".ai-play-session-box")).toBeTruthy();
     composition.dispose();
   });
 

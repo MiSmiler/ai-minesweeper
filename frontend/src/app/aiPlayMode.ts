@@ -1,9 +1,9 @@
 // The `AiPlay` composition (ADR-0012): the top-left game area (a full copy
 // of HumanPlay with its own independent game client), the bottom-left
 // dashboard (send/interrupt, new session, input mode, row/col axis, history),
-// and the right dialog shell. The "发送" button drives the `AiPlayerMachine`
-// (issue #119) which consumes the real SSE stream; the dialog is rendered by
-// `createConversation`.
+// and the right SessionBox shell. The "发送" button drives the `AiPlayerMachine`
+// (issue #119) which consumes the real SSE stream; the box is rendered by
+// `createSessionBox`.
 //
 // The dashboard follows the AI Session (issue #133): Send is disabled while
 // there is no session, the InputMode select locks while a Send runs / the
@@ -16,7 +16,7 @@ import type {
   SendRequest,
   ThinkingLevel,
 } from "../ai-player/api";
-import { createConversation } from "../ai-player/conversation";
+import { createSessionBox } from "../ai-player/sessionBox";
 import { createBoardAxis, type BoardAxis } from "./boardAxis";
 import {
   createAiPlayerMachine,
@@ -64,10 +64,10 @@ function providerAlertMessage(e: ProviderError): string {
   if (e.code === 429) return "AI 请求过于频繁（429），请稍后再试。";
   if (e.code === 408) return "AI 响应超时（408），请稍后再试。";
   if (e.kind === "upstream") return `AI 服务异常：${e.message}`;
-  return `分析失败：${e.message}`;
+  return `发送失败：${e.message}`;
 }
 
-/** Mounts the AiPlay composition (game area + dashboard + dialog) into `root`. */
+/** Mounts the AiPlay composition (game area + dashboard + SessionBox) into `root`. */
 export function composeAiPlayMode(
   root: HTMLElement,
   deps: AppDeps,
@@ -76,7 +76,7 @@ export function composeAiPlayMode(
   container.className = "ai-play-layout";
   root.replaceChildren(container);
 
-  // The game + dashboard stack into one grid cell (`.ai-play-left`) so the dialog
+  // The game + dashboard stack into one grid cell (`.ai-play-left`) so the box
   // (a sibling cell) growing never shifts them (issue #119).
   const left = document.createElement("div");
   left.className = "ai-play-left";
@@ -214,17 +214,17 @@ export function composeAiPlayMode(
   historyBox.append(historyTitle, historyList);
   dashboard.appendChild(historyBox);
 
-  // --- Right dialog shell ---
-  const dialog = document.createElement("div");
-  dialog.className = "ai-play-dialog";
-  const dialogTitle = document.createElement("h3");
-  dialogTitle.textContent = "AI 对话";
-  const dialogStream = document.createElement("div");
-  dialogStream.className = "dialog-stream";
-  dialog.append(dialogTitle, dialogStream);
-  container.appendChild(dialog);
+  // --- Right SessionBox shell ---
+  const boxEl = document.createElement("div");
+  boxEl.className = "ai-play-session-box";
+  const boxTitle = document.createElement("h3");
+  boxTitle.textContent = "AI 会话";
+  const streamEl = document.createElement("div");
+  streamEl.className = "session-stream";
+  boxEl.append(boxTitle, streamEl);
+  container.appendChild(boxEl);
 
-  const conversation = createConversation(dialogStream);
+  const sessionBox = createSessionBox(streamEl);
   const machine = createAiPlayerMachine({ api: deps.aiApi });
 
   function setRunning(next: boolean): void {
@@ -235,7 +235,7 @@ export function composeAiPlayMode(
   }
 
   const unsubscribe = machine.onState((state) => {
-    conversation.render(state);
+    sessionBox.render(state);
     sessionState = state.sessionState;
     setRunning(state.phase === "running");
     // The InputMode is bound by the first committed Send: lock the select
@@ -273,14 +273,14 @@ export function composeAiPlayMode(
       li.textContent = `分析 #${i + 1} (${entry.mode})`;
       li.addEventListener("click", () => {
         if (running) return; // Not clickable while a Send is running (user story #31)
-        conversation.render(entry.state);
+        sessionBox.render(entry.state);
       });
       historyList.appendChild(li);
     });
   }
   renderHistory();
 
-  async function startAnalysis(): Promise<void> {
+  async function startSend(): Promise<void> {
     if (running || sessionState === "none") return;
     const mode = currentMode;
     let imageDataUrl: string | undefined;
@@ -321,7 +321,7 @@ export function composeAiPlayMode(
 
   sendBtn.addEventListener("click", () => {
     if (running) void machine.interrupt_by_user();
-    else void startAnalysis();
+    else void startSend();
   });
   newSessionBtn.addEventListener("click", () => {
     void startNewSession();

@@ -81,7 +81,7 @@ pub trait Tool: Send + Sync {
     async fn call(&self, args: serde_json::Value) -> Result<String, String>;
 }
 
-/// The conversation a turn runs against, as a cheap cloneable handle: the
+/// The Session a turn runs against, as a cheap cloneable handle: the
 /// messages live in one shared `Vec`, so every clone sees the same history.
 /// A turn lands through [`Session::commit`], which the agent calls only when a
 /// stream reaches `Done` — an interrupted, failed, or unread turn never

@@ -111,7 +111,7 @@ async fn handle_send(
 
     // `/ai/...` is read-only: clone a player-visible snapshot under a *short*
     // lock, then drop the lock before the (potentially long) network round trip
-    // so `/state` and `/action` stay responsive during the analysis. The clone
+    // so `/state` and `/action` stay responsive during the Send. The clone
     // stays in server memory; it is never serialized to the model (the payload
     // is built from the visible-only `BoardView`), so privacy is preserved.
     let game = state.game.lock().expect("game state poisoned").clone();
@@ -214,7 +214,7 @@ fn agent_error_response(err: AgentError) -> Response {
             ProviderError {
                 kind: ProviderErrorKind::Config,
                 code: None,
-                message: "analysis cancelled before it started".to_string(),
+                message: "the send was cancelled before it started".to_string(),
             },
         ),
     };
