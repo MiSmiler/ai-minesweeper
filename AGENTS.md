@@ -16,7 +16,7 @@ Align **one point at a time**. Put a single question or decision to the user, th
 
 Rounds of discussion converging is not the design being settled. Both halves — functional design and interface design — are aligned with the user first, and only then does implementation open; a few rounds is the expected cost, not a delay to be cut short.
 
-So when a design discussion has run and you are ready to start coding, the next move is the `confirm-design` skill: it closes both halves with the user before any edit lands. The user reaches for that skill themselves when they see you edging toward the code — the invocation answers "is the design settled?" with *not yet*, so stay in the design rather than drifting toward an edit.
+So when a design discussion has run and you see yourself edging toward the code, stop: the design is not settled until both halves are closed with the user, and no edit lands before that. Treat the pull toward editing as the signal that the design is *not yet* done — stay in the design rather than drifting toward an edit.
 
 ### Before touching files: present first, then confirm
 
