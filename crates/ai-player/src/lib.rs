@@ -6,10 +6,9 @@
 //! plus the mode's own section), and wires `AiPlayer::send` — the AiPlayer's "ask
 //! the AI" entry point — to one Turn of an `agent::Agent`.
 //!
-//! The Session bound to the current Game is a backend-owned concept (ADR-0017):
-//! [`AiPlayer`] holds the live session's *binding* (the id the backend handed out
-//! and the InputMode lock) while the messages live in the agent's
-//! [`Session`].
+//! The Session is the Agent's (ADR-0021): the AiPlayer never names one. What
+//! lives here is policy — one Game drives one Agent, the InputMode bound by the
+//! first committed Turn, a New Game ending the Session.
 //!
 //! The user turn carries the board alone (ADR-0016): every rule — the
 //! coordinate system, the symbol legend, the output contract — lives in the
@@ -24,18 +23,15 @@
 //!
 //! This crate depends on `game` + `agent`, never on the app (`server`).
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
-use tokio::sync::Mutex;
 
 use base64::Engine as _;
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio_util::sync::CancellationToken;
 
 use agent::{
     Agent, ContentBlock, DeepSeek, DeepSeekConfig, Message, ProviderError, ProviderSet,
-    SendError as AgentSendError, Session, StreamChunk, ThinkingLevel, Tool,
+    SendError as AgentSendError, StreamChunk, ThinkingLevel, Tool,
 };
 use game::{CellContent, CellState, CellView, Difficulty, Game, GameState, Position};
 
@@ -158,22 +154,18 @@ pub struct SendRequest {
     pub image_data_url: Option<String>,
 }
 
-/// Why a Send produced no Turn. The AiPlayer's own refusals (`UnknownSession`,
-/// `Busy`, `ModeMismatch`) precede the exchange; everything the runtime reports
-/// — the caller's Interrupt or the Provider's failure — is the agent's, wrapped
-/// as [`SendError::Agent`].
+/// Why a Send produced no Turn. The AiPlayer's own refusal (`ModeMismatch`)
+/// precedes the exchange; everything the runtime reports — the `NoSession` /
+/// `Busy` refusals, the caller's Interrupt, or the Provider's failure — is the
+/// agent's, wrapped as [`SendError::Agent`].
 #[derive(Debug, PartialEq)]
 pub enum SendError {
-    /// `id` is not the live AI Session (or there is none).
-    UnknownSession,
-    /// A Send is already in flight for this AI Session.
-    Busy,
-    /// The session's InputMode is bound and differs from the request's.
+    /// The Session's InputMode is bound and differs from the request's.
     ModeMismatch {
         bound: InputMode,
         requested: InputMode,
     },
-    /// The agent's own failure, at delivery or mid-stream.
+    /// The agent's own failure or refusal, at delivery or mid-stream.
     Agent(AgentSendError),
 }
 
@@ -187,91 +179,75 @@ pub(crate) const MODEL: &str = "deepseek-flash";
 /// The name the product registers its DeepSeek provider under.
 const PROVIDER: &str = "deepseek";
 
-/// The AI Session bound to one Game: the id the backend handed out, the
-/// InputMode lock, and the agent's [`Session`], which owns the messages.
-struct SessionBinding {
-    id: String,
-    /// `None` until the first Turn commits; then the mode every Turn used.
-    input_mode: Option<InputMode>,
-    session: Session,
+/// The InputMode lock of the live Session: the mode its first committed Turn
+/// bound (if any) and the generation that lock belongs to. `begin` / `end`
+/// clear the mode and bump the generation, so a stream superseded by a new
+/// Session can never bind the new Session's mode.
+struct ModeLock {
+    mode: Option<InputMode>,
+    generation: u64,
 }
 
-/// The one Send of the live AI Session that has not ended yet.
-struct InFlight {
-    session_id: String,
-    seq: u64,
-    cancel: CancellationToken,
-}
-
-/// Clears the in-flight slot, but only while it still holds `seq`: a Send that
-/// has been superseded (by an interrupt or a new session) must not free its
-/// successor's slot.
-fn clear_in_flight(in_flight: &StdMutex<Option<InFlight>>, seq: u64) {
-    let mut slot = in_flight.lock().expect("in-flight slot poisoned");
-    if slot.as_ref().is_some_and(|in_flight| in_flight.seq == seq) {
-        *slot = None;
+impl ModeLock {
+    /// Clears the bound mode and bumps the generation, superseding every Send
+    /// that captured the previous generation.
+    fn reset(&mut self) {
+        self.mode = None;
+        self.generation += 1;
     }
 }
 
-/// Binds the InputMode when the session's first Turn commits, and releases the
-/// in-flight slot when the stream ends. Owned by the returned stream, so its
-/// `Drop` also covers a client abort.
-struct TurnGuard {
-    session_binding: Arc<StdMutex<Option<SessionBinding>>>,
-    in_flight: Arc<StdMutex<Option<InFlight>>>,
-    session_id: String,
-    seq: u64,
+/// Binds the InputMode when the Send's stream reaches `Done`, and only while
+/// the lock's generation still matches the one the Send captured. Owned by the
+/// returned stream.
+struct ModeGuard {
+    lock: Arc<StdMutex<ModeLock>>,
+    generation: u64,
     mode: InputMode,
 }
 
-impl TurnGuard {
-    /// The agent committed the Turn (it saw `Done`): lock the InputMode.
+impl ModeGuard {
+    /// The agent committed the Turn (it saw `Done`): lock the InputMode,
+    /// unless a `begin` / `end` superseded this Send's Session.
     fn commit(&self) {
-        let mut slot = self
-            .session_binding
-            .lock()
-            .expect("session binding poisoned");
-        if let Some(binding) = slot.as_mut()
-            && binding.id == self.session_id
-        {
-            binding.input_mode = Some(self.mode);
+        let mut lock = self.lock.lock().expect("mode lock poisoned");
+        if lock.generation == self.generation {
+            lock.mode = Some(self.mode);
         }
     }
 }
 
-impl Drop for TurnGuard {
-    fn drop(&mut self) {
-        clear_in_flight(&self.in_flight, self.seq);
-    }
+/// The payload [`AiPlayer::prepare`] hands to [`AiPlayer::send`]: the verbatim
+/// player message to echo, the `pending` the agent appends, and the mode and
+/// generation this Send runs under.
+struct Prepared {
+    user_text: String,
+    pending: Vec<Message>,
+    generation: u64,
+    mode: InputMode,
 }
 
-/// The AiPlayer: owns the live AI Session (ADR-0017) and its one in-flight Send.
-///
-/// The adapter holds the *binding* — the id and the InputMode lock — while the
-/// messages themselves live in the agent's [`Session`]. Cloned into the
-/// `AppState`, so every field sits behind an `Arc`. A `tokio::sync::Mutex`
-/// guards the `Agent`, so the guard held across the `agent.stream(...).await`
-/// network round trip is `Send` for the axum handlers.
+/// The AiPlayer: the Minesweeper binding for one `Agent`. It holds the Agent
+/// (which owns the live Session) and the InputMode lock; it never names a
+/// Session itself. Cloned into the `AppState`, so every field sits behind an
+/// `Arc`.
 #[derive(Clone)]
 pub struct AiPlayer {
-    agent: Arc<Mutex<Agent>>,
-    /// The AI Session bound to the current Game; `None` until
-    /// [`AiPlayer::create_session`] and again after [`AiPlayer::end_session`].
-    session_binding: Arc<StdMutex<Option<SessionBinding>>>,
-    /// The Send whose stream has not ended yet.
-    in_flight: Arc<StdMutex<Option<InFlight>>>,
-    /// The counter behind the session ids `s0`, `s1`, ...
-    next_seq: Arc<AtomicU64>,
+    agent: Arc<Agent>,
+    /// The mode lock of the live Session; cleared whenever the Session is
+    /// replaced or ended.
+    mode_lock: Arc<StdMutex<ModeLock>>,
 }
 
 impl AiPlayer {
     /// Builds an `AiPlayer` from a shared `Agent` (DeepSeek or mock).
-    pub fn new(agent: Arc<Mutex<Agent>>) -> Self {
+    pub fn new(agent: Arc<Agent>) -> Self {
         Self {
             agent,
-            session_binding: Arc::new(StdMutex::new(None)),
-            in_flight: Arc::new(StdMutex::new(None)),
-            next_seq: Arc::new(AtomicU64::new(0)),
+            mode_lock: Arc::new(StdMutex::new(ModeLock {
+                mode: None,
+                generation: 0,
+            })),
         }
     }
 
@@ -287,85 +263,48 @@ impl AiPlayer {
         }
         let mut agent = Agent::new(providers);
         agent.set_model(MODEL.to_string(), Some(PROVIDER));
-        Self::new(Arc::new(Mutex::new(agent)))
+        Self::new(Arc::new(agent))
     }
 
-    /// Creates an empty AI Session, replacing the live one (if any) and
-    /// cancelling its in-flight Send. Loads the (agent, provider, model) first,
-    /// so an unconfigured AI fails here rather than on the first Send; a load
-    /// failure leaves the current session untouched.
-    pub async fn create_session(&self) -> Result<String, ProviderError> {
-        {
-            let agent = self.agent.lock().await;
-            agent.load().await?;
-        }
-        self.end_session();
-        let id = format!("s{}", self.next_seq.fetch_add(1, Ordering::Relaxed));
-        let binding = SessionBinding {
-            id: id.clone(),
-            input_mode: None,
-            session: Session::new(),
-        };
-        *self
-            .session_binding
-            .lock()
-            .expect("session binding poisoned") = Some(binding);
-        Ok(id)
-    }
-
-    /// Ends the live AI Session: cancels its in-flight Send and forgets the
-    /// binding. A no-op when there is no session.
-    pub fn end_session(&self) {
-        if let Some(in_flight) = self
-            .in_flight
-            .lock()
-            .expect("in-flight slot poisoned")
-            .take()
-        {
-            in_flight.cancel.cancel();
-        }
-        *self
-            .session_binding
-            .lock()
-            .expect("session binding poisoned") = None;
-    }
-
-    /// Cancels the in-flight Send of `id`; `false` when none is in flight. The
-    /// stream clears the slot itself, so the Send is free as soon as the
-    /// cancelled task notices.
-    pub fn interrupt(&self, id: &str) -> bool {
-        let slot = self.in_flight.lock().expect("in-flight slot poisoned");
-        match slot.as_ref() {
-            Some(in_flight) if in_flight.session_id == id => {
-                in_flight.cancel.cancel();
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// Whether `id` is the live AI Session.
-    fn is_live_session(&self, id: &str) -> bool {
-        self.session_binding
-            .lock()
-            .expect("session binding poisoned")
-            .as_ref()
-            .is_some_and(|binding| binding.id == id)
-    }
-
-    /// Appends the current board to the live AI Session and starts the Turn.
+    /// Begins a fresh AI Session: loads the runtime, replaces the live Session
+    /// (cancelling its in-flight Send), and clears the InputMode lock. A Load
+    /// failure leaves both the live Session and the lock untouched.
     ///
-    /// The first committed Send binds the session's [`InputMode`] and carries
+    /// The returned id is temporary (#145): it keeps the transport's
+    /// `session_id` wire field working until #146 drops the id from the wire.
+    pub async fn begin(&self) -> Result<String, ProviderError> {
+        self.agent.create_session().await?;
+        self.mode_lock.lock().expect("mode lock poisoned").reset();
+        Ok(self.agent.session_id().unwrap_or_default())
+    }
+
+    /// Ends the live AI Session: cancels its in-flight Send, forgets it, and
+    /// clears the InputMode lock. A no-op when there is no Session.
+    pub fn end(&self) {
+        self.agent.end_session();
+        self.mode_lock.lock().expect("mode lock poisoned").reset();
+    }
+
+    /// Cancels the in-flight Send, if any; `false` when none is in flight. The
+    /// stream frees the slot itself, so the Send is free as soon as the
+    /// cancelled task notices.
+    pub fn interrupt(&self) -> bool {
+        self.agent.interrupt()
+    }
+
+    /// Appends the current board to the live Session and starts the Turn.
+    ///
+    /// The first committed Send binds the Session's [`InputMode`] and carries
     /// that mode's `System` prompt. The tuple element is the verbatim player
     /// message (the `role: user` turn) — the board in the chosen input mode —
     /// echoed back so the frontend can render the player's half of the
     /// exchange (issue #124). The stream advances on `Ok(StreamChunk)`; a
     /// mid-stream break is `Err(agent::SendError)` — the caller's Interrupt or
-    /// the provider's own failure, passed through intact; `Ok(Done)` closes it
-    /// and commits the Turn.
+    /// the provider's failure, passed through intact; `Ok(Done)` closes it and
+    /// commits the Turn. A refusal (`NoSession` / `Busy`) is an `Err` from the
+    /// agent, never a stream item.
     pub async fn send(
         &self,
-        id: &str,
         game: &Game,
         req: SendRequest,
     ) -> Result<
@@ -375,18 +314,41 @@ impl AiPlayer {
         ),
         SendError,
     > {
-        // Resolve the live session and check the mode lock. `ModeMismatch`
-        // precedes `Busy`: it is permanent, while `Busy` clears on its own.
-        let (session, first) = {
-            let slot = self
-                .session_binding
-                .lock()
-                .expect("session binding poisoned");
-            let current = slot.as_ref().ok_or(SendError::UnknownSession)?;
-            if current.id != id {
-                return Err(SendError::UnknownSession);
-            }
-            if let Some(bound) = current.input_mode
+        let prepared = self.prepare(game, &req)?;
+
+        let stream = self
+            .agent
+            .send(prepared.pending, req.thinking_level)
+            .await
+            .map_err(SendError::Agent)?;
+
+        let guard = ModeGuard {
+            lock: Arc::clone(&self.mode_lock),
+            generation: prepared.generation,
+            mode: prepared.mode,
+        };
+        Ok((
+            prepared.user_text,
+            stream.map(move |item| {
+                if matches!(item, Ok(StreamChunk::Done)) {
+                    guard.commit();
+                }
+                item
+            }),
+        ))
+    }
+
+    /// The glossary's **Prepare**: the mode check and the payload in front of
+    /// the agent's Send. The check precedes the agent so `ModeMismatch` is a
+    /// permanent refusal that never reaches the runtime; the generation is
+    /// captured under the same lock, so the returned guard can tell whether
+    /// this Send's Session is still the live one. `pending` carries the mode's
+    /// `System` prompt only on the Session's first Turn (a fresh Session has no
+    /// committed Turn).
+    fn prepare(&self, game: &Game, req: &SendRequest) -> Result<Prepared, SendError> {
+        let generation = {
+            let lock = self.mode_lock.lock().expect("mode lock poisoned");
+            if let Some(bound) = lock.mode
                 && bound != req.input_mode
             {
                 return Err(SendError::ModeMismatch {
@@ -394,34 +356,8 @@ impl AiPlayer {
                     requested: req.input_mode,
                 });
             }
-            let first = current.session.is_empty();
-            (current.session.clone(), first)
+            lock.generation
         };
-
-        // Register the cancel token before the first await, so a concurrent
-        // `interrupt` / `create_session` always finds it.
-        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
-        let cancel = CancellationToken::new();
-        {
-            let mut slot = self.in_flight.lock().expect("in-flight slot poisoned");
-            if slot.is_some() {
-                return Err(SendError::Busy);
-            }
-            *slot = Some(InFlight {
-                session_id: id.to_string(),
-                seq,
-                cancel: cancel.clone(),
-            });
-        }
-
-        // A concurrent `create_session` / `end_session` may have replaced the
-        // session between the two locks. Re-check before starting the round
-        // trip: registered Send is cancelled by a later replacement, so this
-        // closes the window where a stale Send could hold the slot.
-        if !self.is_live_session(id) {
-            clear_in_flight(&self.in_flight, seq);
-            return Err(SendError::UnknownSession);
-        }
 
         let view = BoardView::from_game(game);
         let mode = req.input_mode;
@@ -442,46 +378,18 @@ impl AiPlayer {
         };
 
         let mut pending = Vec::with_capacity(2);
-        if first {
+        if !self.agent.has_committed_turn() {
             pending.push(Message::System {
                 content: mode.system_prompt(),
             });
         }
         pending.push(Message::User { content: blocks });
-
-        // Hold the agent lock only for the round trip's start: the returned
-        // stream owns everything it needs.
-        let stream = {
-            let mut agent = self.agent.lock().await;
-            agent.set_model(MODEL.to_string(), None);
-            // Set the player's reasoning depth (issue #122); the agent
-            // translates it onto the request's `reasoning_effort` / `thinking`.
-            agent.set_thinking_level(Some(req.thinking_level));
-            match agent.stream(&session, pending, cancel.clone()).await {
-                Ok(stream) => stream,
-                Err(err) => {
-                    clear_in_flight(&self.in_flight, seq);
-                    return Err(SendError::Agent(err));
-                }
-            }
-        };
-
-        let guard = TurnGuard {
-            session_binding: self.session_binding.clone(),
-            in_flight: self.in_flight.clone(),
-            session_id: id.to_string(),
-            seq,
-            mode,
-        };
-        Ok((
+        Ok(Prepared {
             user_text,
-            stream.map(move |item| {
-                if matches!(item, Ok(StreamChunk::Done)) {
-                    guard.commit();
-                }
-                item
-            }),
-        ))
+            pending,
+            generation,
+            mode,
+        })
     }
 }
 
@@ -643,6 +551,7 @@ mod tests {
     use async_trait::async_trait;
     use futures::stream;
     use game::{Features, GameConfig};
+    use tokio_util::sync::CancellationToken;
 
     // --- a deterministic, player-built test view ---
 
@@ -690,7 +599,7 @@ mod tests {
         let mut set = ProviderSet::new();
         set.insert("mock".to_string(), Box::new(mock.clone()));
         let mut agent = Agent::new(set);
-        agent.set_model("initial".to_string(), Some("mock"));
+        agent.set_model(MODEL.to_string(), Some("mock"));
         (agent, mock)
     }
 
@@ -875,7 +784,7 @@ mod tests {
 
     fn ai_player_with_mock() -> (AiPlayer, MockProvider) {
         let (agent, mock) = mock_agent();
-        (AiPlayer::new(Arc::new(Mutex::new(agent))), mock)
+        (AiPlayer::new(Arc::new(agent)), mock)
     }
 
     fn request_in(mode: InputMode) -> SendRequest {
@@ -891,40 +800,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_session_returns_a_fresh_id_each_time() {
+    async fn send_without_a_live_session_is_no_session() {
         let (ai_player, _mock) = ai_player_with_mock();
-        let first = ai_player.create_session().await.unwrap();
-        let second = ai_player.create_session().await.unwrap();
-        assert_ne!(first, second);
-    }
-
-    #[tokio::test]
-    async fn send_without_a_live_session_is_unknown_session() {
-        let (ai_player, _mock) = ai_player_with_mock();
-        let Err(err) = ai_player.send("nope", &fresh_game(), plain_request()).await else {
+        let Err(err) = ai_player.send(&fresh_game(), plain_request()).await else {
             panic!("expected an error");
         };
-        assert_eq!(err, SendError::UnknownSession);
-    }
-
-    #[tokio::test]
-    async fn send_for_a_replaced_session_is_unknown_session() {
-        let (ai_player, _mock) = ai_player_with_mock();
-        let stale = ai_player.create_session().await.unwrap();
-        let live = ai_player.create_session().await.unwrap();
-        let Err(err) = ai_player.send(&stale, &fresh_game(), plain_request()).await else {
-            panic!("expected an error");
-        };
-        assert_eq!(err, SendError::UnknownSession);
-        assert_ne!(stale, live);
+        assert_eq!(err, SendError::Agent(AgentSendError::NoSession));
     }
 
     #[tokio::test]
     async fn send_streams_reasoning_content_and_done() {
         let (ai_player, mock) = ai_player_with_mock();
-        let id = ai_player.create_session().await.unwrap();
+        ai_player.begin().await.unwrap();
         let (user_text, mut stream) = ai_player
-            .send(&id, &fresh_game(), plain_request())
+            .send(&fresh_game(), plain_request())
             .await
             .unwrap();
         // The verbatim player message is the board body, not the system prompt.
@@ -959,13 +848,13 @@ mod tests {
     #[tokio::test]
     async fn send_threads_off_into_the_request() {
         let (ai_player, mock) = ai_player_with_mock();
-        let id = ai_player.create_session().await.unwrap();
+        ai_player.begin().await.unwrap();
         let req = SendRequest {
             input_mode: InputMode::Plain,
             thinking_level: ThinkingLevel::Off,
             image_data_url: None,
         };
-        let (_user_text, mut stream) = ai_player.send(&id, &fresh_game(), req).await.unwrap();
+        let (_user_text, mut stream) = ai_player.send(&fresh_game(), req).await.unwrap();
         while stream.next().await.is_some() {}
         let req = mock.last_request().expect("mock recorded a request");
         assert_eq!(req.reasoning_effort, None);
@@ -980,26 +869,22 @@ mod tests {
     #[tokio::test]
     async fn the_first_committed_send_binds_the_input_mode() {
         let (ai_player, mock) = ai_player_with_mock();
-        let id = ai_player.create_session().await.unwrap();
+        ai_player.begin().await.unwrap();
         let game = fresh_game();
         {
             let (_user_text, mut stream) = ai_player
-                .send(&id, &game, request_in(InputMode::Plain))
+                .send(&game, request_in(InputMode::Plain))
                 .await
                 .unwrap();
             while stream.next().await.is_some() {}
         }
         // A second Send in the same mode is accepted...
         {
-            let (_user_text, mut stream) =
-                ai_player.send(&id, &game, plain_request()).await.unwrap();
+            let (_user_text, mut stream) = ai_player.send(&game, plain_request()).await.unwrap();
             while stream.next().await.is_some() {}
         }
         // ...and a different mode is a permanent mismatch.
-        let Err(err) = ai_player
-            .send(&id, &game, request_in(InputMode::Emoji))
-            .await
-        else {
+        let Err(err) = ai_player.send(&game, request_in(InputMode::Emoji)).await else {
             panic!("expected an error");
         };
         assert_eq!(
@@ -1023,11 +908,10 @@ mod tests {
     #[tokio::test]
     async fn a_committed_send_appends_user_and_assistant_to_the_next_request() {
         let (ai_player, mock) = ai_player_with_mock();
-        let id = ai_player.create_session().await.unwrap();
+        ai_player.begin().await.unwrap();
         let game = fresh_game();
         for _ in 0..2 {
-            let (_user_text, mut stream) =
-                ai_player.send(&id, &game, plain_request()).await.unwrap();
+            let (_user_text, mut stream) = ai_player.send(&game, plain_request()).await.unwrap();
             while stream.next().await.is_some() {}
         }
         // The second request was taken before its own reply streamed, so it is
@@ -1044,22 +928,22 @@ mod tests {
     #[tokio::test]
     async fn an_interrupted_first_send_commits_nothing_and_keeps_the_mode_free() {
         let (ai_player, mock) = ai_player_with_mock();
-        let id = ai_player.create_session().await.unwrap();
+        ai_player.begin().await.unwrap();
         let game = fresh_game();
         {
             let (_user_text, mut stream) = ai_player
-                .send(&id, &game, request_in(InputMode::Plain))
+                .send(&game, request_in(InputMode::Plain))
                 .await
                 .unwrap();
             // The first chunk arrived; the player then interrupts.
             assert!(stream.next().await.is_some());
-            assert!(ai_player.interrupt(&id));
+            assert!(ai_player.interrupt());
             while stream.next().await.is_some() {}
         }
         // Nothing was committed: a different mode is still accepted, and the
         // next request carries a single System built from the NEW mode.
         let (_user_text, mut stream) = ai_player
-            .send(&id, &game, request_in(InputMode::Emoji))
+            .send(&game, request_in(InputMode::Emoji))
             .await
             .unwrap();
         while stream.next().await.is_some() {}
@@ -1074,66 +958,102 @@ mod tests {
     #[tokio::test]
     async fn send_while_a_send_is_in_flight_is_busy() {
         let (ai_player, _mock) = ai_player_with_mock();
-        let id = ai_player.create_session().await.unwrap();
+        ai_player.begin().await.unwrap();
         let game = fresh_game();
-        let (_user_text, stream) = ai_player.send(&id, &game, plain_request()).await.unwrap();
-        let Err(err) = ai_player.send(&id, &game, plain_request()).await else {
+        let (_user_text, stream) = ai_player.send(&game, plain_request()).await.unwrap();
+        let Err(err) = ai_player.send(&game, plain_request()).await else {
             panic!("expected an error");
         };
-        assert_eq!(err, SendError::Busy);
+        assert_eq!(err, SendError::Agent(AgentSendError::Busy));
         drop(stream);
     }
 
     #[tokio::test]
     async fn interrupt_without_an_in_flight_send_is_false() {
         let (ai_player, _mock) = ai_player_with_mock();
-        let id = ai_player.create_session().await.unwrap();
-        assert!(!ai_player.interrupt(&id));
+        ai_player.begin().await.unwrap();
+        assert!(!ai_player.interrupt());
     }
 
     #[tokio::test]
-    async fn create_session_cancels_the_previous_send() {
+    async fn begin_cancels_the_previous_send() {
         let (ai_player, _mock) = ai_player_with_mock();
-        let first = ai_player.create_session().await.unwrap();
+        ai_player.begin().await.unwrap();
         let game = fresh_game();
-        let (_user_text, mut stream) = ai_player
-            .send(&first, &game, plain_request())
-            .await
-            .unwrap();
-        let second = ai_player.create_session().await.unwrap();
-        assert_ne!(first, second);
+        let (_user_text, mut stream) = ai_player.send(&game, plain_request()).await.unwrap();
+        ai_player.begin().await.unwrap();
         // The displaced Send reports the caller's interrupt on its next poll...
         assert_eq!(stream.next().await, Some(Err(AgentSendError::Interrupted)));
         assert_eq!(stream.next().await, None);
-        // ...and the new session is the only one a Send accepts.
-        let Err(err) = ai_player.send(&first, &game, plain_request()).await else {
-            panic!("expected an error");
-        };
-        assert_eq!(err, SendError::UnknownSession);
     }
 
     #[tokio::test]
-    async fn end_session_forgets_the_live_session() {
+    async fn a_superseded_stream_does_not_bind_the_new_sessions_mode() {
         let (ai_player, _mock) = ai_player_with_mock();
-        let id = ai_player.create_session().await.unwrap();
-        ai_player.end_session();
-        let Err(err) = ai_player.send(&id, &fresh_game(), plain_request()).await else {
+        let game = fresh_game();
+        ai_player.begin().await.unwrap();
+        let (_user_text, mut old) = ai_player
+            .send(&game, request_in(InputMode::Plain))
+            .await
+            .unwrap();
+        // A new Session supersedes the Send in flight and clears the lock.
+        ai_player.begin().await.unwrap();
+        while old.next().await.is_some() {}
+        // The new Session's InputMode is free: the superseded stream did not
+        // bind it.
+        let (_user_text, mut stream) = ai_player
+            .send(&game, request_in(InputMode::Emoji))
+            .await
+            .unwrap();
+        while stream.next().await.is_some() {}
+    }
+
+    #[test]
+    fn mode_guard_binds_only_the_current_generation() {
+        let lock = Arc::new(StdMutex::new(ModeLock {
+            mode: None,
+            generation: 7,
+        }));
+        // A guard from a superseded generation commits nothing...
+        ModeGuard {
+            lock: Arc::clone(&lock),
+            generation: 6,
+            mode: InputMode::Plain,
+        }
+        .commit();
+        assert_eq!(lock.lock().unwrap().mode, None);
+        // ...while the current generation's guard binds the mode.
+        ModeGuard {
+            lock: Arc::clone(&lock),
+            generation: 7,
+            mode: InputMode::Emoji,
+        }
+        .commit();
+        assert_eq!(lock.lock().unwrap().mode, Some(InputMode::Emoji));
+    }
+
+    #[tokio::test]
+    async fn end_forgets_the_live_session() {
+        let (ai_player, _mock) = ai_player_with_mock();
+        ai_player.begin().await.unwrap();
+        ai_player.end();
+        let Err(err) = ai_player.send(&fresh_game(), plain_request()).await else {
             panic!("expected an error");
         };
-        assert_eq!(err, SendError::UnknownSession);
+        assert_eq!(err, SendError::Agent(AgentSendError::NoSession));
     }
 
     #[tokio::test]
     async fn image_mode_sends_the_screenshot_turn() {
         let (ai_player, mock) = ai_player_with_mock();
-        let id = ai_player.create_session().await.unwrap();
+        ai_player.begin().await.unwrap();
         let req = SendRequest {
             input_mode: InputMode::Image,
             thinking_level: ThinkingLevel::Low,
             // Deliberately not valid base64: persist fails, and must not block.
             image_data_url: Some("data:image/png;base64,not-valid!!!".to_string()),
         };
-        let (user_text, mut stream) = ai_player.send(&id, &fresh_game(), req).await.unwrap();
+        let (user_text, mut stream) = ai_player.send(&fresh_game(), req).await.unwrap();
         // The image user turn is the screenshot alone, so the echo is empty;
         // the frontend renders its own captured copy in the player's bubble.
         assert_eq!(user_text, "");
@@ -1153,10 +1073,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_session_without_a_provider_is_a_config_error() {
+    async fn begin_without_a_provider_is_a_config_error() {
         let agent = Agent::new(ProviderSet::new());
-        let ai_player = AiPlayer::new(Arc::new(Mutex::new(agent)));
-        let err = ai_player.create_session().await.unwrap_err();
+        let ai_player = AiPlayer::new(Arc::new(agent));
+        let err = ai_player.begin().await.unwrap_err();
         assert_eq!(err.kind, ProviderErrorKind::Config);
     }
 
@@ -1206,19 +1126,14 @@ mod tests {
         );
         let mut agent = Agent::new(set);
         agent.set_model("m".to_string(), Some("flaky"));
-        let ai_player = AiPlayer::new(Arc::new(Mutex::new(agent)));
+        let ai_player = AiPlayer::new(Arc::new(agent));
 
-        let id = ai_player.create_session().await.unwrap();
-        let err = ai_player.create_session().await.unwrap_err();
+        ai_player.begin().await.unwrap();
+        let err = ai_player.begin().await.unwrap_err();
         assert_eq!(err.kind, ProviderErrorKind::Config);
-        // The failed load did not replace the live session: a Send to `id` is
-        // still accepted (not `UnknownSession`).
-        assert!(
-            ai_player
-                .send(&id, &fresh_game(), plain_request())
-                .await
-                .is_ok()
-        );
+        // The failed load did not replace the live session: a Send is still
+        // accepted (not `NoSession`).
+        assert!(ai_player.send(&fresh_game(), plain_request()).await.is_ok());
     }
 
     // --- mid-stream provider failure (no refraction) ---
@@ -1228,7 +1143,7 @@ mod tests {
         set.insert("mock".to_string(), Box::new(FailingProvider::new(error)));
         let mut agent = Agent::new(set);
         agent.set_model("m".to_string(), Some("mock"));
-        AiPlayer::new(Arc::new(Mutex::new(agent)))
+        AiPlayer::new(Arc::new(agent))
     }
 
     #[tokio::test]
@@ -1238,9 +1153,9 @@ mod tests {
             code: Some(429),
             message: "rate limited".into(),
         });
-        let id = ai_player.create_session().await.unwrap();
+        ai_player.begin().await.unwrap();
         let (_user_text, mut stream) = ai_player
-            .send(&id, &fresh_game(), plain_request())
+            .send(&fresh_game(), plain_request())
             .await
             .unwrap();
         // The AiPlayer does not refract: the provider's own kind, code and
@@ -1268,8 +1183,8 @@ mod tests {
         );
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Playing);
-        let id = ai_player.create_session().await.unwrap();
-        let (_user_text, mut stream) = ai_player.send(&id, &game, plain_request()).await.unwrap();
+        ai_player.begin().await.unwrap();
+        let (_user_text, mut stream) = ai_player.send(&game, plain_request()).await.unwrap();
         while stream.next().await.is_some() {}
         let req = mock.last_request().expect("mock recorded a request");
         // The user turn is the plain board alone. The two hidden Mines (0,1)

@@ -4,7 +4,8 @@
 //! streaming, single-turn aggregation (`complete_once`), and the multi-turn
 //! tool loop (`run_loop`).
 
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::task::Poll;
 
 use async_trait::async_trait;
@@ -18,11 +19,12 @@ use crate::protocol::{
 };
 use crate::provider::Provider;
 
-/// The reasoning depth the agent should use for a turn (issue #122). Owned by
-/// the `Agent` — the engine decides how deep to think — and translated onto the
-/// provider-agnostic `ChatRequest` fields (`reasoning_effort` / `thinking`).
-/// `Off` disables thinking mode; the rest set the effort. `low` is the default.
-/// It is also the `SendRequest.thinking_level` wire value.
+/// The reasoning depth the agent should use for one Send (issue #122),
+/// translated onto the provider-agnostic `ChatRequest` fields
+/// (`reasoning_effort` / `thinking`). It is per Send — the model is fixed at
+/// construction, the depth is not — and it is also the
+/// `SendRequest.thinking_level` wire value. `Off` disables thinking mode; the
+/// rest set the effort. `low` is the default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThinkingLevel {
@@ -40,36 +42,33 @@ impl Default for ThinkingLevel {
 
 /// Maps the agent's reasoning depth onto the provider-agnostic `ChatRequest`
 /// fields. `Off` disables thinking (no effort); the rest enable it at the
-/// matching effort; `None` leaves the provider default.
-fn thinking_to_wire(
-    level: Option<ThinkingLevel>,
-) -> (Option<ReasoningEffort>, Option<ThinkingToggle>) {
+/// matching effort.
+fn thinking_to_wire(level: ThinkingLevel) -> (Option<ReasoningEffort>, Option<ThinkingToggle>) {
     match level {
-        Some(ThinkingLevel::Off) => (
+        ThinkingLevel::Off => (
             None,
             Some(ThinkingToggle {
                 r#type: ThinkingMode::Disabled,
             }),
         ),
-        Some(ThinkingLevel::Low) => (
+        ThinkingLevel::Low => (
             Some(ReasoningEffort::Low),
             Some(ThinkingToggle {
                 r#type: ThinkingMode::Enabled,
             }),
         ),
-        Some(ThinkingLevel::High) => (
+        ThinkingLevel::High => (
             Some(ReasoningEffort::High),
             Some(ThinkingToggle {
                 r#type: ThinkingMode::Enabled,
             }),
         ),
-        Some(ThinkingLevel::Max) => (
+        ThinkingLevel::Max => (
             Some(ReasoningEffort::Max),
             Some(ThinkingToggle {
                 r#type: ThinkingMode::Enabled,
             }),
         ),
-        None => (None, None),
     }
 }
 
@@ -81,47 +80,37 @@ pub trait Tool: Send + Sync {
     async fn call(&self, args: serde_json::Value) -> Result<String, String>;
 }
 
-/// The Session a turn runs against, as a cheap cloneable handle: the
-/// messages live in one shared `Vec`, so every clone sees the same history.
-/// A turn lands through [`Session::commit`], which the agent calls only when a
-/// stream reaches `Done` — an interrupted, failed, or unread turn never
-/// enters here.
-#[derive(Clone, Default)]
-pub struct Session {
-    messages: Arc<Mutex<Vec<Message>>>,
+/// The live Session the `Agent` owns (ADR-0021), crate-internal: it never
+/// leaves the crate. It carries its own `seq` (the id the transport reads
+/// through the temporary [`Agent::session_id`]), the committed Turns, and the
+/// Send in flight against it. A Turn's messages land in `messages` only when a
+/// stream reaches `Done`; an interrupted, failed or unread stream adds none.
+struct Session {
+    seq: u64,
+    messages: Vec<Message>,
+    in_flight: Option<CancellationToken>,
 }
 
-impl Session {
-    /// An empty session; the first committed turn carries its own `System`.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// A snapshot of the committed messages.
-    pub fn messages(&self) -> Vec<Message> {
-        self.messages.lock().expect("session poisoned").clone()
-    }
-
-    /// Whether any turn has been committed yet.
-    pub fn is_empty(&self) -> bool {
-        self.messages.lock().expect("session poisoned").is_empty()
-    }
-
-    /// Appends a committed turn under one lock, so a turn lands atomically.
-    pub fn commit(&self, messages: Vec<Message>) {
-        self.messages
-            .lock()
-            .expect("session poisoned")
-            .extend(messages);
+/// Cancels a Session's Send in flight, if any. The Session is consumed: it is
+/// either the one being replaced by [`Agent::create_session`] or the one being
+/// ended by [`Agent::end_session`].
+fn cancel_in_flight(session: Option<Session>) {
+    if let Some(cancel) = session.and_then(|session| session.in_flight) {
+        cancel.cancel();
     }
 }
 
 /// Why a Send produced no Turn. The variant set is position-restricted:
-/// [`SendError::Interrupted`] appears only as a stream item and
-/// [`SendError::Provider`] appears both as the delivery-time `Err` and as a
-/// stream item. The compiler cannot enforce this, so it is documented here.
+/// [`SendError::NoSession`] and [`SendError::Busy`] appear only in `send`'s
+/// return value, [`SendError::Interrupted`] only as a stream item, and
+/// [`SendError::Provider`] in both. The compiler cannot enforce this, so it is
+/// documented here.
 #[derive(Debug, PartialEq)]
 pub enum SendError {
+    /// Refused before the exchange: there is no live Session to Send into.
+    NoSession,
+    /// Refused before the exchange: a Send is already in flight.
+    Busy,
     /// The caller interrupted the Send; it commits no Turn. It is an act, not
     /// a cause — a Provider failing mid-stream is a `Provider` failure.
     Interrupted,
@@ -182,58 +171,79 @@ impl ProviderSet {
     }
 }
 
-/// The runtime engine: holds a [`ProviderSet`], the current model/provider,
-/// and the registered [`Tool`]s.
+/// Ties one Send to the Session it started against: the guard commits the Turn
+/// on `Done` and frees the in-flight slot on `Drop`, but only while the live
+/// Session is still the one it captured (`seq` matches). A superseded Send —
+/// whose Session was replaced by `create_session` or ended by `end_session` —
+/// must touch neither.
+struct SendGuard {
+    live: Arc<StdMutex<Option<Session>>>,
+    seq: u64,
+}
+
+impl SendGuard {
+    /// Runs `f` against the live Session, but only while it is still the one
+    /// this Send captured (`seq` matches).
+    fn with_current_session(&self, f: impl FnOnce(&mut Session)) {
+        let mut live = self.live.lock().expect("session poisoned");
+        if let Some(session) = live.as_mut()
+            && session.seq == self.seq
+        {
+            f(session);
+        }
+    }
+
+    /// Appends the committed Turn under one lock, so it lands atomically.
+    fn commit(&self, turn: Vec<Message>) {
+        self.with_current_session(|session| session.messages.extend(turn));
+    }
+}
+
+impl Drop for SendGuard {
+    fn drop(&mut self) {
+        self.with_current_session(|session| session.in_flight = None);
+    }
+}
+
+/// The runtime engine: holds a [`ProviderSet`], the model/provider fixed at
+/// construction, the registered [`Tool`]s, and the live Session. Only the live
+/// Session is mutable after construction, so an `Agent` is `Sync` and a caller
+/// holds an `Arc<Agent>`.
 pub struct Agent {
     providers: ProviderSet,
     current_provider: String,
     current_model: String,
     tools: Vec<Arc<dyn Tool>>,
-    /// The reasoning depth for turns; `None` leaves the provider default.
-    /// Owned as the agent's semantic `ThinkingLevel` and translated onto the
-    /// `ChatRequest` fields in [`Agent::stream`] (issue #122).
-    thinking_level: Option<ThinkingLevel>,
+    /// At most one Session is live; `None` until [`Agent::create_session`] and
+    /// again after [`Agent::end_session`]. The `Arc` lets a Send's guard own a
+    /// handle to the slot without borrowing the Agent.
+    live: Arc<StdMutex<Option<Session>>>,
+    /// The counter behind the Session `seq` (and the temporary `s{n}` id).
+    next_seq: AtomicU64,
 }
 
 impl Agent {
     /// Builds an `Agent` from a [`ProviderSet`]. The model/provider must be
-    /// chosen with [`Agent::set_model`] before a turn can run.
+    /// chosen with [`Agent::set_model`] before a Session can be created.
     pub fn new(providers: ProviderSet) -> Self {
         Self {
             providers,
             current_provider: String::new(),
             current_model: String::new(),
             tools: Vec::new(),
-            thinking_level: None,
+            live: Arc::new(StdMutex::new(None)),
+            next_seq: AtomicU64::new(0),
         }
     }
 
     /// Sets the current model, optionally switching the provider. A `None`
-    /// provider keeps whatever is currently selected.
+    /// provider keeps whatever is currently selected. Construction-time: the
+    /// model is fixed once a caller holds the `Agent` behind an `Arc`.
     pub fn set_model(&mut self, model: String, provider: Option<&str>) {
         self.current_model = model;
         if let Some(provider) = provider {
             self.current_provider = provider.to_string();
         }
-    }
-
-    /// Sets the reasoning depth for subsequent [`Agent::stream`] calls; `None`
-    /// leaves the provider default. Mirrors [`Agent::set_model`]: the `AiPlayer`
-    /// locks the agent and sets it once per request.
-    pub fn set_thinking_level(&mut self, level: Option<ThinkingLevel>) {
-        self.thinking_level = level;
-    }
-
-    /// The currently selected provider name.
-    #[allow(dead_code)]
-    pub fn current_provider(&self) -> &str {
-        &self.current_provider
-    }
-
-    /// The currently selected model name (fills `ChatRequest.model`).
-    #[allow(dead_code)]
-    pub fn current_model(&self) -> &str {
-        &self.current_model
     }
 
     /// Registers a [`Tool`] for `run_loop` to call. Consumed by the adapter
@@ -245,10 +255,10 @@ impl Agent {
 
     /// Loads the current provider/model without starting a Turn: a missing or
     /// unknown provider is a `Config` [`ProviderError`], as is a provider-side
-    /// config failure; a transport failure is an `Upstream` one.
-    /// `AiPlayer::create_session` calls this so an unconfigured AI fails before
+    /// config failure; a transport failure is an `Upstream` one. Crate-internal:
+    /// [`Agent::create_session`] calls this so an unconfigured AI fails before
     /// the first Send.
-    pub async fn load(&self) -> Result<(), ProviderError> {
+    async fn load(&self) -> Result<(), ProviderError> {
         let provider = self
             .providers
             .get(&self.current_provider)
@@ -256,28 +266,100 @@ impl Agent {
         provider.load(&self.current_model).await
     }
 
-    /// Starts a chat stream for one Reply against the current provider: the
-    /// model sees the session's committed messages plus `pending` (the first
-    /// Reply carries its `System`). The stream maps every `ProviderError` to
-    /// [`SendError::Provider`] (the cause intact) and reports a fired `cancel`
-    /// as [`SendError::Interrupted`]. No provider is a `Config`
-    /// [`SendError::Provider`] formed here.
-    ///
-    /// The Reply lands in `session` only when the stream reaches `Done`, as
-    /// `pending` + the assistant message, under one lock. An
-    /// interrupt, an error, or dropping the stream unread commits nothing.
-    pub async fn stream(
+    /// Loads the runtime, then replaces the live Session with an empty one,
+    /// cancelling the previous Send. A Load failure leaves the live Session
+    /// untouched. The new Session's id is readable through the temporary
+    /// [`Agent::session_id`].
+    pub async fn create_session(&self) -> Result<(), ProviderError> {
+        self.load().await?;
+        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+        let mut live = self.live.lock().expect("session poisoned");
+        cancel_in_flight(live.take());
+        *live = Some(Session {
+            seq,
+            messages: Vec::new(),
+            in_flight: None,
+        });
+        Ok(())
+    }
+
+    /// Ends the live Session: cancels its in-flight Send and forgets it. A
+    /// no-op when there is no Session.
+    pub fn end_session(&self) {
+        cancel_in_flight(self.live.lock().expect("session poisoned").take());
+    }
+
+    /// Cancels the Send in flight, if any; `false` when none is in flight (or
+    /// there is no live Session). The stream frees the slot itself, so the
+    /// Send is free as soon as the cancelled task notices.
+    pub fn interrupt(&self) -> bool {
+        let live = self.live.lock().expect("session poisoned");
+        match live.as_ref().and_then(|session| session.in_flight.as_ref()) {
+            Some(cancel) => {
+                cancel.cancel();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Whether the live Session holds a committed Turn yet; `false` when there
+    /// is no live Session.
+    pub fn has_committed_turn(&self) -> bool {
+        self.live
+            .lock()
+            .expect("session poisoned")
+            .as_ref()
+            .is_some_and(|session| !session.messages.is_empty())
+    }
+
+    /// The live Session's own id, or `None` when there is no live Session.
+    /// Temporary (#145): it keeps the transport's `session_id` wire field
+    /// working until #146 drops the id from the wire. #146 deletes this.
+    pub fn session_id(&self) -> Option<String> {
+        self.live
+            .lock()
+            .expect("session poisoned")
+            .as_ref()
+            .map(|session| format!("s{}", session.seq))
+    }
+
+    /// One Send: appends `pending` to the live Session, streams the reply, and
+    /// commits the Turn when the stream reaches `Done`. `NoSession` and `Busy`
+    /// refuse before the exchange; an interrupted, failed or unread stream
+    /// commits nothing. The model is fixed at construction, while `level` is
+    /// per Send. One cancel token spans the whole Send.
+    pub async fn send(
         &self,
-        session: &Session,
         pending: Vec<Message>,
-        cancel: CancellationToken,
+        level: ThinkingLevel,
     ) -> Result<impl Stream<Item = Result<StreamChunk, SendError>> + Send + use<>, SendError> {
+        // Admission under one lock: a Send needs a live Session and must be
+        // the only one in flight. Registering the cancel token here means a
+        // concurrent `interrupt` / `create_session` / `end_session` finds it.
+        let (messages, seq, cancel) = {
+            let mut live = self.live.lock().expect("session poisoned");
+            let session = live.as_mut().ok_or(SendError::NoSession)?;
+            if session.in_flight.is_some() {
+                return Err(SendError::Busy);
+            }
+            let cancel = CancellationToken::new();
+            session.in_flight = Some(cancel.clone());
+            (session.messages.clone(), session.seq, cancel)
+        };
+
+        // From here the guard owns the slot: an early return (no provider, a
+        // failed exchange) drops it, which frees `in_flight`.
+        let guard = SendGuard {
+            live: Arc::clone(&self.live),
+            seq,
+        };
         let provider = self
             .providers
             .get(&self.current_provider)
             .ok_or_else(|| SendError::Provider(no_provider_error()))?;
-        let (reasoning_effort, thinking) = thinking_to_wire(self.thinking_level);
-        let mut messages = session.messages();
+        let (reasoning_effort, thinking) = thinking_to_wire(level);
+        let mut messages = messages;
         messages.extend(pending.iter().cloned());
         let req = ChatRequest {
             messages,
@@ -291,9 +373,12 @@ impl Agent {
             .stream_chat(req, cancel.clone())
             .await
             .map_err(SendError::Provider)?;
-        let canceller = cancel.clone();
+        // The wrapper maps every `ProviderError` to [`SendError::Provider`]
+        // (the cause intact) and reports a fired `cancel` as
+        // [`SendError::Interrupted`]. The Turn lands through `guard` only on
+        // `Done`, as `pending` + the assistant message, under one lock.
+        let canceller = cancel;
         let mut inner = inner;
-        let committed = session.clone();
         let mut pending = Some(pending);
         let mut content = String::new();
         let mut reasoning: Option<String> = None;
@@ -314,7 +399,7 @@ impl Agent {
                             reasoning_content: reasoning.take(),
                             tool_calls: None,
                         });
-                        committed.commit(turn);
+                        guard.commit(turn);
                     }
                     Poll::Ready(Some(Ok(StreamChunk::Done)))
                 }
@@ -333,16 +418,15 @@ impl Agent {
         }))
     }
 
-    /// Runs a single streaming Reply and aggregates it into one
-    /// [`Message::Assistant`]. The Reply lands in `session` (see
-    /// [`Agent::stream`]); it is returned too, for inspection.
+    /// Runs one [`Agent::send`] and aggregates it into one
+    /// [`Message::Assistant`]. The Turn lands in the live Session; the reply
+    /// is returned too, for inspection.
     pub async fn complete_once(
         &self,
-        session: &Session,
         pending: Vec<Message>,
-        cancel: CancellationToken,
+        level: ThinkingLevel,
     ) -> Result<Message, SendError> {
-        let mut stream = self.stream(session, pending, cancel).await?;
+        let mut stream = self.send(pending, level).await?;
         let mut content = String::new();
         let mut reasoning = None;
         while let Some(chunk) = stream.next().await {
@@ -363,18 +447,18 @@ impl Agent {
 
     /// The multi-Reply tool loop: stream one Reply; if it requests tool calls,
     /// execute them and continue with the results as `pending`, until a Reply
-    /// has no calls. Each Reply lands in `session` via [`Agent::stream`].
-    /// A skeleton in this ticket; exercised by the adapter (issue #115).
+    /// has no calls. Each Reply lands in the live Session via
+    /// [`Agent::complete_once`]. A skeleton in this ticket; exercised by the
+    /// adapter (issue #115).
     #[allow(dead_code)]
     pub async fn run_loop(
         &self,
-        session: &Session,
         pending: Vec<Message>,
-        cancel: CancellationToken,
+        level: ThinkingLevel,
     ) -> Result<Message, SendError> {
         let mut pending = pending;
         loop {
-            let reply = self.complete_once(session, pending, cancel.clone()).await?;
+            let reply = self.complete_once(pending, level).await?;
             let tool_calls = match &reply {
                 Message::Assistant {
                     tool_calls: Some(calls),
@@ -445,12 +529,23 @@ mod tests {
         vec![system_message("sys"), user_message(text)]
     }
 
+    /// The committed Turns of the live Session (a crate-internal read).
+    fn committed(agent: &Agent) -> Vec<Message> {
+        agent
+            .live
+            .lock()
+            .expect("session poisoned")
+            .as_ref()
+            .map(|session| session.messages.clone())
+            .unwrap_or_default()
+    }
+
     #[tokio::test]
-    async fn complete_once_with_mock_returns_assistant_reply() {
+    async fn complete_once_with_mock_returns_assistant_reply_and_commits_the_turn() {
         let (agent, mock) = agent_with_mock("mock-model", "mock");
-        let session = Session::new();
+        agent.create_session().await.unwrap();
         let reply = agent
-            .complete_once(&session, first_turn("hello"), CancellationToken::new())
+            .complete_once(first_turn("hello"), ThinkingLevel::Low)
             .await
             .unwrap();
         assert_eq!(
@@ -463,7 +558,7 @@ mod tests {
         );
 
         // The request that reached the provider matches the contract: model
-        // filled by `current_model`, `stream` on, roles in order.
+        // filled by `set_model`, `stream` on, roles in order.
         let req = mock.last_request().expect("mock recorded a request");
         assert_eq!(req.model, "mock-model");
         assert!(req.stream);
@@ -480,9 +575,9 @@ mod tests {
                 content: vec![ContentBlock::Text("hello".into())],
             }
         );
-        // The turn landed in the session: the pending pair plus the reply.
+        // The Turn landed in the live Session: the pending pair plus the reply.
         assert_eq!(
-            session.messages(),
+            committed(&agent),
             vec![
                 system_message("sys"),
                 user_message("hello"),
@@ -495,36 +590,124 @@ mod tests {
         );
     }
 
-    #[test]
-    fn session_commit_appends_messages() {
-        let session = Session::new();
-        assert!(session.is_empty());
-        session.commit(vec![system_message("sys")]);
-        assert!(!session.is_empty());
-        assert_eq!(session.messages(), vec![system_message("sys")]);
-        session.commit(vec![user_message("hi")]);
-        assert_eq!(session.messages().len(), 2);
+    #[tokio::test]
+    async fn has_committed_turn_is_false_fresh_and_true_after_a_turn() {
+        let (agent, _mock) = agent_with_mock("m", "mock");
+        agent.create_session().await.unwrap();
+        assert!(!agent.has_committed_turn());
+        let mut stream = agent
+            .send(first_turn("hi"), ThinkingLevel::Low)
+            .await
+            .unwrap();
+        while stream.next().await.is_some() {}
+        assert!(agent.has_committed_turn());
     }
 
-    #[test]
-    fn session_is_a_shared_handle_across_clones() {
-        let session = Session::new();
-        let other = session.clone();
-        other.commit(vec![system_message("sys")]);
-        assert_eq!(session.messages(), vec![system_message("sys")]);
+    #[tokio::test]
+    async fn send_without_a_live_session_is_no_session() {
+        let agent = Agent::new(ProviderSet::new());
+        let Err(err) = agent.send(first_turn("hi"), ThinkingLevel::Low).await else {
+            panic!("expected a refusal");
+        };
+        assert_eq!(err, SendError::NoSession);
+    }
+
+    #[tokio::test]
+    async fn a_second_concurrent_send_is_busy() {
+        let (agent, _mock) = agent_with_mock("m", "mock");
+        agent.create_session().await.unwrap();
+        let first = agent
+            .send(first_turn("hi"), ThinkingLevel::Low)
+            .await
+            .unwrap();
+        let Err(err) = agent.send(first_turn("hi"), ThinkingLevel::Low).await else {
+            panic!("expected a refusal");
+        };
+        assert_eq!(err, SendError::Busy);
+        drop(first);
+    }
+
+    #[tokio::test]
+    async fn create_session_replaces_the_session_and_cancels_the_previous_send() {
+        let (agent, _mock) = agent_with_mock("m", "mock");
+        agent.create_session().await.unwrap();
+        let mut stream = agent
+            .send(first_turn("hi"), ThinkingLevel::Low)
+            .await
+            .unwrap();
+        agent.create_session().await.unwrap();
+        // The displaced Send reports the caller's interrupt on its next poll…
+        assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
+        assert_eq!(stream.next().await, None);
+        // …and the replacement carries no Turn.
+        assert!(!agent.has_committed_turn());
+    }
+
+    #[tokio::test]
+    async fn end_session_cancels_the_send_in_flight() {
+        let (agent, _mock) = agent_with_mock("m", "mock");
+        agent.create_session().await.unwrap();
+        let mut stream = agent
+            .send(first_turn("hi"), ThinkingLevel::Low)
+            .await
+            .unwrap();
+        agent.end_session();
+        assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
+        assert_eq!(stream.next().await, None);
+        assert!(!agent.has_committed_turn());
+    }
+
+    #[tokio::test]
+    async fn a_consumer_without_a_session_runs_the_full_lifecycle() {
+        // The goal: create → send → stream → interrupt → end, never holding a
+        // `Session`.
+        let (agent, _mock) = agent_with_mock("m", "mock");
+        agent.create_session().await.unwrap();
+        assert!(!agent.has_committed_turn());
+        let mut stream = agent
+            .send(first_turn("hi"), ThinkingLevel::Low)
+            .await
+            .unwrap();
+        assert_eq!(
+            stream.next().await,
+            Some(Ok(StreamChunk::ReasoningDelta("Mock reasoning.".into())))
+        );
+        assert!(agent.interrupt());
+        assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
+        assert_eq!(stream.next().await, None);
+        assert!(!agent.has_committed_turn());
+        agent.end_session();
+        let Err(err) = agent.send(first_turn("hi"), ThinkingLevel::Low).await else {
+            panic!("expected a refusal");
+        };
+        assert_eq!(err, SendError::NoSession);
+    }
+
+    #[tokio::test]
+    async fn interrupt_reports_interrupted_once_then_ends() {
+        let (agent, _mock) = agent_with_mock("m", "mock");
+        agent.create_session().await.unwrap();
+        let mut stream = agent
+            .send(first_turn("hi"), ThinkingLevel::Low)
+            .await
+            .unwrap();
+        assert!(agent.interrupt());
+        // The wrapper reports `Interrupted` once, then ends.
+        assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
+        assert_eq!(stream.next().await, None);
     }
 
     #[tokio::test]
     async fn stream_commits_pending_and_reply_on_done() {
         let (agent, _mock) = agent_with_mock("m", "mock");
-        let session = Session::new();
+        agent.create_session().await.unwrap();
         let mut stream = agent
-            .stream(&session, first_turn("hi"), CancellationToken::new())
+            .send(first_turn("hi"), ThinkingLevel::Low)
             .await
             .unwrap();
         while stream.next().await.is_some() {}
         assert_eq!(
-            session.messages(),
+            committed(&agent),
             vec![
                 system_message("sys"),
                 user_message("hi"),
@@ -540,31 +723,32 @@ mod tests {
     #[tokio::test]
     async fn stream_commits_nothing_when_dropped_before_done() {
         let (agent, _mock) = agent_with_mock("m", "mock");
-        let session = Session::new();
+        agent.create_session().await.unwrap();
         let mut stream = agent
-            .stream(&session, first_turn("hi"), CancellationToken::new())
+            .send(first_turn("hi"), ThinkingLevel::Low)
             .await
             .unwrap();
         // Read the reasoning delta only, then drop the stream mid-turn.
         assert!(stream.next().await.is_some());
         drop(stream);
-        assert!(session.is_empty());
+        assert!(!agent.has_committed_turn());
+        // Dropping the stream freed the in-flight slot.
+        assert!(!agent.interrupt());
     }
 
     #[tokio::test]
     async fn stream_commits_nothing_on_interrupt() {
         let (agent, _mock) = agent_with_mock("m", "mock");
-        let session = Session::new();
-        let cancel = CancellationToken::new();
+        agent.create_session().await.unwrap();
         let mut stream = agent
-            .stream(&session, first_turn("hi"), cancel.clone())
+            .send(first_turn("hi"), ThinkingLevel::Low)
             .await
             .unwrap();
         assert!(stream.next().await.is_some());
-        cancel.cancel();
+        assert!(agent.interrupt());
         assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
         assert_eq!(stream.next().await, None);
-        assert!(session.is_empty());
+        assert!(!agent.has_committed_turn());
     }
 
     #[tokio::test]
@@ -593,9 +777,9 @@ mod tests {
         );
         let mut agent = Agent::new(set);
         agent.set_model("m".to_string(), Some("mock"));
-        let session = Session::new();
+        agent.create_session().await.unwrap();
         let mut stream = agent
-            .stream(&session, first_turn("hi"), CancellationToken::new())
+            .send(first_turn("hi"), ThinkingLevel::Low)
             .await
             .unwrap();
         // The mid-stream failure keeps the provider's own cause intact, not a
@@ -608,15 +792,15 @@ mod tests {
             }
             other => panic!("expected the provider error intact, got {other:?}"),
         }
-        assert!(session.is_empty());
+        assert!(!agent.has_committed_turn());
     }
 
     #[tokio::test]
     async fn stream_yields_reasoning_content_then_done() {
         let (agent, _mock) = agent_with_mock("m", "mock");
-        let session = Session::new();
+        agent.create_session().await.unwrap();
         let mut stream = agent
-            .stream(&session, first_turn("hi"), CancellationToken::new())
+            .send(first_turn("hi"), ThinkingLevel::Low)
             .await
             .unwrap();
         assert_eq!(
@@ -632,53 +816,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_token_reports_interrupted() {
-        let (agent, _mock) = agent_with_mock("m", "mock");
-        let session = Session::new();
-        let cancel = CancellationToken::new();
-        cancel.cancel();
-        let mut stream = agent
-            .stream(&session, first_turn("hi"), cancel)
-            .await
-            .unwrap();
-        // The wrapper reports `Interrupted` once, then ends.
-        assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
-        assert_eq!(stream.next().await, None);
+    async fn create_session_without_a_provider_is_a_config_error() {
+        let agent = Agent::new(ProviderSet::new());
+        let err = agent.create_session().await.unwrap_err();
+        assert_eq!(err.kind, ProviderErrorKind::Config);
+        assert!(!agent.has_committed_turn());
     }
 
     #[tokio::test]
-    async fn unknown_provider_is_a_config_provider_error() {
-        let agent = Agent::new(ProviderSet::new());
-        let session = Session::new();
-        let err = agent
-            .complete_once(&session, first_turn("hi"), CancellationToken::new())
+    async fn set_model_selects_the_model_the_request_carries() {
+        let (mut agent, mock) = agent_with_mock("first", "mock");
+        agent.set_model("second".into(), None);
+        agent.create_session().await.unwrap();
+        let mut stream = agent
+            .send(first_turn("hi"), ThinkingLevel::Low)
             .await
-            .unwrap_err();
-        assert_eq!(err, SendError::Provider(no_provider_error()));
-        // A runtime failure commits nothing.
-        assert!(session.is_empty());
-    }
-
-    #[test]
-    fn set_model_updates_model_and_provider() {
-        let mut agent = Agent::new(ProviderSet::new());
-        assert_eq!(agent.current_model(), "");
-        assert_eq!(agent.current_provider(), "");
-        agent.set_model("deepseek".into(), Some("ds"));
-        assert_eq!(agent.current_model(), "deepseek");
-        assert_eq!(agent.current_provider(), "ds");
-        // A `None` provider keeps the previous selection.
-        agent.set_model("elsewhere".into(), None);
-        assert_eq!(agent.current_model(), "elsewhere");
-        assert_eq!(agent.current_provider(), "ds");
+            .unwrap();
+        while stream.next().await.is_some() {}
+        assert_eq!(mock.last_request().unwrap().model, "second");
     }
 
     #[tokio::test]
     async fn run_loop_returns_reply_when_no_tool_calls() {
         let (agent, _mock) = agent_with_mock("m", "mock");
-        let session = Session::new();
+        agent.create_session().await.unwrap();
         let reply = agent
-            .run_loop(&session, first_turn("hi"), CancellationToken::new())
+            .run_loop(first_turn("hi"), ThinkingLevel::Low)
             .await
             .unwrap();
         assert_eq!(
@@ -706,12 +869,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_thinking_level_threads_into_the_request() {
-        let (mut agent, mock) = agent_with_mock("m", "mock");
-        agent.set_thinking_level(Some(ThinkingLevel::Low));
-        let session = Session::new();
+    async fn thinking_level_threads_into_the_request() {
+        let (agent, mock) = agent_with_mock("m", "mock");
+        agent.create_session().await.unwrap();
         let mut stream = agent
-            .stream(&session, first_turn("hi"), CancellationToken::new())
+            .send(first_turn("hi"), ThinkingLevel::Low)
             .await
             .unwrap();
         while stream.next().await.is_some() {}
@@ -723,18 +885,14 @@ mod tests {
                 r#type: ThinkingMode::Enabled
             })
         );
-        // The default agent carries no level, so the provider sees None.
-        let (agent, _mock) = agent_with_mock("m", "mock");
-        assert!(agent.thinking_level.is_none());
     }
 
     #[tokio::test]
     async fn off_disables_thinking_with_no_effort() {
-        let (mut agent, mock) = agent_with_mock("m", "mock");
-        agent.set_thinking_level(Some(ThinkingLevel::Off));
-        let session = Session::new();
+        let (agent, mock) = agent_with_mock("m", "mock");
+        agent.create_session().await.unwrap();
         let mut stream = agent
-            .stream(&session, first_turn("hi"), CancellationToken::new())
+            .send(first_turn("hi"), ThinkingLevel::Off)
             .await
             .unwrap();
         while stream.next().await.is_some() {}

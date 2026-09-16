@@ -1,15 +1,15 @@
 //! SSE transport for the AiPlayer's `/ai/...` routes (issue #117, ADR-0013).
 //!
-//! A thin transport layer over the `ai_player::AiPlayer` seam: it creates the
-//! backend-owned AI Session (`POST /ai/session`), appends one board to it and
-//! forwards the reply as an SSE stream terminated by `[DONE]`
-//! (`POST /ai/session/{id}/send`), and cancels the in-flight Send
-//! (`POST /ai/session/{id}/interrupt`).
+//! A thin transport layer over the `ai_player::AiPlayer` seam: it begins an AI
+//! Session (`POST /ai/session`), appends one board to it and forwards the reply
+//! as an SSE stream terminated by `[DONE]` (`POST /ai/session/{id}/send`), and
+//! cancels the in-flight Send (`POST /ai/session/{id}/interrupt`).
 //!
 //! This module never reaches into `ai_player` internals and never writes to
 //! the `Game` — it only takes a player-visible board snapshot (cloned under a
-//! short lock) to hand to `AiPlayer::send`. The session itself (its id, its
-//! messages, its cancel token) is owned by the `AiPlayer`.
+//! short lock) to hand to `AiPlayer::send`. The Session (its id, its messages,
+//! its cancel token) is owned by the `Agent` behind the `AiPlayer`; the `{id}`
+//! in the two paths is ignored until #146 drops it from the wire.
 
 use std::sync::Arc;
 
@@ -90,17 +90,18 @@ pub(crate) fn ai_routes(state: Arc<AppState>) -> Router {
 /// `ProviderError` body as a Send's Prepare failure, so the frontend alerts it
 /// before any Send.
 async fn handle_new_session(State(state): State<Arc<AppState>>) -> Response {
-    match state.ai_player.create_session().await {
+    match state.ai_player.begin().await {
         Ok(session_id) => Json(NewSessionDto { session_id }).into_response(),
         Err(pe) => provider_error_response(pe),
     }
 }
 
-/// `POST /ai/session/{id}/send`: appends the current board to the AI Session `{id}`
-/// and downstreams the reply as SSE.
+/// `POST /ai/session/{id}/send`: appends the current board to the live AI
+/// Session and downstreams the reply as SSE. The path `{id}` is ignored until
+/// #146 drops it.
 async fn handle_send(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    Path(_id): Path<String>,
     Json(req): Json<SendRequest>,
 ) -> Response {
     // An image Send must carry the screenshot it describes; reject it before
@@ -119,7 +120,7 @@ async fn handle_send(
     // is built from the visible-only `BoardView`), so privacy is preserved.
     let game = state.game.lock().expect("game state poisoned").clone();
 
-    match state.ai_player.send(&id, &game, req).await {
+    match state.ai_player.send(&game, req).await {
         Ok((user_text, stream)) => {
             // Emit the player's message first, then the agent's stream (issue
             // #124). `once` and `map(to_event)` share the same item type
@@ -133,14 +134,14 @@ async fn handle_send(
     }
 }
 
-/// `POST /ai/session/{id}/interrupt`: cancels the in-flight Send of `{id}`. The
-/// SSE connection stays open; the `{kind:"interrupted"}` event is emitted on
-/// that stream.
+/// `POST /ai/session/{id}/interrupt`: cancels the in-flight Send. The SSE
+/// connection stays open; the `{kind:"interrupted"}` event is emitted on that
+/// stream. The path `{id}` is ignored until #146 drops it.
 async fn handle_user_interrupt(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    Path(_id): Path<String>,
 ) -> Response {
-    if state.ai_player.interrupt(&id) {
+    if state.ai_player.interrupt() {
         StatusCode::NO_CONTENT.into_response()
     } else {
         StatusCode::NOT_FOUND.into_response()
@@ -163,27 +164,36 @@ fn to_event(item: Result<StreamChunk, AgentSendError>) -> Result<Event, axum::Er
         Err(AgentSendError::Provider(error)) => {
             Event::default().json_data(ReplyEvent::ProviderError { error })?
         }
+        // `NoSession` and `Busy` are position-restricted to `send`'s return
+        // value (see `agent::SendError`), so the wrapper's stream can never
+        // yield them. Reaching this arm is a broken invariant, and inventing a
+        // `ProviderError` here would report a failure that did not happen
+        // (ADR-0022), so fail loudly instead.
+        Err(AgentSendError::NoSession | AgentSendError::Busy) => {
+            unreachable!("a refusal cannot be a reply-stream item")
+        }
     };
     Ok(event)
 }
 
-/// Maps a [`SendError`] to a status + body. The AiPlayer's refusals carry
-/// `{"error": "..."}` — the status code is the machine signal. A Provider
+/// Maps a [`SendError`] to a status + body. The AiPlayer's own refusal is
+/// `ModeMismatch`; the agent's `NoSession` / `Busy` refusals carry
+/// `{"error": "..."}` (the status code is the machine signal). A Provider
 /// failure keeps the `{kind,code,message}` body; an Interrupt at delivery (a
 /// defensive branch: a cancel before the stream begins surfaces *through* the
 /// stream) is a refusal too.
 fn send_error_response(err: SendError) -> Response {
     match err {
-        SendError::UnknownSession => {
-            error_response(StatusCode::NOT_FOUND, "unknown AI session".to_string())
-        }
-        SendError::Busy => error_response(
-            StatusCode::CONFLICT,
-            "a send is already in flight for this AI session".to_string(),
-        ),
         SendError::ModeMismatch { bound, requested } => error_response(
             StatusCode::BAD_REQUEST,
             format!("input mode is locked to {bound:?}, requested {requested:?}"),
+        ),
+        SendError::Agent(AgentSendError::NoSession) => {
+            error_response(StatusCode::NOT_FOUND, "unknown AI session".to_string())
+        }
+        SendError::Agent(AgentSendError::Busy) => error_response(
+            StatusCode::CONFLICT,
+            "a send is already in flight for this AI session".to_string(),
         ),
         SendError::Agent(AgentSendError::Provider(error)) => provider_error_response(error),
         // `Interrupted` is position-restricted to the stream (see
@@ -230,8 +240,8 @@ mod tests {
     use game::{Difficulty, Features, Game, GameConfig};
     use std::sync::Mutex;
 
-    // The `send` future is held across a `tokio::sync::Mutex` guard over a
-    // network await; this pins that it stays `Send` so axum accepts the route.
+    // The `send` future is held across a network await; this pins that it stays
+    // `Send` so axum accepts the route.
     fn require_send<T: Send>(_: T) {}
 
     fn app_state() -> (Arc<AppState>, MockProvider) {
@@ -245,7 +255,7 @@ mod tests {
         set.insert("mock".to_string(), Box::new(mock.clone()));
         let mut agent = Agent::new(set);
         agent.set_model("mock-model".to_string(), Some("mock"));
-        let ai_player = AiPlayer::new(Arc::new(tokio::sync::Mutex::new(agent)));
+        let ai_player = AiPlayer::new(Arc::new(agent));
         (Arc::new(AppState { game, ai_player }), mock)
     }
 
@@ -276,7 +286,7 @@ mod tests {
         set.insert("failing".to_string(), provider);
         let mut agent = Agent::new(set);
         agent.set_model("m".to_string(), Some("failing"));
-        let ai_player = AiPlayer::new(Arc::new(tokio::sync::Mutex::new(agent)));
+        let ai_player = AiPlayer::new(Arc::new(agent));
         Arc::new(AppState { game, ai_player })
     }
 
@@ -300,9 +310,9 @@ mod tests {
     #[tokio::test]
     async fn send_future_is_send() {
         let (state, _mock) = app_state();
-        let id = state.ai_player.create_session().await.unwrap();
+        state.ai_player.begin().await.unwrap();
         let game = state.game.lock().unwrap().clone();
-        let fut = state.ai_player.send(&id, &game, plain_request());
+        let fut = state.ai_player.send(&game, plain_request());
         require_send(fut);
     }
 
@@ -371,7 +381,7 @@ mod tests {
     #[tokio::test]
     async fn new_session_without_a_provider_is_503_config() {
         let agent = Agent::new(ProviderSet::new());
-        let ai_player = AiPlayer::new(Arc::new(tokio::sync::Mutex::new(agent)));
+        let ai_player = AiPlayer::new(Arc::new(agent));
         let state = Arc::new(AppState {
             game: Arc::new(Mutex::new(Game::with_config(GameConfig::new(
                 Difficulty::Beginner,
@@ -445,7 +455,7 @@ mod tests {
     #[tokio::test]
     async fn send_streams_reasoning_content_and_done() {
         let (state, _mock) = app_state();
-        let id = state.ai_player.create_session().await.unwrap();
+        let id = state.ai_player.begin().await.unwrap();
         let resp = handle_send(
             State(state.clone()),
             Path(id.clone()),
@@ -464,7 +474,7 @@ mod tests {
         assert!(body.contains("\"kind\":\"user\""));
         assert!(body.contains("data: [DONE]"));
         // The reply ended, so the session's Send slot is free again.
-        assert!(!state.ai_player.interrupt(&id));
+        assert!(!state.ai_player.interrupt());
     }
 
     #[tokio::test]
@@ -474,7 +484,7 @@ mod tests {
             code: Some(429),
             message: "rate limited".into(),
         })));
-        let id = state.ai_player.create_session().await.unwrap();
+        let id = state.ai_player.begin().await.unwrap();
         let resp = handle_send(
             State(state.clone()),
             Path(id.clone()),
@@ -494,7 +504,7 @@ mod tests {
     #[tokio::test]
     async fn a_second_send_while_in_flight_is_409() {
         let (state, _mock) = app_state();
-        let id = state.ai_player.create_session().await.unwrap();
+        let id = state.ai_player.begin().await.unwrap();
         let first = handle_send(
             State(state.clone()),
             Path(id.clone()),
@@ -516,7 +526,7 @@ mod tests {
     #[tokio::test]
     async fn a_mode_switch_after_the_first_commit_is_400() {
         let (state, _mock) = app_state();
-        let id = state.ai_player.create_session().await.unwrap();
+        let id = state.ai_player.begin().await.unwrap();
         let first = handle_send(
             State(state.clone()),
             Path(id.clone()),
@@ -537,7 +547,7 @@ mod tests {
     #[tokio::test]
     async fn image_mode_without_a_data_url_is_400() {
         let (state, _mock) = app_state();
-        let id = state.ai_player.create_session().await.unwrap();
+        let id = state.ai_player.begin().await.unwrap();
         let resp = handle_send(
             State(state.clone()),
             Path(id.clone()),
@@ -546,7 +556,7 @@ mod tests {
         .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         // The Send never started, so there is nothing to interrupt.
-        assert!(!state.ai_player.interrupt(&id));
+        assert!(!state.ai_player.interrupt());
     }
 
     // --- POST /ai/session/{id}/interrupt ---
@@ -554,7 +564,7 @@ mod tests {
     #[tokio::test]
     async fn interrupt_cancels_and_drives_the_sse_event() {
         let (state, _mock) = app_state();
-        let id = state.ai_player.create_session().await.unwrap();
+        let id = state.ai_player.begin().await.unwrap();
         let send_resp = handle_send(
             State(state.clone()),
             Path(id.clone()),
@@ -563,7 +573,7 @@ mod tests {
         .await;
         assert_eq!(send_resp.status(), StatusCode::OK);
 
-        // The interrupt route cancels the same session's in-flight Send.
+        // The interrupt route cancels the in-flight Send.
         let ir_resp = handle_user_interrupt(State(state.clone()), Path(id.clone())).await;
         assert_eq!(ir_resp.status(), StatusCode::NO_CONTENT);
 
@@ -571,7 +581,7 @@ mod tests {
         let body = body_as_string(send_resp).await;
         assert!(body.contains("{\"kind\":\"interrupted\"}"));
         assert!(!body.contains("[DONE]"));
-        assert!(!state.ai_player.interrupt(&id));
+        assert!(!state.ai_player.interrupt());
     }
 
     #[tokio::test]
