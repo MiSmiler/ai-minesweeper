@@ -81,10 +81,10 @@ pub trait Tool: Send + Sync {
 }
 
 /// The live Session the `Agent` owns (ADR-0021), crate-internal: it never
-/// leaves the crate. It carries its own `seq` (the id the transport reads
-/// through the temporary [`Agent::session_id`]), the committed Turns, and the
-/// Send in flight against it. A Turn's messages land in `messages` only when a
-/// stream reaches `Done`; an interrupted, failed or unread stream adds none.
+/// leaves the crate. It carries its own `seq`, the committed Turns, and
+/// the Send in flight against it. A Turn's messages land in `messages` only
+/// when a stream reaches `Done`; an interrupted, failed or unread stream adds
+/// none.
 struct Session {
     seq: u64,
     messages: Vec<Message>,
@@ -218,7 +218,7 @@ pub struct Agent {
     /// again after [`Agent::end_session`]. The `Arc` lets a Send's guard own a
     /// handle to the slot without borrowing the Agent.
     live: Arc<StdMutex<Option<Session>>>,
-    /// The counter behind the Session `seq` (and the temporary `s{n}` id).
+    /// The counter behind each Session's `seq`.
     next_seq: AtomicU64,
 }
 
@@ -268,8 +268,7 @@ impl Agent {
 
     /// Loads the runtime, then replaces the live Session with an empty one,
     /// cancelling the previous Send. A Load failure leaves the live Session
-    /// untouched. The new Session's id is readable through the temporary
-    /// [`Agent::session_id`].
+    /// untouched.
     pub async fn create_session(&self) -> Result<(), ProviderError> {
         self.load().await?;
         let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
@@ -311,17 +310,6 @@ impl Agent {
             .expect("session poisoned")
             .as_ref()
             .is_some_and(|session| !session.messages.is_empty())
-    }
-
-    /// The live Session's own id, or `None` when there is no live Session.
-    /// Temporary (#145): it keeps the transport's `session_id` wire field
-    /// working until #146 drops the id from the wire. #146 deletes this.
-    pub fn session_id(&self) -> Option<String> {
-        self.live
-            .lock()
-            .expect("session poisoned")
-            .as_ref()
-            .map(|session| format!("s{}", session.seq))
     }
 
     /// One Send: appends `pending` to the live Session, streams the reply, and

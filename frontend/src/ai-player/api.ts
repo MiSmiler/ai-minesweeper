@@ -5,7 +5,7 @@ import { log } from "../infra/log";
 //
 // The backend wire events are isomorphic to the server's `ReplyEvent`
 // ([src/server/ai_routes.rs](/src/server/ai_routes.rs)). `send` POSTs
-// `/ai/session/:id/send` and parses the SSE stream: each `data:` payload is either
+// `/ai/send` and parses the SSE stream: each `data:` payload is either
 // `[DONE]` (synthesized locally as `{kind:"sse_done"}` — the backend
 // `ReplyEvent` has no `Done` variant, a finished stream just ends as
 // `data: [DONE]`) or a `ReplyEvent` JSON. A mid-stream break is one of the two
@@ -60,24 +60,23 @@ export interface SendRequest {
 }
 
 /** The ai-player slice entry point, injected via `AppDeps`. The real implementation
- * (`createAiApi`) talks to the backend AI Session routes: `createSession`
- * POSTs `/ai/session`, `send` POSTs `/ai/session/{id}/send` (issue #131, #133). */
+ * (`createAiApi`) talks to the backend AI Session routes: `begin` POSTs
+ * `/ai/begin`, `send` POSTs `/ai/send` (issue #131, #133). */
 export interface AiApi {
-  /** Loads the AI runtime, then creates an EMPTY AI Session (no InputMode
-   * bound yet) and returns its id. A load failure rejects with a
-   * `ProviderError` (see `isProviderError`). */
-  createSession(): Promise<{ sessionId: string }>;
+  /** Loads the AI runtime, then begins an EMPTY AI Session (no InputMode
+   * bound yet). A load failure rejects with a `ProviderError` (see
+   * `isProviderError`). */
+  begin(): Promise<void>;
   /** Appends the current board; the first committed Send binds the InputMode.
    * A refusal or a provider failure before the stream starts arrives on
    * `onFailure`; a mid-stream failure arrives as a `ReplyEvent`. */
   send(
-    sessionId: string,
     req: SendRequest,
     onEvent: (e: ReplyEvent) => void,
     onFailure: (f: SendFailure) => void,
   ): void;
-  /** Cancels the in-flight Send of that AI Session. */
-  interrupt_by_user(sessionId: string): Promise<unknown>;
+  /** Cancels the Send in flight, if any. */
+  interrupt_by_user(): Promise<unknown>;
 }
 
 /** Builds the real `AiApi` that talks to the backend AI Session routes.
@@ -85,38 +84,32 @@ export interface AiApi {
  * `interrupt` event on the open stream (issue #97, #119). */
 export function createAiApi(): AiApi {
   return {
-    async createSession() {
+    async begin() {
       let res: Response;
       try {
-        res = await fetch("/ai/session", { method: "POST" });
+        res = await fetch("/ai/begin", { method: "POST" });
       } catch (err) {
-        log.error("POST /ai/session failed", err);
+        log.error("POST /ai/begin failed", err);
         throw asProviderError(err);
       }
       if (!res.ok) {
         const providerError = await readProviderError(res);
-        log.error(`POST /ai/session failed: ${res.status}`);
+        log.error(`POST /ai/begin failed: ${res.status}`);
         throw providerError;
       }
-      const body = (await res.json()) as { session_id: string };
-      return { sessionId: body.session_id };
     },
-    send(sessionId, req, onEvent, onFailure) {
-      void consumeEvents(sessionId, req, onEvent, onFailure);
+    send(req, onEvent, onFailure) {
+      void consumeEvents(req, onEvent, onFailure);
     },
-    async interrupt_by_user(sessionId) {
+    async interrupt_by_user() {
       try {
-        const res = await fetch(`/ai/session/${sessionId}/interrupt`, {
-          method: "POST",
-        });
+        const res = await fetch("/ai/interrupt", { method: "POST" });
         if (!res.ok) {
-          log.error(
-            `POST /ai/session/${sessionId}/interrupt failed: ${res.status}`,
-          );
+          log.error(`POST /ai/interrupt failed: ${res.status}`);
         }
         return res;
       } catch (err) {
-        log.error("POST /ai/session/:id/interrupt failed", err);
+        log.error("POST /ai/interrupt failed", err);
         return null;
       }
     },
@@ -136,14 +129,13 @@ function wireRequest(req: SendRequest): Record<string, unknown> {
 
 /** POSTs the Send request and forwards the SSE stream to `onEvent`. */
 async function consumeEvents(
-  sessionId: string,
   req: SendRequest,
   onEvent: (e: ReplyEvent) => void,
   onFailure: (f: SendFailure) => void,
 ): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`/ai/session/${encodeURIComponent(sessionId)}/send`, {
+    res = await fetch("/ai/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(wireRequest(req)),
@@ -214,7 +206,7 @@ function providerErrorFromBody(body: unknown, status: number): ProviderError {
   };
 }
 
-/** Parses a non-OK `createSession` response into a `ProviderError`. */
+/** Parses a non-OK `begin` response into a `ProviderError`. */
 async function readProviderError(res: Response): Promise<ProviderError> {
   let body: unknown;
   try {

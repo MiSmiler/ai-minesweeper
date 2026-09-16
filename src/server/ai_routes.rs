@@ -1,19 +1,19 @@
 //! SSE transport for the AiPlayer's `/ai/...` routes (issue #117, ADR-0013).
 //!
 //! A thin transport layer over the `ai_player::AiPlayer` seam: it begins an AI
-//! Session (`POST /ai/session`), appends one board to it and forwards the reply
-//! as an SSE stream terminated by `[DONE]` (`POST /ai/session/{id}/send`), and
-//! cancels the in-flight Send (`POST /ai/session/{id}/interrupt`).
+//! Session (`POST /ai/begin`), appends one board to it and forwards the reply
+//! as an SSE stream terminated by `[DONE]` (`POST /ai/send`), and cancels the
+//! in-flight Send (`POST /ai/interrupt`).
 //!
 //! This module never reaches into `ai_player` internals and never writes to
 //! the `Game` — it only takes a player-visible board snapshot (cloned under a
-//! short lock) to hand to `AiPlayer::send`. The Session (its id, its messages,
-//! its cancel token) is owned by the `Agent` behind the `AiPlayer`; the `{id}`
-//! in the two paths is ignored until #146 drops it from the wire.
+//! short lock) to hand to `AiPlayer::send`. The Session (its messages and its
+//! cancel token) is owned by the `Agent` behind the `AiPlayer`; the transport
+//! addresses the AiPlayer and carries no id.
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
@@ -59,13 +59,6 @@ pub(crate) enum ReplyEvent {
     },
 }
 
-/// The `POST /ai/session` response: the id the frontend sends back on every
-/// Send.
-#[derive(Debug, Serialize)]
-struct NewSessionDto {
-    session_id: String,
-}
-
 /// The error body of the three session-lifecycle failures. The status code is
 /// the machine signal; this is the human-readable reason.
 #[derive(Debug, Serialize)]
@@ -77,33 +70,27 @@ struct ErrorDto {
 /// `server::routes` merges this into the game API router.
 pub(crate) fn ai_routes(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/ai/session", post(handle_new_session))
-        .route("/ai/session/{id}/send", post(handle_send))
-        .route("/ai/session/{id}/interrupt", post(handle_user_interrupt))
+        .route("/ai/begin", post(handle_begin))
+        .route("/ai/send", post(handle_send))
+        .route("/ai/interrupt", post(handle_interrupt))
         .with_state(state)
 }
 
-/// `POST /ai/session`: loads the AI runtime, then replaces the live AI Session
-/// with an empty one and returns its id (the old session's Send is cancelled).
-/// The UI holds the discard confirm; the backend replaces unconditionally. A
-/// Load failure (no provider / bad key / unreachable model) maps to the same
-/// `ProviderError` body as a Send's Prepare failure, so the frontend alerts it
-/// before any Send.
-async fn handle_new_session(State(state): State<Arc<AppState>>) -> Response {
+/// `POST /ai/begin`: loads the AI runtime, then replaces the live AI Session
+/// with an empty one (the old session's Send is cancelled). The UI holds the
+/// discard confirm; the backend replaces unconditionally. A Load failure (no
+/// provider / bad key / unreachable model) maps to the same `ProviderError`
+/// body as a Send's Prepare failure, so the frontend alerts it before any Send.
+async fn handle_begin(State(state): State<Arc<AppState>>) -> Response {
     match state.ai_player.begin().await {
-        Ok(session_id) => Json(NewSessionDto { session_id }).into_response(),
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(pe) => provider_error_response(pe),
     }
 }
 
-/// `POST /ai/session/{id}/send`: appends the current board to the live AI
-/// Session and downstreams the reply as SSE. The path `{id}` is ignored until
-/// #146 drops it.
-async fn handle_send(
-    State(state): State<Arc<AppState>>,
-    Path(_id): Path<String>,
-    Json(req): Json<SendRequest>,
-) -> Response {
+/// `POST /ai/send`: appends the current board to the live AI Session and
+/// downstreams the reply as SSE.
+async fn handle_send(State(state): State<Arc<AppState>>, Json(req): Json<SendRequest>) -> Response {
     // An image Send must carry the screenshot it describes; reject it before
     // the session is touched, so the Send never starts.
     if req.input_mode == InputMode::Image && req.image_data_url.is_none() {
@@ -134,18 +121,12 @@ async fn handle_send(
     }
 }
 
-/// `POST /ai/session/{id}/interrupt`: cancels the in-flight Send. The SSE
-/// connection stays open; the `{kind:"interrupted"}` event is emitted on that
-/// stream. The path `{id}` is ignored until #146 drops it.
-async fn handle_user_interrupt(
-    State(state): State<Arc<AppState>>,
-    Path(_id): Path<String>,
-) -> Response {
-    if state.ai_player.interrupt() {
-        StatusCode::NO_CONTENT.into_response()
-    } else {
-        StatusCode::NOT_FOUND.into_response()
-    }
+/// `POST /ai/interrupt`: cancels the in-flight Send, if any. The SSE connection
+/// stays open; the `{kind:"interrupted"}` event is emitted on that stream.
+/// Always 204 — a Send that is not in flight is not an error.
+async fn handle_interrupt(State(state): State<Arc<AppState>>) -> Response {
+    state.ai_player.interrupt();
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// Maps one `AiPlayer::send` stream item to an SSE event. `Ok(Done)` becomes the
@@ -189,11 +170,11 @@ fn send_error_response(err: SendError) -> Response {
             format!("input mode is locked to {bound:?}, requested {requested:?}"),
         ),
         SendError::Agent(AgentSendError::NoSession) => {
-            error_response(StatusCode::NOT_FOUND, "unknown AI session".to_string())
+            error_response(StatusCode::CONFLICT, "no live AI session".to_string())
         }
         SendError::Agent(AgentSendError::Busy) => error_response(
             StatusCode::CONFLICT,
-            "a send is already in flight for this AI session".to_string(),
+            "a send is already in flight".to_string(),
         ),
         SendError::Agent(AgentSendError::Provider(error)) => provider_error_response(error),
         // `Interrupted` is position-restricted to the stream (see
@@ -367,19 +348,20 @@ mod tests {
         assert_eq!(value, serde_json::json!({"kind": "user", "text": "hi"}));
     }
 
-    // --- POST /ai/session ---
+    // --- POST /ai/begin ---
 
     #[tokio::test]
-    async fn new_session_returns_a_fresh_id_each_time() {
+    async fn begin_answers_204_with_no_session_id() {
         let (state, _mock) = app_state();
-        let first = new_session_id(&state).await;
-        let second = new_session_id(&state).await;
-        assert!(!first.is_empty());
-        assert_ne!(first, second);
+        let resp = handle_begin(State(state.clone())).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        let body = body_as_string(resp).await;
+        assert!(body.is_empty());
+        assert!(!body.contains("session_id"));
     }
 
     #[tokio::test]
-    async fn new_session_without_a_provider_is_503_config() {
+    async fn begin_without_a_provider_is_503_config() {
         let agent = Agent::new(ProviderSet::new());
         let ai_player = AiPlayer::new(Arc::new(agent));
         let state = Arc::new(AppState {
@@ -390,7 +372,7 @@ mod tests {
             )))),
             ai_player,
         });
-        let resp = handle_new_session(State(state.clone())).await;
+        let resp = handle_begin(State(state.clone())).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body = body_as_string(resp).await;
         assert!(body.contains("\"kind\":\"config\""));
@@ -426,27 +408,13 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
-    /// Drives `handle_new_session` and parses the `session_id` out of its body.
-    async fn new_session_id(state: &Arc<AppState>) -> String {
-        let resp = handle_new_session(State(state.clone())).await;
-        assert_eq!(resp.status(), StatusCode::OK);
-        let body = body_as_string(resp).await;
-        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
-        value["session_id"].as_str().unwrap().to_string()
-    }
-
-    // --- POST /ai/session/{id}/send ---
+    // --- POST /ai/send ---
 
     #[tokio::test]
-    async fn send_without_a_live_session_is_404() {
+    async fn send_without_a_live_session_is_409() {
         let (state, _mock) = app_state();
-        let resp = handle_send(
-            State(state.clone()),
-            Path("nope".to_string()),
-            Json(plain_request()),
-        )
-        .await;
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let resp = handle_send(State(state.clone()), Json(plain_request())).await;
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
         let body = body_as_string(resp).await;
         assert!(body.contains("\"error\""));
         assert!(!body.contains("event-stream"));
@@ -455,13 +423,8 @@ mod tests {
     #[tokio::test]
     async fn send_streams_reasoning_content_and_done() {
         let (state, _mock) = app_state();
-        let id = state.ai_player.begin().await.unwrap();
-        let resp = handle_send(
-            State(state.clone()),
-            Path(id.clone()),
-            Json(plain_request()),
-        )
-        .await;
+        state.ai_player.begin().await.unwrap();
+        let resp = handle_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_as_string(resp).await;
         assert!(body.contains("\"kind\":\"reasoning\""));
@@ -484,13 +447,8 @@ mod tests {
             code: Some(429),
             message: "rate limited".into(),
         })));
-        let id = state.ai_player.begin().await.unwrap();
-        let resp = handle_send(
-            State(state.clone()),
-            Path(id.clone()),
-            Json(plain_request()),
-        )
-        .await;
+        state.ai_player.begin().await.unwrap();
+        let resp = handle_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_as_string(resp).await;
         // The provider's own kind, code and message reach the wire intact — a
@@ -504,21 +462,11 @@ mod tests {
     #[tokio::test]
     async fn a_second_send_while_in_flight_is_409() {
         let (state, _mock) = app_state();
-        let id = state.ai_player.begin().await.unwrap();
-        let first = handle_send(
-            State(state.clone()),
-            Path(id.clone()),
-            Json(plain_request()),
-        )
-        .await;
+        state.ai_player.begin().await.unwrap();
+        let first = handle_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(first.status(), StatusCode::OK);
         // `first`'s body is still unread, so its Send is still in flight.
-        let second = handle_send(
-            State(state.clone()),
-            Path(id.clone()),
-            Json(plain_request()),
-        )
-        .await;
+        let second = handle_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(second.status(), StatusCode::CONFLICT);
         drop(first);
     }
@@ -526,55 +474,35 @@ mod tests {
     #[tokio::test]
     async fn a_mode_switch_after_the_first_commit_is_400() {
         let (state, _mock) = app_state();
-        let id = state.ai_player.begin().await.unwrap();
-        let first = handle_send(
-            State(state.clone()),
-            Path(id.clone()),
-            Json(plain_request()),
-        )
-        .await;
+        state.ai_player.begin().await.unwrap();
+        let first = handle_send(State(state.clone()), Json(plain_request())).await;
         // Draining the body commits the Turn and locks the InputMode.
         let _ = body_as_string(first).await;
-        let second = handle_send(
-            State(state.clone()),
-            Path(id.clone()),
-            Json(request_in(InputMode::Emoji)),
-        )
-        .await;
+        let second = handle_send(State(state.clone()), Json(request_in(InputMode::Emoji))).await;
         assert_eq!(second.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
     async fn image_mode_without_a_data_url_is_400() {
         let (state, _mock) = app_state();
-        let id = state.ai_player.begin().await.unwrap();
-        let resp = handle_send(
-            State(state.clone()),
-            Path(id.clone()),
-            Json(request_in(InputMode::Image)),
-        )
-        .await;
+        state.ai_player.begin().await.unwrap();
+        let resp = handle_send(State(state.clone()), Json(request_in(InputMode::Image))).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         // The Send never started, so there is nothing to interrupt.
         assert!(!state.ai_player.interrupt());
     }
 
-    // --- POST /ai/session/{id}/interrupt ---
+    // --- POST /ai/interrupt ---
 
     #[tokio::test]
     async fn interrupt_cancels_and_drives_the_sse_event() {
         let (state, _mock) = app_state();
-        let id = state.ai_player.begin().await.unwrap();
-        let send_resp = handle_send(
-            State(state.clone()),
-            Path(id.clone()),
-            Json(plain_request()),
-        )
-        .await;
+        state.ai_player.begin().await.unwrap();
+        let send_resp = handle_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(send_resp.status(), StatusCode::OK);
 
         // The interrupt route cancels the in-flight Send.
-        let ir_resp = handle_user_interrupt(State(state.clone()), Path(id.clone())).await;
+        let ir_resp = handle_interrupt(State(state.clone())).await;
         assert_eq!(ir_resp.status(), StatusCode::NO_CONTENT);
 
         // The already-open SSE emits the interrupt event instead of [DONE].
@@ -585,9 +513,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn interrupt_without_an_in_flight_send_is_404() {
+    async fn interrupt_without_an_in_flight_send_is_204() {
         let (state, _mock) = app_state();
-        let resp = handle_user_interrupt(State(state.clone()), Path("nope".to_string())).await;
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let resp = handle_interrupt(State(state.clone())).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
     }
 }

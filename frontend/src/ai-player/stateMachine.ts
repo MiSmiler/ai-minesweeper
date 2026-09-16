@@ -4,16 +4,16 @@
 // lifecycle only. The discard confirm and the Load / Prepare alerts live in the
 // `app/` assembly layer.
 //
-// Generation tracking: each `newSession()` / `endSession()` / `send()` bumps a
+// Generation tracking: each `begin()` / `end()` / `send()` bumps a
 // generation counter, and the event callbacks capture the generation they were
 // created in. A lifecycle change may happen while a previous SSE stream is
 // still in flight (the frontend keeps the stream open on interrupt, #97), so
 // events from a superseded generation are dropped and a stale stream can never
 // corrupt the current state.
 //
-// The AI Session itself is backend-owned (ADR-0017): `newSession()` asks the
-// backend for an id, `send()` appends to it, and `endSession()` drops it. The
-// machine holds only the id and the session's `empty` / `non-empty` predicate.
+// The AI Session itself is the Agent's (ADR-0021): `begin()` asks the backend
+// to begin one, `send()` appends to it, and `end()` drops it. The machine holds
+// only the session's `empty` / `non-empty` predicate.
 
 import { isProviderError } from "./api";
 import type {
@@ -52,13 +52,13 @@ export interface AiPlayerState {
 }
 
 export interface AiPlayerMachine {
-  /** Loads the AI runtime and requests an empty AI Session from the backend. */
-  newSession(): Promise<void>;
+  /** Loads the AI runtime and begins an empty AI Session on the backend. */
+  begin(): Promise<void>;
   /** Ends the live AI Session (New Game / PlayMode switch). */
-  endSession(): void;
+  end(): void;
   /** Appends the current board to the live AI Session. */
   send(req: SendRequest): void;
-  /** User-initiated cancel: POST /ai/session/:id/interrupt (the SSE stays open). */
+  /** User-initiated cancel: POST /ai/interrupt (the SSE stays open). */
   interrupt_by_user(): Promise<void>;
   /** Subscribes to state changes; returns an unsubscribe. */
   onState(cb: (state: AiPlayerState) => void): () => void;
@@ -75,18 +75,21 @@ function idleState(sessionState: SessionState): AiPlayerState {
   };
 }
 
-/** Builds an `AiPlayerMachine` over the given `AiApi`. The session id is issued by
- * the backend (`createSession`); the machine holds it for `send` / `interrupt`. */
+/** Builds an `AiPlayerMachine` over the given `AiApi`. The AiPlayer addresses no
+ * Session by id (ADR-0021); the machine tracks only its `empty` / `non-empty`
+ * predicate and its own generation for superseded streams. */
 export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
   let state: AiPlayerState = idleState("none");
   let generation = 0;
-  let sessionId: string | null = null;
   const listeners = new Set<(s: AiPlayerState) => void>();
 
   const emit = (): void => {
     const snapshot: AiPlayerState = { ...state };
     for (const cb of listeners) cb(snapshot);
   };
+
+  /** Whether a Session is live: `begin` succeeded and no `end` has landed. */
+  const hasLiveSession = (): boolean => state.sessionState !== "none";
 
   const onEvent = (g: number, e: ReplyEvent): void => {
     if (g !== generation) return; // a stale stream from a superseded run
@@ -128,18 +131,16 @@ export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
   };
 
   return {
-    async newSession() {
+    async begin() {
       const g = ++generation;
-      // The old session is being replaced: drop its id immediately so any
+      // The old session is being replaced: reset to `none` immediately so any
       // in-flight Send becomes stale.
-      sessionId = null;
       state = idleState("none");
       emit();
-      let created: { sessionId: string };
       try {
-        created = await deps.api.createSession();
+        await deps.api.begin();
       } catch (err) {
-        if (g !== generation) return; // superseded while creating
+        if (g !== generation) return; // superseded while beginning
         const providerError: ProviderError = isProviderError(err)
           ? err
           : {
@@ -155,19 +156,17 @@ export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
         emit();
         return;
       }
-      if (g !== generation) return; // superseded while creating
-      sessionId = created.sessionId;
+      if (g !== generation) return; // superseded while beginning
       state = { ...state, sessionState: "empty" };
       emit();
     },
-    endSession() {
+    end() {
       generation++; // invalidate any in-flight stream
-      sessionId = null;
       state = idleState("none");
       emit();
     },
     send(req) {
-      if (sessionId === null) return; // no live session: a no-op
+      if (!hasLiveSession()) return; // no live session: a no-op
       const g = ++generation;
       state = {
         phase: "running",
@@ -179,15 +178,14 @@ export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
       };
       emit();
       deps.api.send(
-        sessionId,
         req,
         (e) => onEvent(g, e),
         (f) => onFailure(g, f),
       );
     },
     async interrupt_by_user() {
-      if (sessionId === null) return;
-      await deps.api.interrupt_by_user(sessionId);
+      if (!hasLiveSession()) return;
+      await deps.api.interrupt_by_user();
     },
     onState(cb) {
       listeners.add(cb);

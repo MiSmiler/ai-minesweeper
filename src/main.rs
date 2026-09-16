@@ -128,8 +128,8 @@ async fn main() {
 /// is not configured and this is a hard error.
 ///
 /// The self-check carries its own model: the product's model choice belongs to
-/// the ai-player context (its `MODEL` is crate-private), and #136 moves this
-/// check into `crates/agent/examples/` where it must pick one anyway.
+/// the ai-player context (its `MODEL` is crate-private); a future ticket could
+/// move this check into `crates/agent/examples/`, where it must pick one anyway.
 const SELF_CHECK_MODEL: &str = "deepseek-flash";
 
 async fn run_test_ai_chat(prompt: &str) -> Result<(), String> {

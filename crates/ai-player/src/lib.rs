@@ -41,7 +41,7 @@ use game::{CellContent, CellState, CellView, Difficulty, Game, GameState, Positi
 ///
 /// Wire serialization is kebab-case (`#[serde(rename_all = "kebab-case")]`),
 /// aligned with the frontend `ai/api.ts` literals: `Plain` → `plain`,
-/// `Emoji` → `emoji`, `Image` → `image`. It is a `POST /ai/session/{id}/send`
+/// `Emoji` → `emoji`, `Image` → `image`. It is a `POST /ai/send`
 /// request-body field (sent back by the frontend), so it carries
 /// `Deserialize` — together with [`SendRequest`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -269,13 +269,10 @@ impl AiPlayer {
     /// Begins a fresh AI Session: loads the runtime, replaces the live Session
     /// (cancelling its in-flight Send), and clears the InputMode lock. A Load
     /// failure leaves both the live Session and the lock untouched.
-    ///
-    /// The returned id is temporary (#145): it keeps the transport's
-    /// `session_id` wire field working until #146 drops the id from the wire.
-    pub async fn begin(&self) -> Result<String, ProviderError> {
+    pub async fn begin(&self) -> Result<(), ProviderError> {
         self.agent.create_session().await?;
         self.mode_lock.lock().expect("mode lock poisoned").reset();
-        Ok(self.agent.session_id().unwrap_or_default())
+        Ok(())
     }
 
     /// Ends the live AI Session: cancels its in-flight Send, forgets it, and

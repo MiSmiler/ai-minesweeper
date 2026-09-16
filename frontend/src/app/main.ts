@@ -42,8 +42,8 @@ function persistMode(mode: PlayModeName): void {
 const app = document.getElementById("app")!;
 const deps: AppDeps = {
   getPlayMode: readInitialMode,
-  // The real AI transport: consumes the backend `/ai/session/{id}/send` SSE
-  // stream (issue #119).
+  // The real AI transport: consumes the backend `/ai/send` SSE stream
+  // (issue #119).
   aiApi: createAiApi(),
   captureBoardImage,
 };

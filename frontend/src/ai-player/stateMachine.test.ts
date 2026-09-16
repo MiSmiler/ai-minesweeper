@@ -8,9 +8,8 @@ import { createAiPlayerMachine, type AiPlayerState } from "./stateMachine";
 
 /** A machine over a stubbed `AiApi`, with every state it emitted recorded. */
 function makeMachine() {
-  let seq = 0;
   const api: AiApi = {
-    createSession: vi.fn(async () => ({ sessionId: `session-${seq++}` })),
+    begin: vi.fn(async () => {}),
     send: vi.fn(),
     interrupt_by_user: vi.fn().mockResolvedValue(undefined),
   };
@@ -21,11 +20,11 @@ function makeMachine() {
 }
 
 /** The `onEvent` / `onFailure` callbacks the machine hands to the Nth Send
- * (the 3rd and 4th arguments of `AiApi.send`). */
+ * (the 2nd and 3rd arguments of `AiApi.send`). */
 const onEvent = (h: ReturnType<typeof makeMachine>, n = 0) =>
-  vi.mocked(h.api.send).mock.calls[n][2];
+  vi.mocked(h.api.send).mock.calls[n][1];
 const onFailure = (h: ReturnType<typeof makeMachine>, n = 0) =>
-  vi.mocked(h.api.send).mock.calls[n][3];
+  vi.mocked(h.api.send).mock.calls[n][2];
 
 const last = (h: ReturnType<typeof makeMachine>): AiPlayerState =>
   h.states.at(-1)!;
@@ -33,7 +32,7 @@ const last = (h: ReturnType<typeof makeMachine>): AiPlayerState =>
 describe("createAiPlayerMachine session lifecycle", () => {
   it("starts with no session and does not call the backend", () => {
     const h = makeMachine();
-    expect(h.api.createSession).not.toHaveBeenCalled();
+    expect(h.api.begin).not.toHaveBeenCalled();
     expect(h.states).toHaveLength(0);
   });
 
@@ -44,45 +43,45 @@ describe("createAiPlayerMachine session lifecycle", () => {
     expect(h.states).toHaveLength(0);
   });
 
-  it("newSession creates an empty session", async () => {
+  it("begin creates an empty session", async () => {
     const h = makeMachine();
-    await h.machine.newSession();
-    expect(h.api.createSession).toHaveBeenCalledTimes(1);
+    await h.machine.begin();
+    expect(h.api.begin).toHaveBeenCalledTimes(1);
     expect(last(h).phase).toBe("idle");
     expect(last(h).sessionState).toBe("empty");
   });
 
   it("send appends to the current session and runs", async () => {
     const h = makeMachine();
-    await h.machine.newSession();
+    await h.machine.begin();
     h.machine.send({ inputMode: "emoji" });
     const s = last(h);
     expect(s.phase).toBe("running");
     expect(s.sessionState).toBe("empty");
     expect(h.api.send).toHaveBeenCalledTimes(1);
     expect(h.api.send).toHaveBeenCalledWith(
-      "session-0",
       { inputMode: "emoji" },
       expect.any(Function),
       expect.any(Function),
     );
   });
 
-  it("a second send reuses the same session id", async () => {
+  it("a second send after a committed Turn runs again", async () => {
     const h = makeMachine();
-    await h.machine.newSession();
+    await h.machine.begin();
     h.machine.send({ inputMode: "emoji" });
     onEvent(h)({ kind: "sse_done" });
     h.machine.send({ inputMode: "emoji" });
-    expect(vi.mocked(h.api.send).mock.calls[1][0]).toBe("session-0");
+    expect(h.api.send).toHaveBeenCalledTimes(2);
+    expect(last(h).phase).toBe("running");
   });
 
-  it("endSession returns to none and clears the text", async () => {
+  it("end returns to none and clears the text", async () => {
     const h = makeMachine();
-    await h.machine.newSession();
+    await h.machine.begin();
     h.machine.send({ inputMode: "emoji" });
     onEvent(h)({ kind: "content", text: "early" });
-    h.machine.endSession();
+    h.machine.end();
     const s = last(h);
     expect(s.phase).toBe("idle");
     expect(s.sessionState).toBe("none");
@@ -92,10 +91,10 @@ describe("createAiPlayerMachine session lifecycle", () => {
     expect(h.api.send).toHaveBeenCalledTimes(1);
   });
 
-  it("a failed newSession surfaces a provider failure and leaves no session", async () => {
+  it("a failed begin surfaces a provider failure and leaves no session", async () => {
     const h = makeMachine();
-    vi.mocked(h.api.createSession).mockRejectedValueOnce(new Error("offline"));
-    await h.machine.newSession();
+    vi.mocked(h.api.begin).mockRejectedValueOnce(new Error("offline"));
+    await h.machine.begin();
     const s = last(h);
     expect(s.phase).toBe("failed");
     expect(s.sessionState).toBe("none");
@@ -105,14 +104,14 @@ describe("createAiPlayerMachine session lifecycle", () => {
     });
   });
 
-  it("preserves a ProviderError rejected by newSession", async () => {
+  it("preserves a ProviderError rejected by begin", async () => {
     const h = makeMachine();
-    vi.mocked(h.api.createSession).mockRejectedValueOnce({
+    vi.mocked(h.api.begin).mockRejectedValueOnce({
       kind: "config",
       code: null,
       message: "no key",
     });
-    await h.machine.newSession();
+    await h.machine.begin();
     expect(last(h).failure).toEqual({
       kind: "provider",
       error: { kind: "config", code: null, message: "no key" },
@@ -120,17 +119,17 @@ describe("createAiPlayerMachine session lifecycle", () => {
     expect(last(h).sessionState).toBe("none");
   });
 
-  it("ignores a newSession response superseded by endSession", async () => {
+  it("ignores a begin superseded by end", async () => {
     const h = makeMachine();
-    let resolve!: (v: { sessionId: string }) => void;
-    vi.mocked(h.api.createSession).mockReturnValueOnce(
+    let resolve!: () => void;
+    vi.mocked(h.api.begin).mockReturnValueOnce(
       new Promise((r) => {
         resolve = r;
       }),
     );
-    const pending = h.machine.newSession();
-    h.machine.endSession();
-    resolve({ sessionId: "late" });
+    const pending = h.machine.begin();
+    h.machine.end();
+    resolve();
     await pending;
     expect(last(h).sessionState).toBe("none");
     h.machine.send({ inputMode: "emoji" });
@@ -141,7 +140,7 @@ describe("createAiPlayerMachine session lifecycle", () => {
 describe("createAiPlayerMachine run transitions", () => {
   async function emptySession() {
     const h = makeMachine();
-    await h.machine.newSession();
+    await h.machine.begin();
     return h;
   }
 
@@ -230,11 +229,11 @@ describe("createAiPlayerMachine run transitions", () => {
     });
   });
 
-  it("endSession invalidates a stale in-flight stream", async () => {
+  it("end invalidates a stale in-flight stream", async () => {
     const h = await emptySession();
     h.machine.send({ inputMode: "emoji" });
     onEvent(h)({ kind: "content", text: "early" });
-    h.machine.endSession();
+    h.machine.end();
     expect(last(h).phase).toBe("idle");
     expect(last(h).content).toBe("");
 
@@ -249,11 +248,11 @@ describe("createAiPlayerMachine run transitions", () => {
     expect(last(h).phase).toBe("idle");
   });
 
-  it("interrupt_by_user targets the current session", async () => {
+  it("interrupt_by_user cancels the live session", async () => {
     const h = await emptySession();
     h.machine.send({ inputMode: "emoji" });
     await h.machine.interrupt_by_user();
-    expect(h.api.interrupt_by_user).toHaveBeenCalledWith("session-0");
+    expect(h.api.interrupt_by_user).toHaveBeenCalledTimes(1);
   });
 
   it("interrupt_by_user without a session is a no-op", async () => {
@@ -289,7 +288,7 @@ describe("createAiPlayerMachine run transitions", () => {
   it("onState unsubscribe stops notifications", async () => {
     const h = makeMachine();
     h.unsubscribe();
-    await h.machine.newSession();
+    await h.machine.begin();
     expect(h.states).toHaveLength(0);
   });
 });

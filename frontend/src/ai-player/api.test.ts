@@ -1,5 +1,5 @@
-// Tests for the real SSE `AiApi` (issue #119, #133): `createSession` POSTs
-// `/ai/session`, `send` consumes the backend `/ai/session/:id/send` SSE stream into
+// Tests for the real SSE `AiApi` (issue #119, #133): `begin` POSTs
+// `/ai/begin`, `send` consumes the backend `/ai/send` SSE stream into
 // `ReplyEvent`s, and `interrupt_by_user` POSTs the interrupt route.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -55,14 +55,12 @@ function errorResponse(status: number, payload: ProviderError): Response {
  * `send` is fire-and-forget, so this bridges the async work for tests. */
 function collect(
   api: ReturnType<typeof createAiApi>,
-  sid: string,
-  req: Parameters<ReturnType<typeof createAiApi>["send"]>[1],
+  req: Parameters<ReturnType<typeof createAiApi>["send"]>[0],
   failures: SendFailure[] = [],
 ): Promise<ReplyEvent[]> {
   return new Promise((resolve) => {
     const events: ReplyEvent[] = [];
     api.send(
-      sid,
       req,
       (e) => {
         events.push(e);
@@ -104,7 +102,7 @@ describe("createAiApi.send (SSE consumer)", () => {
         ),
     );
 
-    const events = await collect(api, "s1", { inputMode: "emoji" });
+    const events = await collect(api, { inputMode: "emoji" });
 
     expect(events).toEqual([
       { kind: "reasoning", text: "think" },
@@ -113,7 +111,7 @@ describe("createAiApi.send (SSE consumer)", () => {
     ]);
     // The request POSTs to the session route with the input_mode body.
     const [url, init] = vi.mocked(fetch).mock.calls[0]!;
-    expect(url).toBe("/ai/session/s1/send");
+    expect(url).toBe("/ai/send");
     expect(JSON.parse(init!.body as string)).toEqual({ input_mode: "emoji" });
   });
 
@@ -134,7 +132,7 @@ describe("createAiApi.send (SSE consumer)", () => {
         ),
     );
 
-    const events = await collect(api, "s1", { inputMode: "emoji" });
+    const events = await collect(api, { inputMode: "emoji" });
     expect(events).toEqual([
       { kind: "reasoning", text: "think" },
       { kind: "content", text: "hello world" },
@@ -149,7 +147,7 @@ describe("createAiApi.send (SSE consumer)", () => {
       vi.fn().mockResolvedValue(okResponse(["data: [DONE]\n\n"])),
     );
 
-    await collect(api, "s1", {
+    await collect(api, {
       inputMode: "image",
       imageDataUrl: "data:image/png;base64,AAAA",
     });
@@ -168,7 +166,7 @@ describe("createAiApi.send (SSE consumer)", () => {
       vi.fn().mockResolvedValue(okResponse(["data: [DONE]\n\n"])),
     );
 
-    await collect(api, "s1", { inputMode: "emoji", thinkingLevel: "high" });
+    await collect(api, { inputMode: "emoji", thinkingLevel: "high" });
 
     const [, init] = vi.mocked(fetch).mock.calls[0]!;
     expect(JSON.parse(init!.body as string)).toEqual({
@@ -191,7 +189,7 @@ describe("createAiApi.send (SSE consumer)", () => {
         ),
     );
 
-    const events = await collect(api, "s1", { inputMode: "emoji" });
+    const events = await collect(api, { inputMode: "emoji" });
     expect(events[1]).toEqual({ kind: "interrupted" });
   });
 
@@ -208,7 +206,7 @@ describe("createAiApi.send (SSE consumer)", () => {
         ),
     );
 
-    const events = await collect(api, "s1", { inputMode: "emoji" });
+    const events = await collect(api, { inputMode: "emoji" });
     expect(events[0]).toEqual({
       kind: "provider_error",
       error: { kind: "upstream", code: 429, message: "rate limited" },
@@ -229,7 +227,7 @@ describe("createAiApi.send (SSE consumer)", () => {
       ),
     );
 
-    const events = await collect(api, "s1", { inputMode: "emoji" }, failures);
+    const events = await collect(api, { inputMode: "emoji" }, failures);
     expect(events).toEqual([]);
     expect(failures).toEqual([
       {
@@ -248,17 +246,17 @@ describe("createAiApi.send (SSE consumer)", () => {
         ok: false,
         status: 409,
         json: async () => ({
-          error: "a send is already in flight for this AI session",
+          error: "a send is already in flight",
         }),
       } as unknown as Response),
     );
 
-    await collect(api, "s1", { inputMode: "emoji" }, failures);
+    await collect(api, { inputMode: "emoji" }, failures);
     expect(failures).toEqual([
       {
         kind: "refused",
         status: 409,
-        message: "a send is already in flight for this AI session",
+        message: "a send is already in flight",
       },
     ]);
   });
@@ -277,7 +275,7 @@ describe("createAiApi.send (SSE consumer)", () => {
       } as unknown as Response),
     );
 
-    await collect(api, "s1", { inputMode: "emoji" }, failures);
+    await collect(api, { inputMode: "emoji" }, failures);
     expect(failures).toEqual([
       {
         kind: "provider",
@@ -295,7 +293,7 @@ describe("createAiApi.send (SSE consumer)", () => {
     const failures: SendFailure[] = [];
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("boom")));
 
-    await collect(api, "s1", { inputMode: "emoji" }, failures);
+    await collect(api, { inputMode: "emoji" }, failures);
     expect(failures[0]).toEqual({
       kind: "provider",
       error: { kind: "upstream", code: null, message: "boom" },
@@ -303,20 +301,16 @@ describe("createAiApi.send (SSE consumer)", () => {
   });
 });
 
-describe("createAiApi.createSession", () => {
-  it("POSTs /ai/session and maps session_id to sessionId", async () => {
+describe("createAiApi.begin", () => {
+  it("POSTs /ai/begin and resolves with no session id", async () => {
     const api = createAiApi();
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({ session_id: "abc" }),
-      } as Response),
+      vi.fn().mockResolvedValue({ ok: true, status: 204 } as Response),
     );
 
-    await expect(api.createSession()).resolves.toEqual({ sessionId: "abc" });
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith("/ai/session", {
+    await expect(api.begin()).resolves.toBeUndefined();
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith("/ai/begin", {
       method: "POST",
     });
   });
@@ -333,7 +327,7 @@ describe("createAiApi.createSession", () => {
         }),
       ),
     );
-    await expect(api.createSession()).rejects.toEqual({
+    await expect(api.begin()).rejects.toEqual({
       kind: "config",
       code: null,
       message: "no provider",
@@ -343,7 +337,7 @@ describe("createAiApi.createSession", () => {
   it("shapes a network failure as an upstream ProviderError", async () => {
     const api = createAiApi();
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    await expect(api.createSession()).rejects.toEqual({
+    await expect(api.begin()).rejects.toEqual({
       kind: "upstream",
       code: null,
       message: "offline",
@@ -362,15 +356,15 @@ describe("isProviderError", () => {
 });
 
 describe("createAiApi.interrupt_by_user", () => {
-  it("POSTs to the interrupt route", async () => {
+  it("POSTs to the interrupt route with no id", async () => {
     const api = createAiApi();
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({ ok: true, status: 204 } as Response),
     );
 
-    await api.interrupt_by_user("s1");
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith("/ai/session/s1/interrupt", {
+    await api.interrupt_by_user();
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith("/ai/interrupt", {
       method: "POST",
     });
   });

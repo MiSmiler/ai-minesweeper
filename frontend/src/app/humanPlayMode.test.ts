@@ -21,7 +21,7 @@ function makeDeps(): AppDeps {
   return {
     getPlayMode: () => "human",
     aiApi: {
-      createSession: vi.fn(async () => ({ sessionId: "s" })),
+      begin: vi.fn(async () => {}),
       send: vi.fn(),
       interrupt_by_user: vi.fn().mockResolvedValue(undefined),
     },
