@@ -8,6 +8,7 @@ import {
   isProviderError,
   type ReplyEvent,
   type ProviderError,
+  type SendFailure,
 } from "./api";
 
 /** A minimal SSE body backed by a fake reader over `chunks`. */
@@ -50,13 +51,13 @@ function errorResponse(status: number, payload: ProviderError): Response {
   } as unknown as Response;
 }
 
-/** Starts a Send and resolves with the streamed events (or pushes a provider
- * error). `send` is fire-and-forget, so this bridges the async work for tests. */
+/** Starts a Send and resolves with the streamed events (or pushes a failure).
+ * `send` is fire-and-forget, so this bridges the async work for tests. */
 function collect(
   api: ReturnType<typeof createAiApi>,
   sid: string,
   req: Parameters<ReturnType<typeof createAiApi>["send"]>[1],
-  providerErrors: ProviderError[] = [],
+  failures: SendFailure[] = [],
 ): Promise<ReplyEvent[]> {
   return new Promise((resolve) => {
     const events: ReplyEvent[] = [];
@@ -65,12 +66,18 @@ function collect(
       req,
       (e) => {
         events.push(e);
-        // Both `sse_done` and `interrupt` terminate a run (the backend ends the
-        // stream on an interrupt without a `[DONE]`).
-        if (e.kind === "sse_done" || e.kind === "interrupt") resolve(events);
+        // `sse_done`, `interrupted` and `provider_error` all terminate a run
+        // (the backend ends the stream on a failure without a `[DONE]`).
+        if (
+          e.kind === "sse_done" ||
+          e.kind === "interrupted" ||
+          e.kind === "provider_error"
+        ) {
+          resolve(events);
+        }
       },
-      (e) => {
-        providerErrors.push(e);
+      (f) => {
+        failures.push(f);
         resolve(events);
       },
     );
@@ -170,7 +177,7 @@ describe("createAiApi.send (SSE consumer)", () => {
     });
   });
 
-  it("parses an interrupt event with its reason", async () => {
+  it("parses an interrupted event", async () => {
     const api = createAiApi();
     vi.stubGlobal(
       "fetch",
@@ -179,18 +186,38 @@ describe("createAiApi.send (SSE consumer)", () => {
         .mockResolvedValue(
           okResponse([
             'data: {"kind":"reasoning","text":"think"}\n\n',
-            'data: {"kind":"interrupt","reason":"user_interrupt"}\n\n',
+            'data: {"kind":"interrupted"}\n\n',
           ]),
         ),
     );
 
     const events = await collect(api, "s1", { inputMode: "emoji" });
-    expect(events[1]).toEqual({ kind: "interrupt", reason: "user_interrupt" });
+    expect(events[1]).toEqual({ kind: "interrupted" });
   });
 
-  it("hands a non-OK response to onProviderError and emits no events", async () => {
+  it("parses a provider_error event with the provider's own error", async () => {
     const api = createAiApi();
-    const providerErrors: ProviderError[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          okResponse([
+            'data: {"kind":"provider_error","error":{"kind":"upstream","code":429,"message":"rate limited"}}\n\n',
+          ]),
+        ),
+    );
+
+    const events = await collect(api, "s1", { inputMode: "emoji" });
+    expect(events[0]).toEqual({
+      kind: "provider_error",
+      error: { kind: "upstream", code: 429, message: "rate limited" },
+    });
+  });
+
+  it("hands a provider-body failure to onFailure and emits no events", async () => {
+    const api = createAiApi();
+    const failures: SendFailure[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -202,26 +229,77 @@ describe("createAiApi.send (SSE consumer)", () => {
       ),
     );
 
-    const events = await collect(
-      api,
-      "s1",
-      { inputMode: "emoji" },
-      providerErrors,
-    );
+    const events = await collect(api, "s1", { inputMode: "emoji" }, failures);
     expect(events).toEqual([]);
-    expect(providerErrors).toEqual([
-      { kind: "config", code: null, message: "no provider" },
+    expect(failures).toEqual([
+      {
+        kind: "provider",
+        error: { kind: "config", code: null, message: "no provider" },
+      },
     ]);
   });
 
-  it("maps a network failure to an upstream provider error", async () => {
+  it("hands a refusal body to onFailure as a refusal", async () => {
     const api = createAiApi();
-    const providerErrors: ProviderError[] = [];
+    const failures: SendFailure[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          error: "a send is already in flight for this AI session",
+        }),
+      } as unknown as Response),
+    );
+
+    await collect(api, "s1", { inputMode: "emoji" }, failures);
+    expect(failures).toEqual([
+      {
+        kind: "refused",
+        status: 409,
+        message: "a send is already in flight for this AI session",
+      },
+    ]);
+  });
+
+  it("treats a non-JSON error body as an upstream provider failure", async () => {
+    const api = createAiApi();
+    const failures: SendFailure[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        json: async () => {
+          throw new Error("not json");
+        },
+      } as unknown as Response),
+    );
+
+    await collect(api, "s1", { inputMode: "emoji" }, failures);
+    expect(failures).toEqual([
+      {
+        kind: "provider",
+        error: {
+          kind: "upstream",
+          code: 502,
+          message: "AI request failed (HTTP 502)",
+        },
+      },
+    ]);
+  });
+
+  it("maps a network failure to an upstream provider failure", async () => {
+    const api = createAiApi();
+    const failures: SendFailure[] = [];
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("boom")));
 
-    await collect(api, "s1", { inputMode: "emoji" }, providerErrors);
-    expect(providerErrors[0]?.kind).toBe("upstream");
-    expect(providerErrors[0]?.message).toBe("boom");
+    await collect(api, "s1", { inputMode: "emoji" }, failures);
+    expect(failures[0]).toEqual({
+      kind: "provider",
+      error: { kind: "upstream", code: null, message: "boom" },
+    });
   });
 });
 

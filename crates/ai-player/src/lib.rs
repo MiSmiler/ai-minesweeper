@@ -34,8 +34,8 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use agent::{
-    Agent, AgentError, ContentBlock, DeepSeek, DeepSeekConfig, Message, ProviderError,
-    ProviderErrorKind, ProviderSet, Session, StreamChunk, ThinkingLevel, Tool,
+    Agent, ContentBlock, DeepSeek, DeepSeekConfig, Message, ProviderError, ProviderSet,
+    SendError as AgentSendError, Session, StreamChunk, ThinkingLevel, Tool,
 };
 use game::{CellContent, CellState, CellView, Difficulty, Game, GameState, Position};
 
@@ -143,19 +143,6 @@ impl InputMode {
     }
 }
 
-/// The termination reason (#97). Mirrored by the wire / frontend so the
-/// backend decides the final state. `user_interrupt` comes from the user
-/// cancelling (`CancellationToken`); the rest refract upstream failures.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InterruptReason {
-    UserInterrupt,
-    RateLimit,
-    Timeout,
-    UpstreamError,
-    Unknown,
-}
-
 /// The frontend's request: only `input_mode` (+ an optional `image_data_url`
 /// for the image mode). The board is read by the backend from its own `Game`;
 /// **no model** is sent (the backend picks the DeepSeek default per mode).
@@ -171,8 +158,10 @@ pub struct SendRequest {
     pub image_data_url: Option<String>,
 }
 
-/// Why a Send never started: the reasons its Prepare failed. Each maps to a
-/// wire status; only [`SendError::Runtime`] carries a provider body.
+/// Why a Send produced no Turn. The AiPlayer's own refusals (`UnknownSession`,
+/// `Busy`, `ModeMismatch`) precede the exchange; everything the runtime reports
+/// — the caller's Interrupt or the Provider's failure — is the agent's, wrapped
+/// as [`SendError::Agent`].
 #[derive(Debug, PartialEq)]
 pub enum SendError {
     /// `id` is not the live AI Session (or there is none).
@@ -184,10 +173,8 @@ pub enum SendError {
         bound: InputMode,
         requested: InputMode,
     },
-    /// The runtime failed before any content streamed (#97/#123): the Provider
-    /// or its model could not be brought up. The session-lifecycle rejections
-    /// (`UnknownSession` / `Busy` / `ModeMismatch`) are their own variants.
-    Runtime(AgentError),
+    /// The agent's own failure, at delivery or mid-stream.
+    Agent(AgentSendError),
 }
 
 /// The DeepSeek model that serves every [`InputMode`]: the canonical
@@ -290,9 +277,9 @@ impl AiPlayer {
 
     /// The assembly this product ships: DeepSeek from `DEEPSEEK_API_KEY` and
     /// [`MODEL`] for every Send. It never fails — an environment without a key
-    /// yields an `AiPlayer` with no Provider, whose Load fails with
-    /// [`AgentError::NoProvider`], surfaced to the player as a `config`
-    /// ProviderError at session creation rather than at startup.
+    /// yields an `AiPlayer` with no Provider, whose Load fails with a `config`
+    /// [`ProviderError`], surfaced to the player at session creation rather
+    /// than at startup.
     pub fn from_env() -> Self {
         let mut providers = ProviderSet::new();
         if let Some(config) = DeepSeekConfig::from_env() {
@@ -307,7 +294,7 @@ impl AiPlayer {
     /// cancelling its in-flight Send. Loads the (agent, provider, model) first,
     /// so an unconfigured AI fails here rather than on the first Send; a load
     /// failure leaves the current session untouched.
-    pub async fn create_session(&self) -> Result<String, AgentError> {
+    pub async fn create_session(&self) -> Result<String, ProviderError> {
         {
             let agent = self.agent.lock().await;
             agent.load().await?;
@@ -373,8 +360,9 @@ impl AiPlayer {
     /// message (the `role: user` turn) — the board in the chosen input mode —
     /// echoed back so the frontend can render the player's half of the
     /// exchange (issue #124). The stream advances on `Ok(StreamChunk)`; a
-    /// mid-stream break is `Err(InterruptReason)` (a user interrupt or a
-    /// refracted provider failure); `Ok(Done)` closes it and commits the Turn.
+    /// mid-stream break is `Err(agent::SendError)` — the caller's Interrupt or
+    /// the provider's own failure, passed through intact; `Ok(Done)` closes it
+    /// and commits the Turn.
     pub async fn send(
         &self,
         id: &str,
@@ -383,7 +371,7 @@ impl AiPlayer {
     ) -> Result<
         (
             String,
-            impl Stream<Item = Result<StreamChunk, InterruptReason>> + Send + use<>,
+            impl Stream<Item = Result<StreamChunk, AgentSendError>> + Send + use<>,
         ),
         SendError,
     > {
@@ -473,7 +461,7 @@ impl AiPlayer {
                 Ok(stream) => stream,
                 Err(err) => {
                     clear_in_flight(&self.in_flight, seq);
-                    return Err(SendError::Runtime(err));
+                    return Err(SendError::Agent(err));
                 }
             }
         };
@@ -491,12 +479,7 @@ impl AiPlayer {
                 if matches!(item, Ok(StreamChunk::Done)) {
                     guard.commit();
                 }
-                match item {
-                    Ok(chunk) => Ok(chunk),
-                    Err(AgentError::Cancelled) => Err(InterruptReason::UserInterrupt),
-                    Err(AgentError::Provider(pe)) => Err(refract_provider_error(&pe)),
-                    Err(AgentError::NoProvider) => Err(InterruptReason::Unknown),
-                }
+                item
             }),
         ))
     }
@@ -590,36 +573,6 @@ fn render_emoji(view: &BoardView) -> String {
     render_rows(view, |_, _, c| emoji_cell(c), "")
 }
 
-// --- Interrupt refraction (private) ---
-
-/// Maps a mid-stream `ProviderError` to the #97 reason kind. A rate limit
-/// (`429`) is `RateLimit`; a transport failure (no HTTP code) or a `408` is
-/// `Timeout`; an upstream `5xx` is `UpstreamError`.
-///
-/// `ProviderErrorKind` is *not* redundant (issue #123): it is a real consumer
-/// signal on the Load and Prepare paths, where `config` / `upstream` reach the
-/// frontend intact (see `ai_routes::agent_error_response`). Here, on the
-/// mid-stream path, `Config` is a defensive fallback **only** — in practice
-/// DeepSeek never streams one (unknown-model / serialization failures are
-/// returned before any content — unknown-model failures from `validate_model`,
-/// serialization failures from the request build — and `SseState` only ever
-/// emits `Upstream`). The `Config -> Unknown` arm below is tested
-/// (`config_error_refracts_to_unknown`) and intentionally reports a
-/// should-never-surface config error as `Unknown`; it is a contract, not dead
-/// code.
-fn refract_provider_error(pe: &ProviderError) -> InterruptReason {
-    if pe.code == Some(429) {
-        return InterruptReason::RateLimit;
-    }
-    if pe.code == Some(408) || pe.code.is_none() {
-        return InterruptReason::Timeout;
-    }
-    match pe.kind {
-        ProviderErrorKind::Upstream => InterruptReason::UpstreamError,
-        ProviderErrorKind::Config => InterruptReason::Unknown,
-    }
-}
-
 // --- Image persistence (best-effort side effect) ---
 
 /// Persists a `data:image/png;base64,<payload>` data URL to
@@ -685,7 +638,7 @@ mod tests {
     use super::*;
     use agent::ChatRequest;
     use agent::ProviderSet;
-    use agent::{MockProvider, Provider, ProviderStream};
+    use agent::{MockProvider, Provider, ProviderErrorKind, ProviderStream};
     use agent::{ReasoningEffort, ThinkingMode, ThinkingToggle};
     use async_trait::async_trait;
     use futures::stream;
@@ -916,30 +869,6 @@ mod tests {
         let req: SendRequest =
             serde_json::from_str(r#"{"input_mode":"emoji","thinking_level":"off"}"#).unwrap();
         assert_eq!(req.thinking_level, ThinkingLevel::Off);
-    }
-
-    #[test]
-    fn interrupt_reason_serializes_snake_case() {
-        assert_eq!(
-            serde_json::to_string(&InterruptReason::UserInterrupt).unwrap(),
-            "\"user_interrupt\""
-        );
-        assert_eq!(
-            serde_json::to_string(&InterruptReason::RateLimit).unwrap(),
-            "\"rate_limit\""
-        );
-        assert_eq!(
-            serde_json::to_string(&InterruptReason::Timeout).unwrap(),
-            "\"timeout\""
-        );
-        assert_eq!(
-            serde_json::to_string(&InterruptReason::UpstreamError).unwrap(),
-            "\"upstream_error\""
-        );
-        assert_eq!(
-            serde_json::to_string(&InterruptReason::Unknown).unwrap(),
-            "\"unknown\""
-        );
     }
 
     // --- AiPlayer: session lifecycle ---
@@ -1173,11 +1102,8 @@ mod tests {
             .unwrap();
         let second = ai_player.create_session().await.unwrap();
         assert_ne!(first, second);
-        // The displaced Send reports a user interrupt on its next poll...
-        assert_eq!(
-            stream.next().await,
-            Some(Err(InterruptReason::UserInterrupt))
-        );
+        // The displaced Send reports the caller's interrupt on its next poll...
+        assert_eq!(stream.next().await, Some(Err(AgentSendError::Interrupted)));
         assert_eq!(stream.next().await, None);
         // ...and the new session is the only one a Send accepts.
         let Err(err) = ai_player.send(&first, &game, plain_request()).await else {
@@ -1227,11 +1153,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_session_without_a_provider_is_no_provider() {
+    async fn create_session_without_a_provider_is_a_config_error() {
         let agent = Agent::new(ProviderSet::new());
         let ai_player = AiPlayer::new(Arc::new(Mutex::new(agent)));
         let err = ai_player.create_session().await.unwrap_err();
-        assert_eq!(err, AgentError::NoProvider);
+        assert_eq!(err.kind, ProviderErrorKind::Config);
     }
 
     /// A provider whose `load` succeeds once then fails; pins that a failed
@@ -1284,7 +1210,7 @@ mod tests {
 
         let id = ai_player.create_session().await.unwrap();
         let err = ai_player.create_session().await.unwrap_err();
-        assert!(matches!(err, AgentError::Provider(_)));
+        assert_eq!(err.kind, ProviderErrorKind::Config);
         // The failed load did not replace the live session: a Send to `id` is
         // still accepted (not `UnknownSession`).
         assert!(
@@ -1295,7 +1221,7 @@ mod tests {
         );
     }
 
-    // --- provider-error refraction ---
+    // --- mid-stream provider failure (no refraction) ---
 
     fn ai_player_with_failing(error: ProviderError) -> AiPlayer {
         let mut set = ProviderSet::new();
@@ -1306,7 +1232,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rate_limit_refracts_to_rate_limit_interrupt() {
+    async fn a_mid_stream_provider_error_passes_through_intact() {
         let ai_player = ai_player_with_failing(ProviderError {
             kind: ProviderErrorKind::Upstream,
             code: Some(429),
@@ -1317,58 +1243,16 @@ mod tests {
             .send(&id, &fresh_game(), plain_request())
             .await
             .unwrap();
-        assert_eq!(stream.next().await, Some(Err(InterruptReason::RateLimit)));
-        assert_eq!(stream.next().await, None);
-    }
-
-    #[tokio::test]
-    async fn transport_failure_refracts_to_timeout() {
-        let ai_player = ai_player_with_failing(ProviderError {
-            kind: ProviderErrorKind::Upstream,
-            code: None,
-            message: "connect timeout".into(),
-        });
-        let id = ai_player.create_session().await.unwrap();
-        let (_user_text, mut stream) = ai_player
-            .send(&id, &fresh_game(), plain_request())
-            .await
-            .unwrap();
-        assert_eq!(stream.next().await, Some(Err(InterruptReason::Timeout)));
-        assert_eq!(stream.next().await, None);
-    }
-
-    #[tokio::test]
-    async fn upstream_error_refracts_to_upstream_error() {
-        let ai_player = ai_player_with_failing(ProviderError {
-            kind: ProviderErrorKind::Upstream,
-            code: Some(500),
-            message: "boom".into(),
-        });
-        let id = ai_player.create_session().await.unwrap();
-        let (_user_text, mut stream) = ai_player
-            .send(&id, &fresh_game(), plain_request())
-            .await
-            .unwrap();
-        assert_eq!(
-            stream.next().await,
-            Some(Err(InterruptReason::UpstreamError))
-        );
-        assert_eq!(stream.next().await, None);
-    }
-
-    #[tokio::test]
-    async fn config_error_refracts_to_unknown() {
-        let ai_player = ai_player_with_failing(ProviderError {
-            kind: ProviderErrorKind::Config,
-            code: Some(400),
-            message: "bad request".into(),
-        });
-        let id = ai_player.create_session().await.unwrap();
-        let (_user_text, mut stream) = ai_player
-            .send(&id, &fresh_game(), plain_request())
-            .await
-            .unwrap();
-        assert_eq!(stream.next().await, Some(Err(InterruptReason::Unknown)));
+        // The AiPlayer does not refract: the provider's own kind, code and
+        // message reach the caller untouched (ADR-0022).
+        match stream.next().await {
+            Some(Err(AgentSendError::Provider(pe))) => {
+                assert_eq!(pe.kind, ProviderErrorKind::Upstream);
+                assert_eq!(pe.code, Some(429));
+                assert_eq!(pe.message, "rate limited");
+            }
+            other => panic!("expected the provider error intact, got {other:?}"),
+        }
         assert_eq!(stream.next().await, None);
     }
 

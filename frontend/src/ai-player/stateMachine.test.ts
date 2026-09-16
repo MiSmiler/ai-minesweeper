@@ -20,11 +20,11 @@ function makeMachine() {
   return { api, machine, states, unsubscribe };
 }
 
-/** The `onEvent` / `onProviderError` callbacks the machine hands to the Nth
- * Send (the 3rd and 4th arguments of `AiApi.send`). */
+/** The `onEvent` / `onFailure` callbacks the machine hands to the Nth Send
+ * (the 3rd and 4th arguments of `AiApi.send`). */
 const onEvent = (h: ReturnType<typeof makeMachine>, n = 0) =>
   vi.mocked(h.api.send).mock.calls[n][2];
-const onProviderError = (h: ReturnType<typeof makeMachine>, n = 0) =>
+const onFailure = (h: ReturnType<typeof makeMachine>, n = 0) =>
   vi.mocked(h.api.send).mock.calls[n][3];
 
 const last = (h: ReturnType<typeof makeMachine>): AiPlayerState =>
@@ -92,17 +92,16 @@ describe("createAiPlayerMachine session lifecycle", () => {
     expect(h.api.send).toHaveBeenCalledTimes(1);
   });
 
-  it("a failed newSession surfaces load-failed and leaves no session", async () => {
+  it("a failed newSession surfaces a provider failure and leaves no session", async () => {
     const h = makeMachine();
     vi.mocked(h.api.createSession).mockRejectedValueOnce(new Error("offline"));
     await h.machine.newSession();
     const s = last(h);
-    expect(s.phase).toBe("load-failed");
+    expect(s.phase).toBe("failed");
     expect(s.sessionState).toBe("none");
-    expect(s.providerError).toEqual({
-      kind: "upstream",
-      code: null,
-      message: "offline",
+    expect(s.failure).toEqual({
+      kind: "provider",
+      error: { kind: "upstream", code: null, message: "offline" },
     });
   });
 
@@ -114,10 +113,9 @@ describe("createAiPlayerMachine session lifecycle", () => {
       message: "no key",
     });
     await h.machine.newSession();
-    expect(last(h).providerError).toEqual({
-      kind: "config",
-      code: null,
-      message: "no key",
+    expect(last(h).failure).toEqual({
+      kind: "provider",
+      error: { kind: "config", code: null, message: "no key" },
     });
     expect(last(h).sessionState).toBe("none");
   });
@@ -173,10 +171,9 @@ describe("createAiPlayerMachine run transitions", () => {
   it("an interrupted first send leaves the session empty", async () => {
     const h = await emptySession();
     h.machine.send({ inputMode: "emoji" });
-    onEvent(h)({ kind: "interrupt", reason: "user_interrupt" });
+    onEvent(h)({ kind: "interrupted" });
     const s = last(h);
     expect(s.phase).toBe("interrupted");
-    expect(s.interruptReason).toBe("user_interrupt");
     expect(s.sessionState).toBe("empty");
   });
 
@@ -185,25 +182,51 @@ describe("createAiPlayerMachine run transitions", () => {
     h.machine.send({ inputMode: "emoji" });
     onEvent(h)({ kind: "sse_done" });
     h.machine.send({ inputMode: "emoji" });
-    onEvent(h, 1)({ kind: "interrupt", reason: "user_interrupt" });
+    onEvent(h, 1)({ kind: "interrupted" });
     expect(last(h).sessionState).toBe("non-empty");
   });
 
-  it("a provider error enters prepare-failed without changing the session", async () => {
+  it("a send failure enters failed without changing the session", async () => {
     const h = await emptySession();
     h.machine.send({ inputMode: "emoji" });
-    onProviderError(h)({
-      kind: "config",
-      code: null,
-      message: "no",
+    onFailure(h)({
+      kind: "provider",
+      error: { kind: "config", code: null, message: "no" },
     });
     const s = last(h);
-    expect(s.phase).toBe("prepare-failed");
+    expect(s.phase).toBe("failed");
     expect(s.sessionState).toBe("empty");
-    expect(s.providerError).toEqual({
-      kind: "config",
-      code: null,
-      message: "no",
+    expect(s.failure).toEqual({
+      kind: "provider",
+      error: { kind: "config", code: null, message: "no" },
+    });
+  });
+
+  it("a mid-stream provider_error event fails with the provider failure", async () => {
+    const h = await emptySession();
+    h.machine.send({ inputMode: "emoji" });
+    onEvent(h)({
+      kind: "provider_error",
+      error: { kind: "upstream", code: 429, message: "rate limited" },
+    });
+    const s = last(h);
+    expect(s.phase).toBe("failed");
+    expect(s.failure).toEqual({
+      kind: "provider",
+      error: { kind: "upstream", code: 429, message: "rate limited" },
+    });
+  });
+
+  it("a refused failure enters failed with the refusal", async () => {
+    const h = await emptySession();
+    h.machine.send({ inputMode: "emoji" });
+    onFailure(h)({ kind: "refused", status: 409, message: "busy" });
+    const s = last(h);
+    expect(s.phase).toBe("failed");
+    expect(s.failure).toEqual({
+      kind: "refused",
+      status: 409,
+      message: "busy",
     });
   });
 
@@ -219,10 +242,9 @@ describe("createAiPlayerMachine run transitions", () => {
     onEvent(h)({ kind: "content", text: "late" });
     expect(last(h).phase).toBe("idle");
     expect(last(h).content).toBe("");
-    onProviderError(h)({
-      kind: "upstream",
-      code: 500,
-      message: "x",
+    onFailure(h)({
+      kind: "provider",
+      error: { kind: "upstream", code: 500, message: "x" },
     });
     expect(last(h).phase).toBe("idle");
   });

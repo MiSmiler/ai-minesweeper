@@ -19,21 +19,16 @@ import { isProviderError } from "./api";
 import type {
   AiApi,
   ReplyEvent,
-  InterruptReason,
+  SendFailure,
   ProviderError,
   SendRequest,
 } from "./api";
 
 /** The phase of the AiPlayer: the Send run's own phases (`idle` / `running` /
- * `done` / `interrupted`) plus the two failures before any content —
- * `load-failed` (session creation) and `prepare-failed` (a Send). */
+ * `done` / `interrupted`) plus `failed`, which any failure before or during a
+ * run lands in — a Load failure, a refusal or a provider failure. */
 export type AiPlayerPhase =
-  | "idle"
-  | "running"
-  | "done"
-  | "interrupted"
-  | "load-failed"
-  | "prepare-failed";
+  "idle" | "running" | "done" | "interrupted" | "failed";
 
 /** Whether an AI Session is live: `none` (no session), `empty` (created, no
  * committed Turn), `non-empty` (at least one committed Turn). The `empty` /
@@ -52,10 +47,8 @@ export interface AiPlayerState {
   user: string;
   /** Present for the image form: the screenshot the player sent (data URL). */
   userImageUrl?: string;
-  /** Set only when `phase === "interrupted"`. */
-  interruptReason?: InterruptReason;
-  /** Set only when `phase` is `load-failed` or `prepare-failed`. */
-  providerError?: ProviderError;
+  /** Set only when `phase === "failed"`: why the Send produced no Turn. */
+  failure?: SendFailure;
 }
 
 export interface AiPlayerMachine {
@@ -111,16 +104,26 @@ export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
         // A committed Turn: an empty session becomes non-empty.
         state = { ...state, phase: "done", sessionState: "non-empty" };
         break;
-      case "interrupt":
-        state = { ...state, phase: "interrupted", interruptReason: e.reason };
+      case "interrupted":
+        // The caller's own act: no Turn is committed.
+        state = { ...state, phase: "interrupted" };
+        break;
+      case "provider_error":
+        // A mid-stream provider failure: the same vocabulary as a refusal at
+        // delivery, but the Provider's own cause.
+        state = {
+          ...state,
+          phase: "failed",
+          failure: { kind: "provider", error: e.error },
+        };
         break;
     }
     emit();
   };
 
-  const onProviderError = (g: number, e: ProviderError): void => {
+  const onFailure = (g: number, f: SendFailure): void => {
     if (g !== generation) return;
-    state = { ...state, phase: "prepare-failed", providerError: e };
+    state = { ...state, phase: "failed", failure: f };
     emit();
   };
 
@@ -144,7 +147,11 @@ export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
               code: null,
               message: err instanceof Error ? err.message : String(err),
             };
-        state = { ...state, phase: "load-failed", providerError };
+        state = {
+          ...state,
+          phase: "failed",
+          failure: { kind: "provider", error: providerError },
+        };
         emit();
         return;
       }
@@ -175,7 +182,7 @@ export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
         sessionId,
         req,
         (e) => onEvent(g, e),
-        (e) => onProviderError(g, e),
+        (f) => onFailure(g, f),
       );
     },
     async interrupt_by_user() {

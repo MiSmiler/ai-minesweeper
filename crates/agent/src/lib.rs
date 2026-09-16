@@ -24,7 +24,7 @@ pub mod agent;
 pub mod protocol;
 pub mod provider;
 
-pub use agent::{Agent, AgentError, ProviderSet, Session, ThinkingLevel, Tool};
+pub use agent::{Agent, ProviderSet, SendError, Session, ThinkingLevel, Tool};
 pub use protocol::{
     ChatRequest, ContentBlock, Message, ProviderError, ProviderErrorKind, ReasoningEffort,
     StreamChunk, ThinkingMode, ThinkingToggle, ToolCall, ToolDecl,

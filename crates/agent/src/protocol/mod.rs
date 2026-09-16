@@ -305,11 +305,11 @@ mod tests {
         let err = ProviderError {
             kind: ProviderErrorKind::Upstream,
             code: None,
-            message: "timeout".into(),
+            message: "connect failed".into(),
         };
         assert_eq!(
             serde_json::to_value(&err).unwrap(),
-            serde_json::json!({"kind": "upstream", "code": null, "message": "timeout"})
+            serde_json::json!({"kind": "upstream", "code": null, "message": "connect failed"})
         );
     }
 

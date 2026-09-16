@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{
-    ChatRequest, Message, ProviderError, ReasoningEffort, StreamChunk, ThinkingMode,
-    ThinkingToggle, ToolCall, ToolDecl,
+    ChatRequest, Message, ProviderError, ProviderErrorKind, ReasoningEffort, StreamChunk,
+    ThinkingMode, ThinkingToggle, ToolCall, ToolDecl,
 };
 use crate::provider::Provider;
 
@@ -116,15 +116,28 @@ impl Session {
     }
 }
 
-/// A failure surfaced out of the agent runtime.
+/// Why a Send produced no Turn. The variant set is position-restricted:
+/// [`SendError::Interrupted`] appears only as a stream item and
+/// [`SendError::Provider`] appears both as the delivery-time `Err` and as a
+/// stream item. The compiler cannot enforce this, so it is documented here.
 #[derive(Debug, PartialEq)]
-pub enum AgentError {
-    /// The provider reported a failure.
+pub enum SendError {
+    /// The caller interrupted the Send; it commits no Turn. It is an act, not
+    /// a cause — a Provider failing mid-stream is a `Provider` failure.
+    Interrupted,
+    /// The Provider/model exchange failed. The cause travels intact, in the
+    /// same variant at delivery and mid-stream.
     Provider(ProviderError),
-    /// No provider was selected, or the selected provider is unknown.
-    NoProvider,
-    /// The operation was cancelled.
-    Cancelled,
+}
+
+/// The `Config` failure of an Agent with no provider selected: formed at the
+/// source rather than translated back into a `ProviderError` by a consumer.
+fn no_provider_error() -> ProviderError {
+    ProviderError {
+        kind: ProviderErrorKind::Config,
+        code: None,
+        message: "AI not configured: no provider selected".to_string(),
+    }
 }
 
 /// A named registry of providers, kept in insertion order (issue #113).
@@ -231,25 +244,24 @@ impl Agent {
     }
 
     /// Loads the current provider/model without starting a Turn: a missing or
-    /// unknown provider is [`AgentError::NoProvider`]; a provider-side config
-    /// or transport failure is [`AgentError::Provider`]. `AiPlayer::create_session`
-    /// calls this so an unconfigured AI fails before the first Send.
-    pub async fn load(&self) -> Result<(), AgentError> {
+    /// unknown provider is a `Config` [`ProviderError`], as is a provider-side
+    /// config failure; a transport failure is an `Upstream` one.
+    /// `AiPlayer::create_session` calls this so an unconfigured AI fails before
+    /// the first Send.
+    pub async fn load(&self) -> Result<(), ProviderError> {
         let provider = self
             .providers
             .get(&self.current_provider)
-            .ok_or(AgentError::NoProvider)?;
-        provider
-            .load(&self.current_model)
-            .await
-            .map_err(AgentError::Provider)
+            .ok_or_else(no_provider_error)?;
+        provider.load(&self.current_model).await
     }
 
     /// Starts a chat stream for one Reply against the current provider: the
     /// model sees the session's committed messages plus `pending` (the first
     /// Reply carries its `System`). The stream maps every `ProviderError` to
-    /// [`AgentError::Provider`] and reports a fired `cancel` as
-    /// [`AgentError::Cancelled`].
+    /// [`SendError::Provider`] (the cause intact) and reports a fired `cancel`
+    /// as [`SendError::Interrupted`]. No provider is a `Config`
+    /// [`SendError::Provider`] formed here.
     ///
     /// The Reply lands in `session` only when the stream reaches `Done`, as
     /// `pending` + the assistant message, under one lock. An
@@ -259,12 +271,11 @@ impl Agent {
         session: &Session,
         pending: Vec<Message>,
         cancel: CancellationToken,
-    ) -> Result<impl Stream<Item = Result<StreamChunk, AgentError>> + Send + use<>, AgentError>
-    {
+    ) -> Result<impl Stream<Item = Result<StreamChunk, SendError>> + Send + use<>, SendError> {
         let provider = self
             .providers
             .get(&self.current_provider)
-            .ok_or(AgentError::NoProvider)?;
+            .ok_or_else(|| SendError::Provider(no_provider_error()))?;
         let (reasoning_effort, thinking) = thinking_to_wire(self.thinking_level);
         let mut messages = session.messages();
         messages.extend(pending.iter().cloned());
@@ -279,7 +290,7 @@ impl Agent {
         let inner = provider
             .stream_chat(req, cancel.clone())
             .await
-            .map_err(AgentError::Provider)?;
+            .map_err(SendError::Provider)?;
         let canceller = cancel.clone();
         let mut inner = inner;
         let committed = session.clone();
@@ -293,7 +304,7 @@ impl Agent {
                     return Poll::Ready(None);
                 }
                 reported_cancel = true;
-                return Poll::Ready(Some(Err(AgentError::Cancelled)));
+                return Poll::Ready(Some(Err(SendError::Interrupted)));
             }
             match Stream::poll_next(inner.as_mut(), cx) {
                 Poll::Ready(Some(Ok(StreamChunk::Done))) => {
@@ -315,7 +326,7 @@ impl Agent {
                     content.push_str(&text);
                     Poll::Ready(Some(Ok(StreamChunk::ContentDelta(text))))
                 }
-                Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(AgentError::Provider(e)))),
+                Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(SendError::Provider(e)))),
                 Poll::Ready(None) => Poll::Ready(None),
                 Poll::Pending => Poll::Pending,
             }
@@ -330,7 +341,7 @@ impl Agent {
         session: &Session,
         pending: Vec<Message>,
         cancel: CancellationToken,
-    ) -> Result<Message, AgentError> {
+    ) -> Result<Message, SendError> {
         let mut stream = self.stream(session, pending, cancel).await?;
         let mut content = String::new();
         let mut reasoning = None;
@@ -360,7 +371,7 @@ impl Agent {
         session: &Session,
         pending: Vec<Message>,
         cancel: CancellationToken,
-    ) -> Result<Message, AgentError> {
+    ) -> Result<Message, SendError> {
         let mut pending = pending;
         loop {
             let reply = self.complete_once(session, pending, cancel.clone()).await?;
@@ -551,7 +562,7 @@ mod tests {
             .unwrap();
         assert!(stream.next().await.is_some());
         cancel.cancel();
-        assert_eq!(stream.next().await, Some(Err(AgentError::Cancelled)));
+        assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
         assert_eq!(stream.next().await, None);
         assert!(session.is_empty());
     }
@@ -587,10 +598,16 @@ mod tests {
             .stream(&session, first_turn("hi"), CancellationToken::new())
             .await
             .unwrap();
-        assert!(matches!(
-            stream.next().await,
-            Some(Err(AgentError::Provider(_)))
-        ));
+        // The mid-stream failure keeps the provider's own cause intact, not a
+        // lossy bucket: kind, code and message all survive.
+        match stream.next().await {
+            Some(Err(SendError::Provider(pe))) => {
+                assert_eq!(pe.kind, crate::protocol::ProviderErrorKind::Upstream);
+                assert_eq!(pe.code, Some(500));
+                assert_eq!(pe.message, "boom");
+            }
+            other => panic!("expected the provider error intact, got {other:?}"),
+        }
         assert!(session.is_empty());
     }
 
@@ -615,7 +632,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_token_reports_cancelled() {
+    async fn cancelled_token_reports_interrupted() {
         let (agent, _mock) = agent_with_mock("m", "mock");
         let session = Session::new();
         let cancel = CancellationToken::new();
@@ -624,20 +641,20 @@ mod tests {
             .stream(&session, first_turn("hi"), cancel)
             .await
             .unwrap();
-        // The wrapper reports `Cancelled` once, then ends.
-        assert_eq!(stream.next().await, Some(Err(AgentError::Cancelled)));
+        // The wrapper reports `Interrupted` once, then ends.
+        assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
         assert_eq!(stream.next().await, None);
     }
 
     #[tokio::test]
-    async fn unknown_provider_is_no_provider() {
+    async fn unknown_provider_is_a_config_provider_error() {
         let agent = Agent::new(ProviderSet::new());
         let session = Session::new();
         let err = agent
             .complete_once(&session, first_turn("hi"), CancellationToken::new())
             .await
             .unwrap_err();
-        assert_eq!(err, AgentError::NoProvider);
+        assert_eq!(err, SendError::Provider(no_provider_error()));
         // A runtime failure commits nothing.
         assert!(session.is_empty());
     }

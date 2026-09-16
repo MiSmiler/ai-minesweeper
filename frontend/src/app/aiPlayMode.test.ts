@@ -38,11 +38,11 @@ function makeDeps(): AppDeps {
   };
 }
 
-/** The `onEvent` / `onProviderError` callbacks the composition hands to the
- * Nth Send (the 3rd and 4th arguments of `AiApi.send`). */
+/** The `onEvent` / `onFailure` callbacks the composition hands to the Nth Send
+ * (the 3rd and 4th arguments of `AiApi.send`). */
 const onEvent = (deps: AppDeps, n = 0) =>
   vi.mocked(deps.aiApi.send).mock.calls[n][2];
-const onProviderError = (deps: AppDeps, n = 0) =>
+const onFailure = (deps: AppDeps, n = 0) =>
   vi.mocked(deps.aiApi.send).mock.calls[n][3];
 
 function mount(): HTMLElement {
@@ -219,7 +219,7 @@ describe("composeAiPlayMode session controls", () => {
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
 
     send.click();
-    onEvent(deps)({ kind: "interrupt", reason: "user_interrupt" });
+    onEvent(deps)({ kind: "interrupted" });
     expect(mode.disabled).toBe(false);
     expect($(root, ".session-interrupt").textContent).toContain("已中断");
   });
@@ -270,7 +270,7 @@ describe("composeAiPlayMode send flow", () => {
     send.click(); // send → interrupt
     expect(deps.aiApi.interrupt_by_user).toHaveBeenCalledTimes(1);
 
-    onEvent(deps)({ kind: "interrupt", reason: "user_interrupt" });
+    onEvent(deps)({ kind: "interrupted" });
     expect(send.textContent).toBe("发送");
   });
 
@@ -326,7 +326,7 @@ describe("composeAiPlayMode send flow", () => {
     expect(req.thinkingLevel).toBe("max");
   });
 
-  it("a provider error alerts and reverts the button", async () => {
+  it("a provider failure alerts and reverts the button", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -335,12 +335,25 @@ describe("composeAiPlayMode send flow", () => {
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
     send.click();
-    onProviderError(deps)({
-      kind: "config",
-      code: null,
-      message: "no provider",
+    onFailure(deps)({
+      kind: "provider",
+      error: { kind: "config", code: null, message: "no provider" },
     });
     expect(alertSpy).toHaveBeenCalled();
+    expect(send.textContent).toBe("发送");
+  });
+
+  it("a refused failure does not alert", async () => {
+    mockFetch();
+    const root = mount();
+    const deps = makeDeps();
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    composeAiPlayMode(root, deps);
+    await startSession(root);
+    const send = $(root, ".send-btn") as HTMLButtonElement;
+    send.click();
+    onFailure(deps)({ kind: "refused", status: 409, message: "busy" });
+    expect(alertSpy).not.toHaveBeenCalled();
     expect(send.textContent).toBe("发送");
   });
 

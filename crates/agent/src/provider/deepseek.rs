@@ -613,7 +613,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stream_chat_wire_drops_before_done_is_upstream_error() {
+    async fn stream_chat_truncation_is_an_upstream_failure() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/models"))

@@ -24,3 +24,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 # The game crate's test-support constructors (`Game::with_mines`).
 game = { path = "crates/game", features = ["test-support"] }
+# A test provider implements the `agent::Provider` async trait.
+async-trait = "0.1"

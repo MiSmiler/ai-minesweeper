@@ -21,7 +21,7 @@ A context is a language boundary, not a directory: `game` and `ai-player` span b
 
 The dependency direction is now the compiler's business: `game` and `agent` depend on nothing above them, `ai-player` depends on both, and the app depends on all three. `crates/agent` cannot see `game`, so the runtime's Minesweeper-blindness is a Cargo fact rather than a promised convention.
 
-The runtime's lifecycle words became the agent's, with definitions that never name the Board: **Session**, **Send**, **Prepare**, **Turn**, **Load**, **InterruptReason**. The `AI` prefix went with them — `AI Session` → **Session**, `AI Agent` → **Agent** — because the prefix existed only to tell two contexts apart, and the split removes the ambiguity it was papering over. **InputMode** and **BoardView** are ai-player's, and the Board payload sentence lives with them. The policy that is not a thing — one Session per Game, the InputMode bound by the first committed Turn, a New Game ending the Session — stays in ai-player's ADRs.
+The runtime's lifecycle words became the agent's, with definitions that never name the Board: **Session**, **Send**, **Prepare**, **Turn**, **Load**, **Interrupt**. The `AI` prefix went with them — `AI Session` → **Session**, `AI Agent` → **Agent** — because the prefix existed only to tell two contexts apart, and the split removes the ambiguity it was papering over. **InputMode** and **BoardView** are ai-player's, and the Board payload sentence lives with them. The policy that is not a thing — one Session per Game, the InputMode bound by the first committed Turn, a New Game ending the Session — stays in ai-player's ADRs.
 
 Considered options:
 

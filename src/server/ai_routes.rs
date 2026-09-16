@@ -23,20 +23,20 @@ use futures::StreamExt;
 use futures::stream;
 use serde::Serialize;
 
-use agent::AgentError;
+use agent::SendError as AgentSendError;
 use agent::{ProviderError, ProviderErrorKind, StreamChunk};
-use ai_player::{InputMode, InterruptReason, SendError, SendRequest};
+use ai_player::{InputMode, SendError, SendRequest};
 
 use super::AppState;
 
 /// The SSE wire events (issue #117). Tagged by `kind` so the frontend's
 /// `ReplyEvent(TS)` type is isomorphic on the wire:
 /// `{kind:"reasoning",text}` / `{kind:"content",text}` /
-/// `{kind:"interrupt",reason}`.
+/// `{kind:"interrupted"}` / `{kind:"provider_error",error}`.
 ///
-/// The variants carry an explicit `text` field (struct variants) because a
-/// newtype variant like `Reasoning(String)` couldn't merge the `kind` tag into
-/// a bare `String` under serde's internally-tagged representation.
+/// The variants carry explicit fields (struct variants) because a newtype
+/// variant couldn't merge the `kind` tag into a bare value under serde's
+/// internally-tagged representation.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum ReplyEvent {
@@ -46,8 +46,11 @@ pub(crate) enum ReplyEvent {
     Content {
         text: String,
     },
-    Interrupt {
-        reason: InterruptReason,
+    /// The caller's own Interrupt: the Send commits no Turn.
+    Interrupted,
+    /// The Provider's failure, carrying its own cause intact.
+    ProviderError {
+        error: ProviderError,
     },
     /// The verbatim player message (the `role: user` turn), emitted first so
     /// the frontend can render the player's half of the exchange (issue #124).
@@ -89,7 +92,7 @@ pub(crate) fn ai_routes(state: Arc<AppState>) -> Router {
 async fn handle_new_session(State(state): State<Arc<AppState>>) -> Response {
     match state.ai_player.create_session().await {
         Ok(session_id) => Json(NewSessionDto { session_id }).into_response(),
-        Err(err) => agent_error_response(err),
+        Err(pe) => provider_error_response(pe),
     }
 }
 
@@ -131,8 +134,8 @@ async fn handle_send(
 }
 
 /// `POST /ai/session/{id}/interrupt`: cancels the in-flight Send of `{id}`. The
-/// SSE connection stays open; the interrupt event is emitted on that stream
-/// (`{kind:"interrupt",reason:"user_interrupt"}`).
+/// SSE connection stays open; the `{kind:"interrupted"}` event is emitted on
+/// that stream.
 async fn handle_user_interrupt(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -145,9 +148,9 @@ async fn handle_user_interrupt(
 }
 
 /// Maps one `AiPlayer::send` stream item to an SSE event. `Ok(Done)` becomes the
-/// `[DONE]` terminator; an interrupt `Err(reason)` becomes the explicit
-/// `interrupt` event (a reply that never receives `[DONE]`).
-fn to_event(item: Result<StreamChunk, InterruptReason>) -> Result<Event, axum::Error> {
+/// `[DONE]` terminator; the two `Err`s become the explicit `interrupted` /
+/// `provider_error` events (a reply that never receives `[DONE]`).
+fn to_event(item: Result<StreamChunk, AgentSendError>) -> Result<Event, axum::Error> {
     let event = match item {
         Ok(StreamChunk::ReasoningDelta(text)) => {
             Event::default().json_data(ReplyEvent::Reasoning { text })?
@@ -156,15 +159,19 @@ fn to_event(item: Result<StreamChunk, InterruptReason>) -> Result<Event, axum::E
             Event::default().json_data(ReplyEvent::Content { text })?
         }
         Ok(StreamChunk::Done) => Event::default().data("[DONE]"),
-        Err(reason) => Event::default().json_data(ReplyEvent::Interrupt { reason })?,
+        Err(AgentSendError::Interrupted) => Event::default().json_data(ReplyEvent::Interrupted)?,
+        Err(AgentSendError::Provider(error)) => {
+            Event::default().json_data(ReplyEvent::ProviderError { error })?
+        }
     };
     Ok(event)
 }
 
-/// Maps a [`SendError`] to a status + body. The three session-lifecycle
-/// failures carry `{"error": "..."}` — the status code is the machine signal.
-/// Only `Runtime` keeps the #97/#123 `ProviderError` shape, because only it is
-/// a provider failure.
+/// Maps a [`SendError`] to a status + body. The AiPlayer's refusals carry
+/// `{"error": "..."}` — the status code is the machine signal. A Provider
+/// failure keeps the `{kind,code,message}` body; an Interrupt at delivery (a
+/// defensive branch: a cancel before the stream begins surfaces *through* the
+/// stream) is a refusal too.
 fn send_error_response(err: SendError) -> Response {
     match err {
         SendError::UnknownSession => {
@@ -178,7 +185,15 @@ fn send_error_response(err: SendError) -> Response {
             StatusCode::BAD_REQUEST,
             format!("input mode is locked to {bound:?}, requested {requested:?}"),
         ),
-        SendError::Runtime(err) => agent_error_response(err),
+        SendError::Agent(AgentSendError::Provider(error)) => provider_error_response(error),
+        // `Interrupted` is position-restricted to the stream (see
+        // `agent::SendError`), so a delivery-time agent error can only be a
+        // `Provider` failure; reaching this arm is an invariant violation, not
+        // a wire contract.
+        SendError::Agent(AgentSendError::Interrupted) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error: a Send reported an interrupt before it started".to_string(),
+        ),
     }
 }
 
@@ -187,38 +202,21 @@ fn error_response(status: StatusCode, message: String) -> Response {
     (status, Json(ErrorDto { error: message })).into_response()
 }
 
-/// Maps an [`AgentError`] into an HTTP status + a `ProviderError` body
-/// (`{kind,code,message}`); no SSE is started. Both failure paths land here: a
-/// Load failure (session creation) and a Prepare failure (a Send before any
-/// content). `AgentError::Cancelled` is a defensive branch — a cancel before the
-/// stream begins surfaces as an interrupt *through* the stream, not here.
-fn agent_error_response(err: AgentError) -> Response {
-    let (status, provider_error) = match err {
-        AgentError::Provider(pe) => {
-            let status = pe
-                .code
-                .and_then(|c| StatusCode::from_u16(c).ok())
-                .unwrap_or(StatusCode::BAD_GATEWAY);
-            (status, pe)
-        }
-        AgentError::NoProvider => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            ProviderError {
-                kind: ProviderErrorKind::Config,
-                code: None,
-                message: "AI not configured: no provider selected".to_string(),
-            },
-        ),
-        AgentError::Cancelled => (
-            StatusCode::CONFLICT,
-            ProviderError {
-                kind: ProviderErrorKind::Config,
-                code: None,
-                message: "the send was cancelled before it started".to_string(),
-            },
-        ),
-    };
-    (status, Json(provider_error)).into_response()
+/// Maps a [`ProviderError`] into an HTTP status + a `{kind,code,message}` body;
+/// no SSE is started. Both provider failure paths land here: a Load failure
+/// (session creation) and a Send's Prepare failure. The status is the
+/// provider's own `code` when it parses, otherwise the `kind` decides:
+/// `Config` is 503 (a setup the caller cannot fix by retrying), `Upstream` is
+/// 502.
+fn provider_error_response(pe: ProviderError) -> Response {
+    let status = pe
+        .code
+        .and_then(|c| StatusCode::from_u16(c).ok())
+        .unwrap_or(match pe.kind {
+            ProviderErrorKind::Config => StatusCode::SERVICE_UNAVAILABLE,
+            ProviderErrorKind::Upstream => StatusCode::BAD_GATEWAY,
+        });
+    (status, Json(pe)).into_response()
 }
 
 #[cfg(test)]
@@ -226,7 +224,7 @@ mod tests {
     use super::*;
     use agent::MockProvider;
     use agent::ThinkingLevel;
-    use agent::{Agent, ProviderSet};
+    use agent::{Agent, ChatRequest, Provider, ProviderSet, ProviderStream};
     use ai_player::AiPlayer;
     use axum::body::to_bytes;
     use game::{Difficulty, Features, Game, GameConfig};
@@ -249,6 +247,37 @@ mod tests {
         agent.set_model("mock-model".to_string(), Some("mock"));
         let ai_player = AiPlayer::new(Arc::new(tokio::sync::Mutex::new(agent)));
         (Arc::new(AppState { game, ai_player }), mock)
+    }
+
+    /// A provider whose `stream_chat` yields one `ProviderError` and ends, so a
+    /// mid-stream failure can be driven through the SSE route.
+    struct FailingProvider(ProviderError);
+
+    #[async_trait::async_trait]
+    impl Provider for FailingProvider {
+        async fn stream_chat(
+            &self,
+            _req: ChatRequest,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> Result<ProviderStream, ProviderError> {
+            let error = self.0.clone();
+            Ok(Box::pin(futures::stream::iter(vec![Err(error)])))
+        }
+    }
+
+    /// An `AppState` whose `AiPlayer` runs against the given provider.
+    fn app_state_with(provider: Box<dyn Provider>) -> Arc<AppState> {
+        let game = Arc::new(Mutex::new(Game::with_config(GameConfig::new(
+            Difficulty::Beginner,
+            Features::NONE,
+            None,
+        ))));
+        let mut set = ProviderSet::new();
+        set.insert("failing".to_string(), provider);
+        let mut agent = Agent::new(set);
+        agent.set_model("m".to_string(), Some("failing"));
+        let ai_player = AiPlayer::new(Arc::new(tokio::sync::Mutex::new(agent)));
+        Arc::new(AppState { game, ai_player })
     }
 
     fn request_in(mode: InputMode) -> SendRequest {
@@ -298,14 +327,27 @@ mod tests {
     }
 
     #[test]
-    fn interrupt_serializes_to_kind_and_reason() {
-        let value = serde_json::to_value(ReplyEvent::Interrupt {
-            reason: InterruptReason::UserInterrupt,
+    fn interrupted_serializes_to_kind_interrupted() {
+        let value = serde_json::to_value(ReplyEvent::Interrupted).unwrap();
+        assert_eq!(value, serde_json::json!({"kind": "interrupted"}));
+    }
+
+    #[test]
+    fn provider_error_serializes_to_kind_and_error() {
+        let value = serde_json::to_value(ReplyEvent::ProviderError {
+            error: ProviderError {
+                kind: ProviderErrorKind::Upstream,
+                code: Some(429),
+                message: "rate limited".into(),
+            },
         })
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"kind": "interrupt", "reason": "user_interrupt"})
+            serde_json::json!({
+                "kind": "provider_error",
+                "error": {"kind": "upstream", "code": 429, "message": "rate limited"}
+            })
         );
     }
 
@@ -342,6 +384,36 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body = body_as_string(resp).await;
         assert!(body.contains("\"kind\":\"config\""));
+    }
+
+    #[test]
+    fn a_config_error_without_a_code_is_503() {
+        let resp = provider_error_response(ProviderError {
+            kind: ProviderErrorKind::Config,
+            code: None,
+            message: "no provider".into(),
+        });
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn an_upstream_failure_without_a_code_is_502() {
+        let resp = provider_error_response(ProviderError {
+            kind: ProviderErrorKind::Upstream,
+            code: None,
+            message: "connect failed".into(),
+        });
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[test]
+    fn a_provider_code_wins_over_the_kind() {
+        let resp = provider_error_response(ProviderError {
+            kind: ProviderErrorKind::Upstream,
+            code: Some(429),
+            message: "rate limited".into(),
+        });
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
     /// Drives `handle_new_session` and parses the `session_id` out of its body.
@@ -393,6 +465,30 @@ mod tests {
         assert!(body.contains("data: [DONE]"));
         // The reply ended, so the session's Send slot is free again.
         assert!(!state.ai_player.interrupt(&id));
+    }
+
+    #[tokio::test]
+    async fn a_mid_stream_provider_error_streams_its_own_error() {
+        let state = app_state_with(Box::new(FailingProvider(ProviderError {
+            kind: ProviderErrorKind::Upstream,
+            code: Some(429),
+            message: "rate limited".into(),
+        })));
+        let id = state.ai_player.create_session().await.unwrap();
+        let resp = handle_send(
+            State(state.clone()),
+            Path(id.clone()),
+            Json(plain_request()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_as_string(resp).await;
+        // The provider's own kind, code and message reach the wire intact — a
+        // mid-stream 429 is not collapsed into a bare timeout.
+        assert!(body.contains("\"kind\":\"provider_error\""));
+        assert!(body.contains("\"code\":429"));
+        assert!(body.contains("rate limited"));
+        assert!(!body.contains("[DONE]"));
     }
 
     #[tokio::test]
@@ -473,7 +569,7 @@ mod tests {
 
         // The already-open SSE emits the interrupt event instead of [DONE].
         let body = body_as_string(send_resp).await;
-        assert!(body.contains("{\"kind\":\"interrupt\",\"reason\":\"user_interrupt\"}"));
+        assert!(body.contains("{\"kind\":\"interrupted\"}"));
         assert!(!body.contains("[DONE]"));
         assert!(!state.ai_player.interrupt(&id));
     }
