@@ -52,9 +52,16 @@ function $(root: HTMLElement, sel: string): HTMLElement {
   return root.querySelector(sel)!;
 }
 
-/** Clicks the new-session button and waits for the backend round trip. */
+/** Clicks the session button's start face and waits for the backend round
+ * trip. The button only starts a Session while none is live. */
 async function startSession(root: HTMLElement): Promise<void> {
-  root.querySelector<HTMLButtonElement>(".new-session-btn")!.click();
+  root.querySelector<HTMLButtonElement>(".session-btn")!.click();
+  await flush();
+}
+
+/** Clicks the session button's close face and waits for the interruption. */
+async function closeSession(root: HTMLElement): Promise<void> {
+  root.querySelector<HTMLButtonElement>(".session-btn")!.click();
   await flush();
 }
 
@@ -100,12 +107,12 @@ describe("mountLayout layout", () => {
     expect(column.children[1]?.classList.contains("ai-session-box")).toBe(true);
   });
 
-  it("dashboard has new session, input mode, level — no strategy", () => {
+  it("dashboard has the session button, input mode, level — no strategy", () => {
     mockFetch();
     const root = mount();
     mountLayout(root, makeDeps());
     const dash = $(root, ".ai-dashboard");
-    expect(dash.querySelector(".new-session-btn")).toBeTruthy();
+    expect(dash.querySelector(".session-btn")).toBeTruthy();
     expect(dash.querySelector(".input-mode-select")).toBeTruthy();
     expect(dash.querySelector(".level-select")).toBeTruthy();
     // Send and the axis toggle moved to the aux bar (below the Board).
@@ -395,6 +402,42 @@ describe("mountLayout send flow", () => {
 });
 
 describe("mountLayout session lifecycle", () => {
+  it("the session button's text follows the session", async () => {
+    mockFetch();
+    const root = mount();
+    mountLayout(root, makeDeps());
+    const session = $(root, ".session-btn") as HTMLButtonElement;
+    expect(session.textContent).toBe("启动AI会话");
+
+    await startSession(root);
+    expect(session.textContent).toBe("关闭AI会话");
+
+    await closeSession(root);
+    expect(session.textContent).toBe("启动AI会话");
+  });
+
+  it("the session button is disabled while begin() is in flight", async () => {
+    mockFetch();
+    const root = mount();
+    const deps = makeDeps();
+    let settleBegin: () => void = () => {};
+    vi.mocked(deps.aiApi.begin).mockImplementation(
+      () => new Promise<void>((resolve) => (settleBegin = resolve)),
+    );
+    mountLayout(root, deps);
+    const session = $(root, ".session-btn") as HTMLButtonElement;
+
+    session.click();
+    expect(session.disabled).toBe(true);
+    session.click(); // a second click while the first begin() is pending
+    expect(deps.aiApi.begin).toHaveBeenCalledTimes(1);
+    expect(session.textContent).toBe("启动AI会话"); // still `none`
+
+    settleBegin();
+    await flush();
+    expect(session.disabled).toBe(false);
+    expect(session.textContent).toBe("关闭AI会话");
+  });
   it("a failed new session alerts and leaves Send disabled", async () => {
     mockFetch();
     const root = mount();
@@ -411,7 +454,7 @@ describe("mountLayout session lifecycle", () => {
     expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("a new session replaces the current one after confirmation", async () => {
+  it("closing a non-empty session discards it after confirmation", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -419,16 +462,21 @@ describe("mountLayout session lifecycle", () => {
     mountLayout(root, deps);
     await seedOneCommittedTurn(root, deps);
 
-    await startSession(root);
+    await closeSession(root);
     expect(confirmSpy).toHaveBeenCalled();
-    expect(deps.aiApi.begin).toHaveBeenCalledTimes(2);
-    // The fresh session is empty again: the InputMode lock reopens.
+    // The Session is gone: the box hides, Send disables, the lock reopens.
+    expect($(root, ".ai-session-box").style.display).toBe("none");
+    expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
     expect(
       (root.querySelector(".input-mode-select") as HTMLSelectElement).disabled,
     ).toBe(false);
+
+    // A closed session is gone for good: starting again is a fresh begin().
+    await startSession(root);
+    expect(deps.aiApi.begin).toHaveBeenCalledTimes(2);
   });
 
-  it("declining a new session keeps the current session", async () => {
+  it("declining to close keeps the current session", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -436,15 +484,15 @@ describe("mountLayout session lifecycle", () => {
     mountLayout(root, deps);
     await seedOneCommittedTurn(root, deps);
 
-    await startSession(root);
-    expect(deps.aiApi.begin).toHaveBeenCalledTimes(1);
-    // The non-empty session survives: the InputMode stays locked.
+    await closeSession(root);
+    // The non-empty session survives: the box stays and the InputMode locked.
+    expect($(root, ".ai-session-box").style.display).toBe("");
     expect(
       (root.querySelector(".input-mode-select") as HTMLSelectElement).disabled,
     ).toBe(true);
   });
 
-  it("a new session never confirms while the session is empty", async () => {
+  it("closing an empty session never confirms", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -452,11 +500,13 @@ describe("mountLayout session lifecycle", () => {
     mountLayout(root, deps);
     await startSession(root);
     confirmSpy.mockClear();
-    await startSession(root);
+
+    await closeSession(root);
     expect(confirmSpy).not.toHaveBeenCalled();
+    expect($(root, ".ai-session-box").style.display).toBe("none");
   });
 
-  it("a new session interrupts an in-flight Send first", async () => {
+  it("closing interrupts an in-flight Send first", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -464,9 +514,9 @@ describe("mountLayout session lifecycle", () => {
     await startSession(root);
     ($(root, ".send-btn") as HTMLButtonElement).click(); // running
 
-    await startSession(root);
+    await closeSession(root);
     expect(deps.aiApi.interrupt_by_user).toHaveBeenCalledTimes(1);
-    expect($(root, ".send-btn") as HTMLButtonElement).toBeTruthy();
+    expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("a new game ends the session after confirmation", async () => {
@@ -564,8 +614,15 @@ describe("mountLayout session lifecycle", () => {
     await startSession(root);
     expect(layout.hasNonEmptySession()).toBe(false);
 
-    await seedOneCommittedTurn(root, deps);
+    ($(root, ".send-btn") as HTMLButtonElement).click();
+    onEvent(deps)({ kind: "sse_done" });
+    await flush();
     expect(layout.hasNonEmptySession()).toBe(true);
+
+    // Closing drops the Turns the guard was protecting.
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await closeSession(root);
+    expect(layout.hasNonEmptySession()).toBe(false);
   });
 
   it("the axis checkbox toggles the axis layer", () => {
@@ -602,7 +659,7 @@ describe("mountLayout SessionBox visibility", () => {
     expect($(root, ".ai-session-box").style.display).toBe("none");
   });
 
-  it("appears once a new session succeeds", async () => {
+  it("appears once the session starts", async () => {
     mockFetch();
     const root = mount();
     mountLayout(root, makeDeps());
@@ -610,7 +667,7 @@ describe("mountLayout SessionBox visibility", () => {
     expect($(root, ".ai-session-box").style.display).toBe("");
   });
 
-  it("stays hidden when the new session fails", async () => {
+  it("stays hidden when the session start fails", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();

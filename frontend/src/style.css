@@ -349,11 +349,11 @@ button:disabled:hover {
 }
 
 .ai-dashboard select,
-.ai-dashboard .new-session-btn {
+.ai-dashboard .session-btn {
   width: max-content;
 }
 
-/* New session, InputMode and ThinkingLevel share one row. */
+/* The session button, InputMode and ThinkingLevel share one row. */
 .ai-dashboard .dashboard-row {
   display: flex;
   align-items: center;

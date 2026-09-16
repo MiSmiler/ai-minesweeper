@@ -32,7 +32,11 @@ export type AiPlayerPhase =
 
 /** Whether an AI Session is live: `none` (no session), `empty` (created, no
  * committed Turn), `non-empty` (at least one committed Turn). The `empty` /
- * `non-empty` split drives both the InputMode lock and the discard confirm. */
+ * `non-empty` split drives both the InputMode lock and the discard confirm.
+ *
+ * TODO: consider renaming `empty` / `non-empty` to `unused` / `used` — the
+ * pair tracks whether the Session has been used (a committed Turn), which
+ * these names only hint at. */
 export type SessionState = "none" | "empty" | "non-empty";
 
 /** The accumulated state of the current Send and its AI Session. */

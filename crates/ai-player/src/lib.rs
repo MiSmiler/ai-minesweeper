@@ -269,6 +269,12 @@ impl AiPlayer {
     /// Begins a fresh AI Session: loads the runtime, replaces the live Session
     /// (cancelling its in-flight Send), and clears the InputMode lock. A Load
     /// failure leaves both the live Session and the lock untouched.
+    ///
+    /// TODO: a Session should hold its system prompt from the moment it is
+    /// created, with `send` only using it. Today the first Send's `prepare`
+    /// builds the prompt, which makes that Send the Session's real creator.
+    /// Settling it also settles when the InputMode is bound, since the mode is
+    /// still changeable while the Session is empty.
     pub async fn begin(&self) -> Result<(), ProviderError> {
         self.agent.create_session().await?;
         self.mode_lock.lock().expect("mode lock poisoned").reset();

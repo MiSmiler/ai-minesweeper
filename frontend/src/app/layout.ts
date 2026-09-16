@@ -14,9 +14,14 @@
 // session is non-empty, and the discard confirms fire exactly when the session
 // is `non-empty`. The SessionBox itself is hidden until a Session exists.
 //
+// The session button carries the two lifecycle operations: "启动AI会话" is
+// enabled only while the session is `none`, and "关闭AI会话" ends it — behind
+// the discard confirm when it is `non-empty`. A live Session is closed, never
+// replaced in place.
+//
 // Send and the axis toggle are temporary manual-driver affordances (ADR-0019),
 // so they sit in `.aux-bar` below the Board; the dashboard keeps
-// only the new-session button and the two Send-strength settings, on one row.
+// only the session button and the two Send-strength settings, on one row.
 
 import type {
   AiApi,
@@ -113,6 +118,10 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   // Mirrors the machine's `sessionState` so the synchronous predicates
   // (`beforeNewGame`) can read it without a subscription.
   let sessionState: SessionState = "none";
+  // True while `machine.begin()` is in flight. The session stays `none` until
+  // it lands, so the session button would otherwise read "启动AI会话" and take
+  // a second click. Local to the layout: `startSession` is the only caller.
+  let beginPending = false;
   // The axis overlay needs `boardEl`, so it is created after the game body;
   // `onRender` may fire before the assignment below completes, but it only
   // fires once the initial snapshot loads asynchronously, by which time the
@@ -163,8 +172,8 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   dashboard.className = "ai-dashboard";
   aiColumn.appendChild(dashboard);
 
-  // The dashboard row: the new-session button and the two Send-strength
-  // settings side by side.
+  // The dashboard row: the session button and the two Send-strength settings
+  // side by side.
   const dashRow = document.createElement("div");
   dashRow.className = "dashboard-row";
   dashboard.appendChild(dashRow);
@@ -177,12 +186,12 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   sendBtn.textContent = "发送";
   sendBtn.disabled = true; // no AI Session yet
 
-  const newSessionBtn = document.createElement("button");
-  newSessionBtn.type = "button";
-  newSessionBtn.className = "new-session-btn";
-  newSessionBtn.textContent = "新建AI会话";
+  // Its two faces ("启动AI会话" / "关闭AI会话") are drawn by `syncSessionBtn`.
+  const sessionBtn = document.createElement("button");
+  sessionBtn.type = "button";
+  sessionBtn.className = "session-btn";
 
-  dashRow.appendChild(newSessionBtn);
+  dashRow.appendChild(sessionBtn);
 
   // Input-mode dropdown (3 modes, user story #20/#21).
   const modeSelect = document.createElement("select");
@@ -255,12 +264,23 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
     sendBtn.classList.toggle("running", next);
   }
 
+  /** The session button's two faces: the text follows the live Session, the
+   * disabled state follows the pending `begin()`. Single writer of both. */
+  function syncSessionBtn(): void {
+    const live = sessionState !== "none";
+    sessionBtn.textContent = live ? "关闭AI会话" : "启动AI会话";
+    sessionBtn.disabled = beginPending;
+  }
+
+  syncSessionBtn(); // the button starts in its start face
+
   const unsubscribe = machine.onState((state) => {
     sessionBox.render(state);
     // A Session is live exactly while `sessionState !== "none"`; New Game
     // (`machine.end()`) drops back to `none` and hides the box again.
     boxEl.style.display = state.sessionState === "none" ? "none" : "";
     sessionState = state.sessionState;
+    syncSessionBtn();
     setRunning(state.phase === "running");
     // The InputMode is bound by the first committed Send: lock the select
     // while a Send runs or the session is non-empty (issue #133).
@@ -297,26 +317,42 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
     machine.send(req);
   }
 
-  async function startNewSession(): Promise<void> {
-    // Replacing a non-empty session discards its Turns; ask first (the same
-    // predicate as the InputMode lock, issue #133).
+  /** The start face: only from `none`, since a live Session is closed rather
+   * than replaced. The pending flag keeps a second click from beginning a
+   * second Session while the first `begin()` is still in flight. */
+  async function startSession(): Promise<void> {
+    if (beginPending || sessionState !== "none") return;
+    beginPending = true;
+    syncSessionBtn();
+    try {
+      await machine.begin();
+    } finally {
+      beginPending = false;
+      syncSessionBtn();
+    }
+  }
+
+  /** The close face: ending a non-empty Session discards its Turns, so ask
+   * first (the same predicate as the InputMode lock, issue #133); an in-flight
+   * Send is interrupted first. */
+  async function closeSession(): Promise<void> {
     if (
       sessionState === "non-empty" &&
-      !window.confirm("新建AI会话将结束当前会话，是否继续？")
+      !window.confirm("关闭AI会话将结束当前会话，是否继续？")
     ) {
       return;
     }
-    // Pressing new session during an in-flight Send interrupts it first.
     if (running) await machine.interrupt_by_user();
-    await machine.begin();
+    machine.end();
   }
 
   sendBtn.addEventListener("click", () => {
     if (running) void machine.interrupt_by_user();
     else void startSend();
   });
-  newSessionBtn.addEventListener("click", () => {
-    void startNewSession();
+  sessionBtn.addEventListener("click", () => {
+    if (sessionState === "none") void startSession();
+    else void closeSession();
   });
 
   const dispose = (): void => {
