@@ -4,7 +4,7 @@
 // (image) using `html-to-image`'s `toPng`. It honors the caller's `pixelRatio`
 // (the image-form analyze flow passes `1` so the board is not enlarged, keeping
 // the image token budget low); the default is also `1` (no upscaling). The
-// browser-only capture never runs under jsdom — the compositions receive it via
+// browser-only capture never runs under jsdom — the layout receives it via
 // `AppDeps.captureBoardImage`, so jsdom tests substitute a stub.
 
 import { toPng } from "html-to-image";
@@ -17,3 +17,10 @@ export async function captureBoardImage(
 ): Promise<string> {
   return toPng(boardEl, { pixelRatio: opts?.pixelRatio ?? 1 });
 }
+
+/** The `captureBoardImage` signature, injected via `AppDeps` so jsdom tests can
+ * substitute a stub (the browser-only capture never runs under jsdom). */
+export type CaptureBoardImage = (
+  boardEl: HTMLElement,
+  opts?: { pixelRatio?: number },
+) => Promise<string>;

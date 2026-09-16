@@ -2,7 +2,7 @@
 // HumanPlayer driving the AiPlayer can line a reply's `(row, col)` up with a
 // Cell. It is a temporary driver affordance (ADR-0019: the manual Send goes
 // when the tool loop lands), carries no ai-player vocabulary, and lives with
-// the composition that mounts it rather than in the `ai-player` slice.
+// the layout that mounts it rather than in the `ai-player` slice.
 //
 // The label layer is a sibling of `boardEl` inside a `.board-axis-zone`
 // wrapper, absolutely positioned and `pointer-events: none`: it never
@@ -20,9 +20,9 @@ export interface BoardAxis {
   setRowsCols(rows: number, cols: number): void;
   /** Shows or hides the axis label overlay (default off). */
   setVisible(visible: boolean): void;
-  /** Tears the overlay down (mode switch resets the AiPlayer state). The
-   * wrapper takes `boardEl` with it, so this is safe whether or not the board
-   * host is still attached. */
+  /** Tears the overlay down (a fresh layout remount resets the AiPlayer
+   * state). The wrapper takes `boardEl` with it, so this is safe whether or
+   * not the board host is still attached. */
   destroy(): void;
 }
 
@@ -47,7 +47,7 @@ export function createBoardAxis(
   labelLayer.className = "axis-label-layer";
   zone.appendChild(labelLayer);
 
-  // Default off (user story #16); the AiPlay mode's checkbox drives setVisible.
+  // Default off (user story #16); the dashboard's checkbox drives setVisible.
   if (opts.visible ?? false) {
     labelLayer.classList.remove("hidden");
   } else {

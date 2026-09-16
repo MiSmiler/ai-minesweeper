@@ -1,5 +1,7 @@
 # PlayMode: an exclusive per-mode composition that abandons the current Game on switch
 
+> Superseded by ADR-0023: the PlayMode split is gone — there is one page, the AI panel sits beside the Board, and no switch abandons a Game. Read the decisions below as history; `HumanPlayer` / `AiPlayer` survive as glossary concepts.
+
 > Reopened by ADR-0019: the two members are now `HumanPlay` (was `SinglePlay`) and `AiPlay` (was `AiHelpMePlay`, then `AiGuide` in the code), and ADR-0019 states their meanings — the body below is amended to match. The decisions about exclusivity and composition are unchanged.
 
 Issues #91/#96 used `PlaySurface` as a throwaway working term; it was never a code symbol. We name the concept `PlayMode` — an open enum of the perspective a Game is shown from: `HumanPlay` (the HumanPlayer plays unaided), `AiPlay` (an AiPlayer plays the Game, driven by hand until the tool loop lands — ADR-0019), and later `HumanVsAiPlay`.

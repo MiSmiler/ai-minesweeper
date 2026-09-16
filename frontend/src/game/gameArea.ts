@@ -1,7 +1,7 @@
 // The instantiable game area: builds the HumanPlay-shaped board (difficulty
 // row + top bar + board) and its own independent game client, wiring the mouse
-// input the same way the former `main.ts` did. Used by `composeHumanPlayMode`
-// and by the `AiPlay` mode's board zone (a full copy, its own client).
+// input the same way the former `main.ts` did. Used by the single page layout
+// (ADR-0023) as its one board zone (its own client, its own DOM).
 //
 // This is the seam where the game slice (`createGameClient`) meets the `app/`
 // composition. It owns the DOM it creates, the input listeners it registers,
@@ -39,14 +39,14 @@ export interface GameAreaOptions {
   post?: (action: Action) => Promise<GameSnapshot>;
   /** Replaces the HTTP snapshot adapter (tests). */
   fetchSnapshot?: () => Promise<GameSnapshot>;
-  /** Called after a new-game action is confirmed — the mode uses it to end the
-   * AI Session. */
+  /** Called after a new-game action is confirmed — the layout uses it to end
+   * the AI Session. */
   onNewGame?: () => void;
   /** Called before a new game (smiley / difficulty) is confirmed; return false
-   * to cancel. The AiPlay mode uses it to guard a discard of a non-empty Session. */
+   * to cancel. The layout uses it to guard a discard of a non-empty Session. */
   beforeNewGame?: () => boolean;
   /** Called after the Board renders a fresh snapshot (initial load and every
-   * action response). The AiPlay mode uses it to keep its axis labels in sync
+   * action response). The layout uses it to keep its axis labels in sync
    * with the live Board size. */
   onRender?: (snapshot: GameSnapshot) => void;
 }

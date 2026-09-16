@@ -13,7 +13,7 @@ A Player that plays a Game by deciding its moves with an Agent. One AiPlayer exi
 _Avoid_: AI, agent, bot, AI opponent, guide, advisor
 
 **InputMode**:
-The way the Board is put in front of DeepSeek: `Plain` (the character grid), `Emoji`, or `Image` (a screenshot of the Board). Distinct from **PlayMode**, which is the perspective the player sees.
+The way the Board is put in front of DeepSeek: `Plain` (the character grid), `Emoji`, or `Image` (a screenshot of the Board).
 _Avoid_: BoardFormat, format, input format
 
 **BoardView**:

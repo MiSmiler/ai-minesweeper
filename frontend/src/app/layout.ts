@@ -1,16 +1,21 @@
-// The `AiPlay` composition (ADR-0012): the top-left game area (a full copy
-// of HumanPlay with its own independent game client), the bottom-left
-// dashboard (send/interrupt, new session, input mode, row/col axis), and the
-// right SessionBox shell. The "发送" button drives the `AiPlayerMachine`
-// (issue #119) which consumes the real SSE stream; the box is rendered by
-// `createSessionBox`.
+// The single page layout (ADR-0023): the Board on the left, the AI column on
+// the right holding the dashboard above the SessionBox. There is one Game and
+// one layout — the HumanPlayer plays with the mouse while the AiPlayer is
+// driven by hand through the dashboard (ADR-0019), rather than two PlayModes
+// to switch between.
+//
+// `mountLayout` is the app's composition root for the page: it builds the DOM,
+// instantiates the game slice, the AI dashboard and the SessionBox, and wires
+// the `AiPlayerMachine` to them. `main.ts` calls it once and keeps only the
+// `beforeunload` guard.
 //
 // The dashboard follows the AI Session (issue #133): Send is disabled while
 // there is no session, the InputMode select locks while a Send runs / the
 // session is non-empty, and the discard confirms fire exactly when the session
-// is `non-empty`.
+// is `non-empty`. The SessionBox itself is hidden until a Session exists.
 
 import type {
+  AiApi,
   InputMode,
   ProviderError,
   SendRequest,
@@ -23,7 +28,26 @@ import {
   type SessionState,
 } from "../ai-player/stateMachine";
 import { createGameArea, type GameArea } from "../game/gameArea";
-import type { AppDeps, Composition } from "./mode";
+import type { CaptureBoardImage } from "../ai-player/screenshot";
+
+/** What the layout needs from outside, injected by `main.ts`. */
+export interface AppDeps {
+  /** The ai-player slice entry point (a stub under jsdom). */
+  aiApi: AiApi;
+  /** Screenshots the board for the image InputMode; a stub under jsdom,
+   * since the browser-only capture never runs there. */
+  captureBoardImage: CaptureBoardImage;
+}
+
+/** The mounted page, with the two handles `main.ts` needs. */
+export interface LayoutHandle {
+  /** Tears down the listeners, the timer poll, the AI Session and the DOM. */
+  dispose(): void;
+  /** True while the AI Session holds at least one committed Turn — the
+   * `non-empty` half of the session's `empty` / `non-empty` predicate
+   * (ADR-0017), read by `main.ts`'s beforeunload guard. */
+  hasNonEmptySession(): boolean;
+}
 
 const MODES: ReadonlyArray<{ value: InputMode; label: string }> = [
   { value: "plain", label: "plain" },
@@ -43,7 +67,7 @@ function labeledField(caption: string, control: HTMLElement): HTMLElement {
   const row = document.createElement("label");
   row.className = "field-row";
   const text = document.createElement("span");
-  text.className = "ai-play-dash-label";
+  text.className = "ai-dash-label";
   text.textContent = caption;
   row.append(text, control);
   return row;
@@ -66,25 +90,16 @@ function providerAlertMessage(e: ProviderError): string {
   return `发送失败：${e.message}`;
 }
 
-/** Mounts the AiPlay composition (game area + dashboard + SessionBox) into `root`. */
-export function composeAiPlayMode(
-  root: HTMLElement,
-  deps: AppDeps,
-): Composition {
-  const container = document.createElement("div");
-  container.className = "ai-play-layout";
-  root.replaceChildren(container);
+/** Mounts the page (`.layout` = `.game-zone` + `.ai-column`) into `root`. */
+export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
+  const layout = document.createElement("div");
+  layout.className = "layout";
+  root.replaceChildren(layout);
 
-  // The game + dashboard stack into one grid cell (`.ai-play-left`) so the box
-  // (a sibling cell) growing never shifts them (issue #119).
-  const left = document.createElement("div");
-  left.className = "ai-play-left";
-  container.appendChild(left);
-
-  // --- Top-left game area: an independent game area + its axis labels ---
+  // --- Left: the game zone (an independent game area + its axis labels) ---
   const gameZone = document.createElement("div");
-  gameZone.className = "ai-play-game";
-  left.appendChild(gameZone);
+  gameZone.className = "game-zone";
+  layout.appendChild(gameZone);
 
   let currentMode: InputMode = "plain";
   // The reasoning depth (issue #122): default low, session-persistent, and
@@ -92,7 +107,7 @@ export function composeAiPlayMode(
   let currentLevel: ThinkingLevel = "low";
   let running = false;
   // Mirrors the machine's `sessionState` so the synchronous predicates
-  // (`beforeNewGame`, `confirmDiscard`) can read it without a subscription.
+  // (`beforeNewGame`) can read it without a subscription.
   let sessionState: SessionState = "none";
   // The axis overlay needs `boardEl`, so it is created after the game area;
   // `onRender` may fire before the assignment below completes, but it only
@@ -128,10 +143,14 @@ export function composeAiPlayMode(
   // drives setVisible.
   axis = createBoardAxis(gameArea.boardEl);
 
-  // --- Bottom-left dashboard ---
+  // --- Right: the AI column (dashboard above the SessionBox) ---
+  const aiColumn = document.createElement("div");
+  aiColumn.className = "ai-column";
+  layout.appendChild(aiColumn);
+
   const dashboard = document.createElement("div");
-  dashboard.className = "ai-play-dashboard";
-  left.appendChild(dashboard);
+  dashboard.className = "ai-dashboard";
+  aiColumn.appendChild(dashboard);
 
   // Send / interrupt button (dual state, user story #34) next to the new
   // session button (issue #133).
@@ -200,15 +219,18 @@ export function composeAiPlayMode(
     axis.setVisible(axisCheckbox.checked);
   });
 
-  // --- Right SessionBox shell ---
+  // --- Right, below the dashboard: the SessionBox shell ---
   const boxEl = document.createElement("div");
-  boxEl.className = "ai-play-session-box";
+  boxEl.className = "ai-session-box";
+  // Hidden until a Session exists (ADR-0023): the box exists to show a
+  // Session, so `sessionState !== "none"` is the visibility rule.
+  boxEl.style.display = "none";
   const boxTitle = document.createElement("h3");
   boxTitle.textContent = "AI 会话";
   const streamEl = document.createElement("div");
   streamEl.className = "session-stream";
   boxEl.append(boxTitle, streamEl);
-  container.appendChild(boxEl);
+  aiColumn.appendChild(boxEl);
 
   const sessionBox = createSessionBox(streamEl);
   const machine = createAiPlayerMachine({ api: deps.aiApi });
@@ -221,6 +243,9 @@ export function composeAiPlayMode(
 
   const unsubscribe = machine.onState((state) => {
     sessionBox.render(state);
+    // A Session is live exactly while `sessionState !== "none"`; New Game
+    // (`machine.end()`) drops back to `none` and hides the box again.
+    boxEl.style.display = state.sessionState === "none" ? "none" : "";
     sessionState = state.sessionState;
     setRunning(state.phase === "running");
     // The InputMode is bound by the first committed Send: lock the select
@@ -285,15 +310,12 @@ export function composeAiPlayMode(
     machine.end();
     axis?.destroy();
     gameArea.dispose();
-    container.remove();
+    layout.remove();
   };
 
   return {
     dispose,
-    /** True while the AI Session holds Turns a refresh / mode switch would clear. */
+    /** True while the AI Session holds Turns a refresh would clear. */
     hasNonEmptySession: () => sessionState === "non-empty",
-    /** Blocking confirm before discarding a non-empty AI Session (mode switch). */
-    confirmDiscard: (message) =>
-      sessionState !== "non-empty" || window.confirm(message),
   };
 }

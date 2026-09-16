@@ -31,48 +31,6 @@ body {
   align-items: center;
 }
 
-/* The top-bar mode switcher (Human / AI). Switching modes abandons
-   the current Game and mounts a fresh composition (ADR-0012). */
-.mode-switcher {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  margin-bottom: 10px;
-  background: var(--face);
-  border-radius: 8px;
-  box-shadow:
-    inset 1px 1px 0 var(--hidden-light),
-    inset -1px -1px 0 var(--hidden-dark);
-}
-
-.mode-btn {
-  padding: 4px 12px;
-  font-size: 13px;
-  border-radius: 6px;
-  border: none;
-  color: #3a3a42;
-  background: transparent;
-  transition:
-    background 120ms ease,
-    box-shadow 120ms ease;
-}
-
-.mode-btn:hover {
-  background: var(--hidden-light);
-}
-
-.mode-btn.active {
-  background: #3a3a42;
-  color: #fff;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
-}
-
-#mode-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
 .difficulty-row {
   display: flex;
   gap: 4px;
@@ -312,8 +270,7 @@ button:disabled:hover {
 
 /* --- game area --- */
 
-/* One game area (difficulty row + frame). Centered like the former flat
-   layout; the mode content region centers it. */
+/* One game area (difficulty row + frame). Centered inside the game zone.
 .game-area {
   display: flex;
   flex-direction: column;
@@ -327,33 +284,37 @@ button:disabled:hover {
   width: max-content;
 }
 
-/* --- AiPlay composition --- */
+/* --- the page layout (ADR-0023) --- */
 
-.ai-play-layout {
+/* Left: the game zone. Right: the AI column, a fixed 460px lane holding the
+   dashboard above the SessionBox. */
+.layout {
   display: grid;
-  grid-template-columns: auto auto;
-  /* Single row: the left cell (game + dashboard) and the box are sibling
-     grid items. Keeping the box out of the left cell's rows means a taller
-     box never shifts the dashboard down (issue #119). */
-  grid-template-rows: auto;
+  grid-template-columns: auto 460px;
   gap: 12px;
   align-items: start;
 }
 
-/* The left cell stacks game above dashboard; the gap mirrors the old row gap. */
-.ai-play-left {
+.game-zone {
   grid-column: 1;
-  grid-row: 1;
+}
+
+/* The AI column fills the viewport height so the SessionBox can absorb the
+   space below the dashboard and scroll internally, instead of stretching the
+   page (issue #119). Body padding is 16px top and bottom. */
+.ai-column {
+  grid-column: 2;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  height: calc(100vh - 32px);
 }
 
-.ai-play-dashboard {
+.ai-dashboard {
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-width: 200px;
   padding: 10px;
   background: var(--face);
   border-radius: 8px;
@@ -362,14 +323,14 @@ button:disabled:hover {
     inset -1px -1px 0 var(--hidden-dark);
 }
 
-.ai-play-dashboard select,
-.ai-play-dashboard .send-btn,
-.ai-play-dashboard .new-session-btn {
+.ai-dashboard select,
+.ai-dashboard .send-btn,
+.ai-dashboard .new-session-btn {
   width: max-content;
 }
 
 /* The Send and new-session buttons sit side by side (issue #133). */
-.ai-play-dashboard .button-row {
+.ai-dashboard .button-row {
   display: flex;
   gap: 6px;
 }
@@ -379,14 +340,14 @@ button:disabled:hover {
   color: #fff;
 }
 
-.ai-play-dash-label {
+.ai-dash-label {
   font-size: 12px;
   color: #3a3a42;
 }
 
 /* A dashboard setting row: caption to the left, dropdown control to the right.
    Clicking the caption focuses the control (native <label> behavior). */
-.ai-play-dashboard .field-row {
+.ai-dashboard .field-row {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -401,21 +362,19 @@ button:disabled:hover {
   cursor: pointer;
 }
 
-.ai-play-session-box h3 {
+.ai-session-box h3 {
   margin: 0 0 6px;
   font-size: 13px;
 }
 
-.ai-play-session-box {
-  grid-column: 2;
-  grid-row: 1;
+/* Hidden (display:none, set by layout.ts) until a Session exists. When shown
+   it takes the column's remaining height; `min-height: 0` lets
+   `.session-stream` be the thing that scrolls. */
+.ai-session-box {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  width: 460px;
-  /* Bound the box to the viewport (body 16px padding + mode-switcher
-     chrome ≈ 57px + bottom margin) so `.session-stream` scrolls internally
-     instead of stretching the page (issue #119). */
-  max-height: calc(100vh - 73px);
   padding: 10px;
   background: var(--face);
   border-radius: 8px;
@@ -430,7 +389,9 @@ button:disabled:hover {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-height: 200px;
+  /* The box already takes the column's remaining height, so the stream may
+     shrink to whatever is left (no 200px floor fighting the column). */
+  min-height: 0;
   padding: 8px;
   background: #fff;
   border-radius: 4px;
