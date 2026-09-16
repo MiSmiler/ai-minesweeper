@@ -16,10 +16,10 @@ import { createPreviewRenderer } from "./render/previewRender";
 import {
   formatTimer,
   renderBoard,
-  renderTopBar,
+  renderStatusBar,
   SmileyFace,
   smileyFace,
-  type TopBarEls,
+  type StatusBarEls,
 } from "./render/snapshotRender";
 
 /** Abstract player input for the client module: the DOM adapter translates
@@ -40,7 +40,7 @@ export type ClientInput =
  * HTTP adapters in the browser, mocks in tests. */
 export interface GameClientDeps {
   boardEl: HTMLElement;
-  topBarEls: TopBarEls;
+  statusBarEls: StatusBarEls;
   post: (action: Action) => Promise<GameSnapshot>;
   fetchSnapshot: () => Promise<GameSnapshot>;
   /** Called after the Board is re-rendered with a fresh snapshot (the initial
@@ -69,7 +69,7 @@ export interface GameClient {
 }
 
 export function createGameClient(deps: GameClientDeps): GameClient {
-  const { boardEl, topBarEls, post, fetchSnapshot, onRender } = deps;
+  const { boardEl, statusBarEls, post, fetchSnapshot, onRender } = deps;
 
   const gesture = createGestureMachine();
   const previewRenderer = createPreviewRenderer(boardEl);
@@ -87,7 +87,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
   };
 
   /** Whether a press is held over the Board, as reported by the last gesture
-   * dispatch — kept so an action response re-rendering the top bar can keep
+   * dispatch — kept so an action response re-rendering the status bar can keep
    * the Smiley surprised while the press is still held. */
   let boardPressed = false;
 
@@ -104,7 +104,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
   /** Renders the Smiley Button's face: surprised while a press is held over
    * the Board, otherwise the state-driven face. */
   const renderSmiley = (snapshot: GameSnapshot): void => {
-    topBarEls.smiley.textContent = boardPressed
+    statusBarEls.smiley.textContent = boardPressed
       ? SmileyFace.surprised
       : smileyFace(snapshot);
   };
@@ -127,7 +127,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
       traceGesture(gated, "game-ended");
       boardPressed = gated.boardPressed;
       renderBoard(snapshot, boardEl);
-      renderTopBar(snapshot, topBarEls);
+      renderStatusBar(snapshot, statusBarEls);
       onRender?.(snapshot);
       // Re-assert the gesture-driven face: a response re-rendering the top
       // bar must not wipe the surprise while a press is still held.
@@ -222,7 +222,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
   const pollTimer = async (): Promise<void> => {
     try {
       const next = await fetchSnapshot();
-      topBarEls.timer.textContent = formatTimer(next.elapsed_secs);
+      statusBarEls.timer.textContent = formatTimer(next.elapsed_secs);
     } catch {
       // Transient network errors are ignored; the next poll retries.
     }
@@ -231,7 +231,7 @@ export function createGameClient(deps: GameClientDeps): GameClient {
   const init = async (): Promise<void> => {
     snapshot = await fetchSnapshot();
     renderBoard(snapshot, boardEl);
-    renderTopBar(snapshot, topBarEls);
+    renderStatusBar(snapshot, statusBarEls);
     onRender?.(snapshot);
   };
 

@@ -79,16 +79,16 @@ afterEach(() => {
 });
 
 describe("mountLayout layout", () => {
-  it("builds the game zone and the AI column", () => {
+  it("builds the board column and the AI column", () => {
     mockFetch();
     const root = mount();
     mountLayout(root, makeDeps());
     const layout = root.querySelector(".layout")!;
-    expect(layout.querySelector(".game-zone")).toBeTruthy();
+    expect(layout.querySelector(".game-column")).toBeTruthy();
     expect(layout.querySelector(".ai-column")).toBeTruthy();
-    // The game zone holds a fully independent game area.
-    expect(layout.querySelector(".game-zone .game-area")).toBeTruthy();
-    expect(layout.querySelector(".game-zone .game-top-bar")).toBeTruthy();
+    // The board column holds a fully independent game body.
+    expect(layout.querySelector(".game-column .game-body")).toBeTruthy();
+    expect(layout.querySelector(".game-column .status-bar")).toBeTruthy();
   });
 
   it("stacks the dashboard above the SessionBox in the AI column", () => {
@@ -108,7 +108,7 @@ describe("mountLayout layout", () => {
     expect(dash.querySelector(".new-session-btn")).toBeTruthy();
     expect(dash.querySelector(".input-mode-select")).toBeTruthy();
     expect(dash.querySelector(".level-select")).toBeTruthy();
-    // Send and the axis toggle moved to the driver strip (below the Board).
+    // Send and the axis toggle moved to the aux bar (below the Board).
     expect(dash.querySelector(".send-btn")).toBeNull();
     expect(dash.querySelector(".axis-checkbox")).toBeNull();
     // The SessionStrategy dropdown is gone (issue #125).
@@ -116,16 +116,16 @@ describe("mountLayout layout", () => {
     expect(dash.textContent).not.toContain("会话策略");
   });
 
-  it("puts the axis toggle and Send in the strip below the Board", () => {
+  it("puts the axis toggle and Send in the aux bar below the Board", () => {
     mockFetch();
     const root = mount();
     mountLayout(root, makeDeps());
-    const strip = $(root, ".game-zone .manual-driver-strip");
-    expect(strip.querySelector(".axis-checkbox")).toBeTruthy();
-    expect(strip.querySelector(".send-btn")).toBeTruthy();
+    const bar = $(root, ".game-column .aux-bar");
+    expect(bar.querySelector(".axis-checkbox")).toBeTruthy();
+    expect(bar.querySelector(".send-btn")).toBeTruthy();
     // Axis toggle left, Send right.
-    expect(strip.children[0]?.classList.contains("axis-toggle")).toBe(true);
-    expect(strip.children[1]?.classList.contains("send-btn")).toBe(true);
+    expect(bar.children[0]?.classList.contains("axis-toggle")).toBe(true);
+    expect(bar.children[1]?.classList.contains("send-btn")).toBe(true);
   });
 
   it("input mode select offers all three modes", () => {
@@ -161,7 +161,7 @@ describe("mountLayout layout", () => {
     mockFetch();
     const root = mount();
     mountLayout(root, makeDeps());
-    const layer = root.querySelector(".axis-label-layer")!;
+    const layer = root.querySelector(".axis-layer")!;
     expect(layer.classList.contains("hidden")).toBe(true);
   });
 
@@ -170,7 +170,7 @@ describe("mountLayout layout", () => {
     const root = mount();
     mountLayout(root, makeDeps());
     await flush(); // let the board load, which fires onRender → setRowsCols
-    const layer = root.querySelector(".axis-label-layer")!;
+    const layer = root.querySelector(".axis-layer")!;
     const rows = layer.querySelectorAll(".axis-row");
     const cols = layer.querySelectorAll(".axis-col");
     expect(rows).toHaveLength(2); // makeGameSnapshot() is 2×2
@@ -574,7 +574,7 @@ describe("mountLayout session lifecycle", () => {
     const deps = makeDeps();
     mountLayout(root, deps);
     const checkbox = root.querySelector<HTMLInputElement>(".axis-checkbox")!;
-    const layer = root.querySelector(".axis-label-layer")!;
+    const layer = root.querySelector(".axis-layer")!;
     expect(layer.classList.contains("hidden")).toBe(true);
     checkbox.checked = true;
     checkbox.dispatchEvent(new Event("change"));

@@ -4,7 +4,7 @@
 // when the tool loop lands), carries no ai-player vocabulary, and lives with
 // the layout that mounts it rather than in the `ai-player` slice.
 //
-// The label layer is a sibling of `boardEl` inside a `.board-axis-zone`
+// The label layer is a sibling of `boardEl` inside an `.axis-anchor`
 // wrapper, absolutely positioned and `pointer-events: none`: it never
 // intercepts a Gesture and never appears in a screenshot of the Board.
 //
@@ -22,30 +22,30 @@ export interface BoardAxis {
   setVisible(visible: boolean): void;
   /** Tears the overlay down (a fresh layout remount resets the AiPlayer
    * state). The wrapper takes `boardEl` with it, so this is safe whether or
-   * not the board host is still attached. */
+   * not the board view is still attached. */
   destroy(): void;
 }
 
-/** Wraps `boardEl` in a `.board-axis-zone` (position:relative) and lays a
- * `.axis-label-layer` (absolute, `pointer-events:none`) over it — the shell
+/** Wraps `boardEl` in an `.axis-anchor` (position:relative) and lays a
+ * `.axis-layer` (absolute, `pointer-events:none`) over it — the shell
  * the checkbox toggles. The layer stays outside `boardEl`, so a screenshot of
  * `boardEl` never includes the axis. */
 export function createBoardAxis(
   boardEl: HTMLElement,
   opts: { visible?: boolean } = {},
 ): BoardAxis {
-  let zone = boardEl.closest<HTMLElement>(".board-axis-zone");
-  if (!zone) {
-    zone = document.createElement("div");
-    zone.className = "board-axis-zone";
+  let anchor = boardEl.closest<HTMLElement>(".axis-anchor");
+  if (!anchor) {
+    anchor = document.createElement("div");
+    anchor.className = "axis-anchor";
     const parent = boardEl.parentNode;
-    parent?.insertBefore(zone, boardEl);
-    zone.appendChild(boardEl);
+    parent?.insertBefore(anchor, boardEl);
+    anchor.appendChild(boardEl);
   }
 
   const labelLayer = document.createElement("div");
-  labelLayer.className = "axis-label-layer";
-  zone.appendChild(labelLayer);
+  labelLayer.className = "axis-layer";
+  anchor.appendChild(labelLayer);
 
   // Default off (user story #16); the dashboard's checkbox drives setVisible.
   if (opts.visible ?? false) {
@@ -109,7 +109,7 @@ export function createBoardAxis(
     }
 
     // Column labels run along the Board's bottom edge, just below it — so they
-    // never overlap the top bar or the Cells (issue #118: left + bottom axis).
+    // never overlap the status bar or the Cells (issue #118: left + bottom axis).
     for (let c = 0; c < cols; c++) {
       const col = document.createElement("div");
       col.className = "axis-col";
@@ -122,7 +122,7 @@ export function createBoardAxis(
   };
 
   const destroy = (): void => {
-    zone.remove();
+    anchor.remove();
   };
 
   return { setRowsCols, setVisible, destroy };

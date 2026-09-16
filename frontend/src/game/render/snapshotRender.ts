@@ -1,7 +1,7 @@
 import type { CellView, GameSnapshot } from "../api";
 
 /** The Smiley Button's emoji faces, keyed by use. The state-driven face comes
- * from renderTopBar; the surprised face is set directly while pressing. */
+ * from renderStatusBar; the surprised face is set directly while pressing. */
 export const SmileyFace = {
   neutral: "🙂",
   surprised: "😮",
@@ -9,7 +9,9 @@ export const SmileyFace = {
   lost: "😭",
 } as const;
 
-/** Renders the board grid from the server snapshot. Pure function of snapshot. */
+/** Renders the board grid from the server snapshot into `container`, replacing
+ * its previous contents: the `.board` grid is rebuilt on every render, so only
+ * the stable container survives across renders. Pure function of snapshot. */
 export function renderBoard(
   snapshot: GameSnapshot,
   container: HTMLElement,
@@ -63,23 +65,27 @@ export function smileyFace(snapshot: GameSnapshot): SmileyFaceValue {
 /** The face values of the Smiley Button. */
 export type SmileyFaceValue = (typeof SmileyFace)[keyof typeof SmileyFace];
 
-/** The elements the top-bar renderer writes into. */
-export interface TopBarEls {
+/** The elements the status-bar renderer writes into. */
+export interface StatusBarEls {
   counter: HTMLElement;
   smiley: HTMLElement;
   timer: HTMLElement;
-  /** The row holding the difficulty buttons; the active one is highlighted. */
-  difficultyRow: HTMLElement;
+  /** The bar holding the difficulty buttons; the active one is highlighted. */
+  difficultyBar: HTMLElement;
 }
 
-/** Renders the top bar (flag counter, smiley button, timer) from snapshot into
- * the given elements, highlighting the active difficulty button in the row. */
-export function renderTopBar(snapshot: GameSnapshot, els: TopBarEls): void {
+/** Renders the status bar (Flag Counter, Smiley Button, Timer) from snapshot
+ * into the given elements, highlighting the active difficulty button in the
+ * bar. */
+export function renderStatusBar(
+  snapshot: GameSnapshot,
+  els: StatusBarEls,
+): void {
   els.counter.textContent = formatCounter(snapshot.flags_remaining);
   els.smiley.textContent = smileyFace(snapshot);
 
   // Highlight the active difficulty button.
-  els.difficultyRow
+  els.difficultyBar
     .querySelectorAll<HTMLElement>("[data-difficulty]")
     .forEach((btn) => {
       btn.classList.toggle(

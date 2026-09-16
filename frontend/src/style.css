@@ -3,7 +3,7 @@
   --hidden: #b4b4bc;
   --hidden-light: #f2f2f6;
   --hidden-dark: #808088;
-  /* The frame/top-bar surface: between the bevel light and dark so the bevel
+  /* The panel/status-bar surface: between the bevel light and dark so the bevel
      edges stay visible against it. */
   --face: #b9b9bf;
   --revealed: #e2e2e8;
@@ -31,7 +31,7 @@ body {
   align-items: center;
 }
 
-.difficulty-row {
+.difficulty-bar {
   display: flex;
   gap: 4px;
   width: max-content;
@@ -39,7 +39,7 @@ body {
   padding: 4px;
   margin-bottom: 10px;
   /* A compact segmented control sitting above and aligned with the centered
-     game frame, instead of a full-width strip. */
+     game panel, instead of a full-width bar. */
   background: var(--face);
   border-radius: 8px;
   box-shadow:
@@ -47,17 +47,17 @@ body {
     inset -1px -1px 0 var(--hidden-dark);
 }
 
-/* The single beveled frame uniting the top bar and the Board into one
+/* The single beveled panel uniting the status bar and the Board into one
    rectangle; it hugs the Board's width and centers in the window while the
-   difficulty row sits as a compact segmented control above it. */
-.game-frame {
+   difficulty bar sits as a compact segmented control above it. */
+.game-panel {
   width: max-content;
   align-self: center;
   padding: 4px;
   background: var(--face);
   border: none;
   /* The classic two-tone bevel, rendered as inset shadows so the edge stays
-     smooth; the drop shadows lift the frame off the page. */
+     smooth; the drop shadows lift the panel off the page. */
   box-shadow:
     inset 2px 2px 0 var(--hidden-light),
     inset -2px -2px 0 var(--hidden-dark),
@@ -65,7 +65,7 @@ body {
     0 0 24px rgba(0, 0, 0, 0.06);
 }
 
-.game-top-bar {
+.status-bar {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
@@ -76,12 +76,13 @@ body {
   font-size: 14px;
 }
 
-/* Classic-style three-digit displays (counter, timer): red digits on a dark
-   panel, system font — no LED font pursuit (ADR-0006). */
-.led {
+/* Classic-style three-digit displays (the Flag Counter and the Timer): red
+   digits on a dark panel, system font — no LED font pursuit (ADR-0006). */
+.flag-counter,
+.timer {
   justify-self: start;
-  /* Height matches the Smiley Button's square so the three top-bar controls
-     sit level. */
+  /* Height matches the Smiley Button's square so the three status-bar
+     controls sit level. */
   height: 30px;
   min-width: 3ch;
   padding: 0 6px;
@@ -95,21 +96,21 @@ body {
   font-variant-numeric: tabular-nums;
   /* An inset display window reads concave: light from above shadows the top
      and left edges and catches the bottom and right ones (the opposite of
-     the raised bevels on the frame/Cells). */
+     the raised bevels on the panel/Cells). */
   border-top: 2px solid var(--hidden-dark);
   border-left: 2px solid var(--hidden-dark);
   border-bottom: 2px solid var(--hidden-light);
   border-right: 2px solid var(--hidden-light);
 }
 
-#timer.led,
-.led[data-role="timer"] {
+.timer {
   justify-self: end;
 }
 
 .smiley {
   justify-self: center;
-  /* A square box; the LED panels share this 30px height (see .led). */
+  /* A square box; the three-digit displays share this 30px height (see
+     .flag-counter / .timer). */
   width: 30px;
   height: 30px;
   padding: 0;
@@ -155,7 +156,7 @@ button:disabled:hover {
   background: var(--hidden);
 }
 
-/* The difficulty buttons form the segmented control in .difficulty-row. */
+/* The difficulty buttons form the segmented control in .difficulty-bar. */
 .difficulty {
   color: #3a3a42;
   background: transparent;
@@ -268,26 +269,28 @@ button:disabled:hover {
   color: #606060;
 }
 
-/* --- game area --- */
+/* --- the game slice's DOM root --- */
 
-/* One game area (difficulty row + frame). Centered inside the game zone. */
-.game-area {
+/* The difficulty bar over the game panel, centered inside the column. */
+.game-body {
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
-/* The Board host container the client renders `.board` into. Kept as a
-   separate element from `.board` (which is re-created on every render) so the
-   axis labels can sit around it without entering a `.board` screenshot. */
-.board-host {
+/* The Board view: the stable shell the client renders `.board` into. `.board`
+   is re-created on every render, so everything holding a Board handle — the
+   screenshot, the geometry measurement, the axis wrapper — takes this element
+   instead. It is also what keeps the axis labels out of a `.board` screenshot:
+   they are its siblings, never its children. */
+.board-view {
   width: max-content;
 }
 
 /* --- the page layout (ADR-0023) --- */
 
-/* Left: the game zone. Right: the AI column, a fixed 460px lane holding the
-   dashboard above the SessionBox. */
+/* Left: the board column. Right: the AI column, a fixed 460px lane holding
+   the dashboard above the SessionBox. */
 .layout {
   display: grid;
   grid-template-columns: auto 460px;
@@ -295,9 +298,9 @@ button:disabled:hover {
   align-items: start;
 }
 
-/* The game zone centers the game area and the driver strip on one shared
-   width: the wider of the difficulty row and the Board frame. */
-.game-zone {
+/* The board column centers the game body and the aux bar on one shared width:
+   the wider of the difficulty bar and the game panel. */
+.game-column {
   grid-column: 1;
   display: flex;
   flex-direction: column;
@@ -306,8 +309,8 @@ button:disabled:hover {
 
 /* The temporary manual-driver controls (ADR-0019), below the Board: a compact
    pill holding the axis toggle and Send, right-aligned to the widest of the
-   difficulty row and the Board frame. */
-.manual-driver-strip {
+   difficulty bar and the game panel. */
+.aux-bar {
   align-self: flex-end;
   display: flex;
   align-items: center;
@@ -490,15 +493,15 @@ button:disabled:hover {
 
 /* --- board axis (user stories #15-#19) --- */
 
-/* The axis zone wraps the board; the label layer is absolutely positioned
+/* The axis anchor wraps the board; the label layer is absolutely positioned
    around it, pointer-events:none so it never intercepts a click and never
    appears in a screenshot of `.board` (labels are outside `#board`). */
-.board-axis-zone {
+.axis-anchor {
   position: relative;
   width: max-content;
 }
 
-.axis-label-layer {
+.axis-layer {
   pointer-events: none;
   position: absolute;
   top: 0;
@@ -512,7 +515,7 @@ button:disabled:hover {
   user-select: none;
 }
 
-.axis-label-layer.hidden {
+.axis-layer.hidden {
   display: none;
 }
 
@@ -533,7 +536,7 @@ button:disabled:hover {
 /* Col labels sit just below the Board's last Row, centered over their Column;
    createBoardAxis sets each Col label's `left` (center on its Column) and `top`
    (just below the Board's bottom edge) in px, so they never overlap the Cells or
-   the top bar. The label layer is outside `#board`, so a `.board` screenshot
+   the status bar. The label layer is outside `#board`, so a `.board` screenshot
    never includes the axis. */
 .axis-col {
   position: absolute;

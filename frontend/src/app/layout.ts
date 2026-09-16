@@ -1,5 +1,5 @@
 // The single page layout (ADR-0023): the Board on the left with the
-// manual-driver strip below it, the AI column on the right holding the
+// aux bar below it, the AI column on the right holding the
 // dashboard above the SessionBox. There is one Game and one layout — the
 // HumanPlayer plays with the mouse while the AiPlayer is driven by hand
 // (ADR-0019), rather than two PlayModes to switch between.
@@ -15,7 +15,7 @@
 // is `non-empty`. The SessionBox itself is hidden until a Session exists.
 //
 // Send and the axis toggle are temporary manual-driver affordances (ADR-0019),
-// so they sit in `.manual-driver-strip` below the Board; the dashboard keeps
+// so they sit in `.aux-bar` below the Board; the dashboard keeps
 // only the new-session button and the two Send-strength settings, on one row.
 
 import type {
@@ -94,16 +94,16 @@ function providerAlertMessage(e: ProviderError): string {
   return `发送失败：${e.message}`;
 }
 
-/** Mounts the page (`.layout` = `.game-zone` + `.ai-column`) into `root`. */
+/** Mounts the page (`.layout` = `.game-column` + `.ai-column`) into `root`. */
 export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   const layout = document.createElement("div");
   layout.className = "layout";
   root.replaceChildren(layout);
 
-  // --- Left: the game zone (an independent game area + its axis labels) ---
-  const gameZone = document.createElement("div");
-  gameZone.className = "game-zone";
-  layout.appendChild(gameZone);
+  // --- Left: the board column (an independent game body + its axis labels) ---
+  const gameColumn = document.createElement("div");
+  gameColumn.className = "game-column";
+  layout.appendChild(gameColumn);
 
   let currentMode: InputMode = "plain";
   // The reasoning depth (issue #122): default low, session-persistent, and
@@ -113,13 +113,13 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   // Mirrors the machine's `sessionState` so the synchronous predicates
   // (`beforeNewGame`) can read it without a subscription.
   let sessionState: SessionState = "none";
-  // The axis overlay needs `boardEl`, so it is created after the game area;
+  // The axis overlay needs `boardEl`, so it is created after the game body;
   // `onRender` may fire before the assignment below completes, but it only
   // fires once the initial snapshot loads asynchronously, by which time the
   // `createBoardAxis` call has run.
   let axis: BoardAxis | null = null;
 
-  const gameArea: GameArea = createGameArea(gameZone, {
+  const gameArea: GameArea = createGameArea(gameColumn, {
     onNewGame: () => {
       // A new game ends the AI Session (the backend's new-game action already
       // ended it, issue #133).
@@ -147,12 +147,12 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   // drives setVisible.
   axis = createBoardAxis(gameArea.boardEl);
 
-  // The manual-driver strip: the controls a human uses to drive the AiPlayer
-  // by hand. Both are temporary — the Send goes when the tool loop lands — so
-  // they sit below the Board instead of in the dashboard.
-  const driverStrip = document.createElement("div");
-  driverStrip.className = "manual-driver-strip";
-  gameZone.appendChild(driverStrip);
+  // The aux bar: the controls a human uses to drive the AiPlayer by hand.
+  // Both are temporary — the Send goes when the tool loop lands — so they sit
+  // below the Board instead of in the dashboard.
+  const auxBar = document.createElement("div");
+  auxBar.className = "aux-bar";
+  gameColumn.appendChild(auxBar);
 
   // --- Right: the AI column (dashboard above the SessionBox) ---
   const aiColumn = document.createElement("div");
@@ -170,7 +170,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   dashboard.appendChild(dashRow);
 
   // Send / interrupt button (dual state, user story #34); mounted in the
-  // driver strip below the Board, not here.
+  // aux bar below the Board, not here.
   const sendBtn = document.createElement("button");
   sendBtn.type = "button";
   sendBtn.className = "send-btn";
@@ -226,9 +226,9 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   const axisToggle = document.createElement("label");
   axisToggle.className = "axis-toggle";
   axisToggle.append(axisCheckbox, document.createTextNode("行列号"));
-  // Axis toggle left, Send right; the strip hugs its content and sits at the
-  // zone's right edge.
-  driverStrip.append(axisToggle, sendBtn);
+  // Axis toggle left, Send right; the bar hugs its content and sits at the
+  // column's right edge.
+  auxBar.append(axisToggle, sendBtn);
   axisCheckbox.addEventListener("change", () => {
     axis.setVisible(axisCheckbox.checked);
   });

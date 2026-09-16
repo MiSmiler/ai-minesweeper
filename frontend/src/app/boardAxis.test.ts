@@ -2,9 +2,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createBoardAxis } from "./boardAxis";
 
-/** Builds a board host holding a `.board` grid of `rows`×`cols` cells. */
+/** Builds a board view holding a `.board` grid of `rows`×`cols` cells. */
 function makeBoard(rows: number, cols: number): HTMLElement {
-  const host = document.createElement("div");
+  const view = document.createElement("div");
   const board = document.createElement("div");
   board.className = "board";
   for (let r = 0; r < rows; r++) {
@@ -16,9 +16,9 @@ function makeBoard(rows: number, cols: number): HTMLElement {
       board.appendChild(cell);
     }
   }
-  host.appendChild(board);
-  document.body.appendChild(host);
-  return host;
+  view.appendChild(board);
+  document.body.appendChild(view);
+  return view;
 }
 
 beforeEach(() => {
@@ -26,38 +26,38 @@ beforeEach(() => {
 });
 
 describe("createBoardAxis", () => {
-  it("wraps the board host in a .board-axis-zone", () => {
-    const host = makeBoard(2, 2);
-    createBoardAxis(host);
-    expect(host.parentElement!.className).toContain("board-axis-zone");
+  it("wraps the board view in a .axis-anchor", () => {
+    const view = makeBoard(2, 2);
+    createBoardAxis(view);
+    expect(view.parentElement!.className).toContain("axis-anchor");
   });
 
-  it("keeps the label layer outside the board host (screenshot-safe)", () => {
-    const host = makeBoard(2, 2);
-    createBoardAxis(host);
-    const zone = host.parentElement!;
-    expect(zone.querySelector(".axis-label-layer")).toBeTruthy();
-    expect(host.querySelector(".axis-label-layer")).toBeNull();
+  it("keeps the label layer outside the board view (screenshot-safe)", () => {
+    const view = makeBoard(2, 2);
+    createBoardAxis(view);
+    const anchor = view.parentElement!;
+    expect(anchor.querySelector(".axis-layer")).toBeTruthy();
+    expect(view.querySelector(".axis-layer")).toBeNull();
   });
 
   it("starts hidden by default", () => {
-    const host = makeBoard(2, 2);
-    createBoardAxis(host);
-    const layer = host.parentElement!.querySelector(".axis-label-layer")!;
+    const view = makeBoard(2, 2);
+    createBoardAxis(view);
+    const layer = view.parentElement!.querySelector(".axis-layer")!;
     expect(layer.classList.contains("hidden")).toBe(true);
   });
 
   it("starts visible when opts.visible is true", () => {
-    const host = makeBoard(2, 2);
-    createBoardAxis(host, { visible: true });
-    const layer = host.parentElement!.querySelector(".axis-label-layer")!;
+    const view = makeBoard(2, 2);
+    createBoardAxis(view, { visible: true });
+    const layer = view.parentElement!.querySelector(".axis-layer")!;
     expect(layer.classList.contains("hidden")).toBe(false);
   });
 
   it("setVisible toggles the layer", () => {
-    const host = makeBoard(2, 2);
-    const axis = createBoardAxis(host);
-    const layer = host.parentElement!.querySelector(".axis-label-layer")!;
+    const view = makeBoard(2, 2);
+    const axis = createBoardAxis(view);
+    const layer = view.parentElement!.querySelector(".axis-layer")!;
     axis.setVisible(true);
     expect(layer.classList.contains("hidden")).toBe(false);
     axis.setVisible(false);
@@ -65,10 +65,10 @@ describe("createBoardAxis", () => {
   });
 
   it("setRowsCols renders 0-based row labels along the left edge", () => {
-    const host = makeBoard(3, 4);
-    const axis = createBoardAxis(host);
+    const view = makeBoard(3, 4);
+    const axis = createBoardAxis(view);
     axis.setRowsCols(3, 4);
-    const rows = host.parentElement!.querySelectorAll<HTMLElement>(".axis-row");
+    const rows = view.parentElement!.querySelectorAll<HTMLElement>(".axis-row");
     expect(rows).toHaveLength(3);
     expect(Array.from(rows).map((el) => el.textContent)).toEqual([
       "0",
@@ -83,10 +83,10 @@ describe("createBoardAxis", () => {
   });
 
   it("setRowsCols renders 0-based col labels along the bottom edge", () => {
-    const host = makeBoard(3, 4);
-    const axis = createBoardAxis(host);
+    const view = makeBoard(3, 4);
+    const axis = createBoardAxis(view);
     axis.setRowsCols(3, 4);
-    const cols = host.parentElement!.querySelectorAll<HTMLElement>(".axis-col");
+    const cols = view.parentElement!.querySelectorAll<HTMLElement>(".axis-col");
     expect(cols).toHaveLength(4);
     expect(Array.from(cols).map((el) => el.textContent)).toEqual([
       "0",
@@ -103,42 +103,38 @@ describe("createBoardAxis", () => {
   });
 
   it("setRowsCols lives inside the label layer, outside the board", () => {
-    const host = makeBoard(2, 2);
-    const axis = createBoardAxis(host);
+    const view = makeBoard(2, 2);
+    const axis = createBoardAxis(view);
     axis.setRowsCols(2, 2);
-    const zone = host.parentElement!;
-    expect(zone.querySelectorAll(".axis-label-layer .axis-row")).toHaveLength(
-      2,
-    );
-    expect(zone.querySelectorAll(".axis-label-layer .axis-col")).toHaveLength(
-      2,
-    );
-    // Never inside the board host (screenshot-safe).
-    expect(host.querySelector(".axis-row")).toBeNull();
-    expect(host.querySelector(".axis-col")).toBeNull();
+    const anchor = view.parentElement!;
+    expect(anchor.querySelectorAll(".axis-layer .axis-row")).toHaveLength(2);
+    expect(anchor.querySelectorAll(".axis-layer .axis-col")).toHaveLength(2);
+    // Never inside the board view (screenshot-safe).
+    expect(view.querySelector(".axis-row")).toBeNull();
+    expect(view.querySelector(".axis-col")).toBeNull();
   });
 
   it("setRowsCols re-renders on resize without stale labels", () => {
-    const host = makeBoard(2, 2);
-    const axis = createBoardAxis(host);
+    const view = makeBoard(2, 2);
+    const axis = createBoardAxis(view);
     axis.setRowsCols(2, 2);
-    expect(host.parentElement!.querySelectorAll(".axis-row")).toHaveLength(2);
-    expect(host.parentElement!.querySelectorAll(".axis-col")).toHaveLength(2);
+    expect(view.parentElement!.querySelectorAll(".axis-row")).toHaveLength(2);
+    expect(view.parentElement!.querySelectorAll(".axis-col")).toHaveLength(2);
 
     axis.setRowsCols(3, 5);
-    expect(host.parentElement!.querySelectorAll(".axis-row")).toHaveLength(3);
-    expect(host.parentElement!.querySelectorAll(".axis-col")).toHaveLength(5);
+    expect(view.parentElement!.querySelectorAll(".axis-row")).toHaveLength(3);
+    expect(view.parentElement!.querySelectorAll(".axis-col")).toHaveLength(5);
     expect(
-      host.parentElement!.querySelectorAll(".axis-col")[4]!.textContent,
+      view.parentElement!.querySelectorAll(".axis-col")[4]!.textContent,
     ).toBe("4");
   });
 
   it("label visibility follows setVisible", () => {
-    const host = makeBoard(2, 2);
-    const axis = createBoardAxis(host);
+    const view = makeBoard(2, 2);
+    const axis = createBoardAxis(view);
     axis.setRowsCols(2, 2);
     const layer =
-      host.parentElement!.querySelector<HTMLElement>(".axis-label-layer")!;
+      view.parentElement!.querySelector<HTMLElement>(".axis-layer")!;
     axis.setVisible(true);
     expect(layer.classList.contains("hidden")).toBe(false);
     axis.setVisible(false);
@@ -146,10 +142,10 @@ describe("createBoardAxis", () => {
   });
 
   it("destroy removes the axis wrapper", () => {
-    const host = makeBoard(2, 2);
-    const axis = createBoardAxis(host);
-    const zone = host.parentElement!;
+    const view = makeBoard(2, 2);
+    const axis = createBoardAxis(view);
+    const anchor = view.parentElement!;
     axis.destroy();
-    expect(zone.isConnected).toBe(false);
+    expect(anchor.isConnected).toBe(false);
   });
 });

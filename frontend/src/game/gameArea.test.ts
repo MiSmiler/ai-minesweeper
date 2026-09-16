@@ -39,12 +39,12 @@ describe("createGameArea", () => {
     mockFetch();
     const root = mount();
     const area = createGameArea(root);
-    const container = root.querySelector(".game-area")!;
+    const container = root.querySelector(".game-body")!;
     expect(container).toBeTruthy();
-    expect(container.querySelector(".difficulty-row")).toBeTruthy();
-    expect(container.querySelector(".game-frame")).toBeTruthy();
-    expect(container.querySelector(".game-top-bar")).toBeTruthy();
-    expect(container.querySelector(".board-host")).toBeTruthy();
+    expect(container.querySelector(".difficulty-bar")).toBeTruthy();
+    expect(container.querySelector(".game-panel")).toBeTruthy();
+    expect(container.querySelector(".status-bar")).toBeTruthy();
+    expect(container.querySelector(".board-view")).toBeTruthy();
     area.dispose();
   });
 
@@ -57,13 +57,13 @@ describe("createGameArea", () => {
     area.dispose();
   });
 
-  it("hands the client a working set of top-bar elements", async () => {
+  it("hands the client a working set of status-bar elements", async () => {
     mockFetch(makeGameSnapshot({ flags_remaining: 10, elapsed_secs: 7 }));
     const root = mount();
     const area = createGameArea(root);
     await flush();
-    expect(area.topBarEls.counter.textContent).toBe("010");
-    expect(area.topBarEls.timer.textContent).toBe("007");
+    expect(area.statusBarEls.counter.textContent).toBe("010");
+    expect(area.statusBarEls.timer.textContent).toBe("007");
     area.dispose();
   });
 
@@ -84,6 +84,6 @@ describe("createGameArea", () => {
     const root = mount();
     const area = createGameArea(root);
     area.dispose();
-    expect(root.querySelector(".game-area")).toBeNull();
+    expect(root.querySelector(".game-body")).toBeNull();
   });
 });

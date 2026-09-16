@@ -1,7 +1,7 @@
 // The instantiable game area: builds the HumanPlay-shaped board (difficulty
-// row + top bar + board) and its own independent game client, wiring the mouse
-// input the same way the former `main.ts` did. Used by the single page layout
-// (ADR-0023) as its one board zone (its own client, its own DOM).
+// bar + status bar + board) and its own independent game client, wiring the
+// mouse input the same way the former `main.ts` did. Used by the single page
+// layout (ADR-0023) as its one board column (its own client, its own DOM).
 //
 // This is the seam where the game slice (`createGameClient`) meets the `app/`
 // composition. It owns the DOM it creates, the input listeners it registers,
@@ -21,14 +21,16 @@ import {
   type BoardGeometry,
 } from "./render/hitTest";
 import { log } from "../infra/log";
-import type { TopBarEls } from "./render/snapshotRender";
+import type { StatusBarEls } from "./render/snapshotRender";
 
 export interface GameArea {
-  /** The root container of the game area (a `.game-area` div). */
+  /** The root container of the game area (a `.game-body` div). */
   container: HTMLElement;
-  /** The Board container the client renders into. */
+  /** The stable shell the client renders `.board` into (`.board` itself is
+   * re-created on every render). Also the screenshot target and the element
+   * the axis wrapper anchors to. */
   boardEl: HTMLElement;
-  topBarEls: TopBarEls;
+  statusBarEls: StatusBarEls;
   client: GameClient;
   /** Removes the containers, the input listeners and the timer poll. */
   dispose(): void;
@@ -59,45 +61,43 @@ export function createGameArea(
   opts: GameAreaOptions = {},
 ): GameArea {
   const container = document.createElement("div");
-  container.className = "game-area";
+  container.className = "game-body";
 
-  // --- Difficulty row ---
-  const difficultyRow = document.createElement("div");
-  difficultyRow.className = "difficulty-row";
+  // --- Difficulty bar ---
+  const difficultyBar = document.createElement("div");
+  difficultyBar.className = "difficulty-bar";
   for (const level of DIFFICULTIES) {
     const btn = document.createElement("button");
     btn.className = "difficulty";
     btn.dataset.difficulty = level;
     btn.textContent = level[0]!.toUpperCase() + level.slice(1);
-    difficultyRow.appendChild(btn);
+    difficultyBar.appendChild(btn);
   }
 
-  // --- Top bar ---
-  const topBar = document.createElement("div");
-  topBar.className = "game-top-bar";
+  // --- Status bar ---
+  const statusBar = document.createElement("div");
+  statusBar.className = "status-bar";
   const counter = document.createElement("div");
-  counter.className = "led";
-  counter.dataset.role = "counter";
+  counter.className = "flag-counter";
   const smiley = document.createElement("button");
   smiley.className = "smiley";
   smiley.type = "button";
   smiley.setAttribute("aria-label", "New game");
   smiley.textContent = "🙂";
   const timer = document.createElement("div");
-  timer.className = "led";
-  timer.dataset.role = "timer";
-  topBar.append(counter, smiley, timer);
+  timer.className = "timer";
+  statusBar.append(counter, smiley, timer);
 
   // --- Board ---
   const boardEl = document.createElement("div");
-  boardEl.className = "board-host";
-  const frame = document.createElement("div");
-  frame.className = "game-frame";
-  frame.append(topBar, boardEl);
-  container.append(difficultyRow, frame);
+  boardEl.className = "board-view";
+  const panel = document.createElement("div");
+  panel.className = "game-panel";
+  panel.append(statusBar, boardEl);
+  container.append(difficultyBar, panel);
   root.replaceChildren(container);
 
-  const topBarEls: TopBarEls = { counter, smiley, timer, difficultyRow };
+  const statusBarEls: StatusBarEls = { counter, smiley, timer, difficultyBar };
 
   const post = async (action: Action): Promise<GameSnapshot> => {
     const snap = await (opts.post ?? postAction)(action);
@@ -108,7 +108,7 @@ export function createGameArea(
 
   const client = createGameClient({
     boardEl,
-    topBarEls,
+    statusBarEls,
     post,
     fetchSnapshot,
     onRender: opts.onRender,
@@ -262,5 +262,5 @@ export function createGameArea(
     container.remove();
   };
 
-  return { container, boardEl, topBarEls, client, dispose };
+  return { container, boardEl, statusBarEls, client, dispose };
 }

@@ -5,8 +5,8 @@ import {
   formatCounter,
   formatTimer,
   renderBoard,
-  renderTopBar,
-  type TopBarEls,
+  renderStatusBar,
+  type StatusBarEls,
 } from "./snapshotRender";
 import { makeGameSnapshot } from "../../game/testUtils";
 
@@ -28,15 +28,15 @@ function renderCells(snapshot: GameSnapshot): HTMLElement[] {
 
 beforeEach(() => {
   document.body.innerHTML = `
-    <div class="difficulty-row">
+    <div class="difficulty-bar">
       <button data-difficulty="beginner">Beginner</button>
       <button data-difficulty="intermediate">Intermediate</button>
       <button data-difficulty="expert">Expert</button>
     </div>
-    <div class="game-top-bar">
-      <div id="counter" class="led"></div>
+    <div class="status-bar">
+      <div id="counter" class="flag-counter"></div>
       <button id="smiley" class="smiley"></button>
-      <div id="timer" class="led"></div>
+      <div id="timer" class="timer"></div>
     </div>
   `;
 });
@@ -146,58 +146,58 @@ describe("renderBoard", () => {
   });
 });
 
-describe("renderTopBar", () => {
-  /** The top-bar elements from the beforeEach document body. */
-  const els = (): TopBarEls => ({
+describe("renderStatusBar", () => {
+  /** The status-bar elements from the beforeEach document body. */
+  const els = (): StatusBarEls => ({
     counter: document.getElementById("counter")!,
     smiley: document.getElementById("smiley")!,
     timer: document.getElementById("timer")!,
-    difficultyRow: document.querySelector(".difficulty-row")!,
+    difficultyBar: document.querySelector(".difficulty-bar")!,
   });
 
   it("renders Flags Remaining as a three-digit counter", () => {
     const bar = els();
-    renderTopBar(makeGameSnapshot({ flags_remaining: 5 }), bar);
+    renderStatusBar(makeGameSnapshot({ flags_remaining: 5 }), bar);
     expect(bar.counter.textContent).toBe("005");
   });
 
   it("renders negative Flags Remaining with a minus sign", () => {
     const bar = els();
-    renderTopBar(makeGameSnapshot({ flags_remaining: -2 }), bar);
+    renderStatusBar(makeGameSnapshot({ flags_remaining: -2 }), bar);
     expect(bar.counter.textContent).toBe("-2");
   });
 
   it("renders the Timer as three-digit seconds", () => {
     const bar = els();
-    renderTopBar(makeGameSnapshot({ elapsed_secs: 65 }), bar);
+    renderStatusBar(makeGameSnapshot({ elapsed_secs: 65 }), bar);
     expect(bar.timer.textContent).toBe("065");
   });
 
   it("shows the neutral smiley while Ready or Playing", () => {
     const bar = els();
-    renderTopBar(makeGameSnapshot({ game_state: "playing" }), bar);
+    renderStatusBar(makeGameSnapshot({ game_state: "playing" }), bar);
     expect(bar.smiley.textContent).toBe("🙂");
-    renderTopBar(makeGameSnapshot({ game_state: "ready" }), bar);
+    renderStatusBar(makeGameSnapshot({ game_state: "ready" }), bar);
     expect(bar.smiley.textContent).toBe("🙂");
   });
 
   it("shows the sunglasses smiley on a Won game", () => {
     const bar = els();
-    renderTopBar(makeGameSnapshot({ game_state: "won" }), bar);
+    renderStatusBar(makeGameSnapshot({ game_state: "won" }), bar);
     expect(bar.smiley.textContent).toBe("😎");
   });
 
   it("shows the crying smiley on a Lost game", () => {
     const bar = els();
-    renderTopBar(makeGameSnapshot({ game_state: "lost" }), bar);
+    renderStatusBar(makeGameSnapshot({ game_state: "lost" }), bar);
     expect(bar.smiley.textContent).toBe("😭");
   });
 
   it("highlights the active difficulty button", () => {
     const bar = els();
-    renderTopBar(makeGameSnapshot({ difficulty: "intermediate" }), bar);
+    renderStatusBar(makeGameSnapshot({ difficulty: "intermediate" }), bar);
     const buttons =
-      bar.difficultyRow.querySelectorAll<HTMLElement>("[data-difficulty]");
+      bar.difficultyBar.querySelectorAll<HTMLElement>("[data-difficulty]");
     const active = Array.from(buttons).filter((b) =>
       b.classList.contains("active"),
     );

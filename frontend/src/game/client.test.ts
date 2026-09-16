@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { Action, CellView, GameSnapshot, Position } from "./api";
 import { createGameClient } from "./client";
-import type { TopBarEls } from "./render/snapshotRender";
+import type { StatusBarEls } from "./render/snapshotRender";
 import { makeGameSnapshot } from "./testUtils";
 
 function deferred<T>() {
@@ -24,26 +24,26 @@ const view = (
 
 beforeEach(() => {
   document.body.innerHTML = `
-    <div class="difficulty-row">
+    <div class="difficulty-bar">
       <button data-difficulty="beginner">Beginner</button>
       <button data-difficulty="intermediate">Intermediate</button>
       <button data-difficulty="expert">Expert</button>
     </div>
-    <div class="game-top-bar">
-      <div id="counter" class="led"></div>
+    <div class="status-bar">
+      <div id="counter" class="flag-counter"></div>
       <button id="smiley" class="smiley"></button>
-      <div id="timer" class="led"></div>
+      <div id="timer" class="timer"></div>
     </div>
     <div id="board"></div>
   `;
 });
 
 const boardEl = (): HTMLElement => document.getElementById("board")!;
-const topBarEls = (): TopBarEls => ({
+const statusBarEls = (): StatusBarEls => ({
   counter: document.getElementById("counter")!,
   smiley: document.getElementById("smiley")!,
   timer: document.getElementById("timer")!,
-  difficultyRow: document.querySelector(".difficulty-row")!,
+  difficultyBar: document.querySelector(".difficulty-bar")!,
 });
 const smiley = (): HTMLElement => document.getElementById("smiley")!;
 const counter = (): HTMLElement => document.getElementById("counter")!;
@@ -66,7 +66,7 @@ function makeClient(
     over.fetchSnapshot ?? vi.fn().mockResolvedValue(makeGameSnapshot());
   const client = createGameClient({
     boardEl: boardEl(),
-    topBarEls: topBarEls(),
+    statusBarEls: statusBarEls(),
     post,
     fetchSnapshot,
   });
