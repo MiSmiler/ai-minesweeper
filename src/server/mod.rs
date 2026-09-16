@@ -129,8 +129,8 @@ pub(crate) async fn post_action(
     // candidates at debug); here we only record that a new game was created.
     if matches!(outcome, ActionOutcome::NewGame) {
         // A new Game replaces the board the AI Session was reasoning about, so
-        // the session ends with it (ADR-0017).
-        state.ai_player.end_session();
+        // the Session ends with it (ADR-0021).
+        state.ai_player.end();
         log_new_game(&game, "player");
     }
     debug!(
@@ -155,7 +155,7 @@ mod tests {
     use super::*;
     use crate::server::wire::{ActionDto, ActionKind, GameSnapshot, PositionDto};
     use agent::MockProvider;
-    use agent::{Agent, ProviderSet, ThinkingLevel};
+    use agent::{Agent, ProviderSet, SendError as AgentSendError, ThinkingLevel};
     use ai_player::{AiPlayer, InputMode, SendError, SendRequest};
     use game::{Difficulty, Features, Game, GameConfig, GameState, Position};
 
@@ -170,7 +170,7 @@ mod tests {
         set.insert("mock".to_string(), Box::new(MockProvider::new()));
         let mut agent = Agent::new(set);
         agent.set_model("mock-model".to_string(), Some("mock"));
-        let ai_player = AiPlayer::new(Arc::new(tokio::sync::Mutex::new(agent)));
+        let ai_player = AiPlayer::new(Arc::new(agent));
         Arc::new(AppState { game, ai_player })
     }
 
@@ -185,15 +185,9 @@ mod tests {
     #[tokio::test]
     async fn a_new_game_action_ends_the_ai_session() {
         let state = app_state();
-        let id = state.ai_player.create_session().await.unwrap();
+        state.ai_player.begin().await.unwrap();
         let game = state.game.lock().unwrap().clone();
-        assert!(
-            state
-                .ai_player
-                .send(&id, &game, send_request())
-                .await
-                .is_ok()
-        );
+        assert!(state.ai_player.send(&game, send_request()).await.is_ok());
 
         let resp = post_action(
             State(state.clone()),
@@ -202,12 +196,12 @@ mod tests {
         .await;
         assert!(resp.is_ok());
 
-        // The session is gone: its id is no longer the live one.
-        let err = match state.ai_player.send(&id, &game, send_request()).await {
+        // The Session is gone: a Send is refused with no live Session.
+        let err = match state.ai_player.send(&game, send_request()).await {
             Err(err) => err,
             Ok(_) => panic!("expected the session to be ended"),
         };
-        assert_eq!(err, SendError::UnknownSession);
+        assert_eq!(err, SendError::Agent(AgentSendError::NoSession));
     }
 
     fn action(

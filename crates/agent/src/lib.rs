@@ -2,7 +2,8 @@
 //! (ADR-0013). It is deliberately ignorant of Minesweeper — the
 //! `game` crate is not a dependency, so that claim is enforced by Cargo rather
 //! than by convention — and it exposes only a `Provider` seam, a `Tool`
-//! abstraction, a `Session` message history, and a `run_loop`.
+//! abstraction, an `Agent` that owns the live Session, and a `run_loop`. The
+//! `Session` itself never leaves the crate (ADR-0021).
 //!
 //! The runtime splits into three layers, with one internal dependency edge
 //! (`agent → provider`) and nothing depending on `protocol`'s consumer:
@@ -13,18 +14,20 @@
 //! - [`provider`]: the `Provider` seam and `ProviderStream`, plus the real
 //!   `DeepSeek` backend (issue #116) and the offline `MockProvider` used by
 //!   tests and embedders.
-//! - [`agent`]: the engine — `Agent`, `Tool`, `Session`, `ProviderSet`,
-//!   `run_loop` — which depends on `provider` and calls into `protocol`.
+//! - [`agent`]: the engine — `Agent`, `Tool`, `ProviderSet`, `run_loop` (and
+//!   the crate-internal `Session`) — which depends on `provider` and calls
+//!   into `protocol`.
 //!
 //! The caller-facing names are re-exported at the crate root, so a consumer
 //! writes `agent::Agent` / `agent::Message` / `agent::DeepSeek` instead of
-//! naming a layer.
+//! naming a layer. `Session` is deliberately not among them: a caller
+//! addresses the `Agent` and never a Session.
 
 pub mod agent;
 pub mod protocol;
 pub mod provider;
 
-pub use agent::{Agent, AgentError, ProviderSet, Session, ThinkingLevel, Tool};
+pub use agent::{Agent, ProviderSet, SendError, ThinkingLevel, Tool};
 pub use protocol::{
     ChatRequest, ContentBlock, Message, ProviderError, ProviderErrorKind, ReasoningEffort,
     StreamChunk, ThinkingMode, ThinkingToggle, ToolCall, ToolDecl,

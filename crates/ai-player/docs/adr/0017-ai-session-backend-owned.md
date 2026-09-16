@@ -1,5 +1,10 @@
 # The AI Session is backend-owned and bound to one Game
 
+> Superseded by ADR-0021: the Agent now owns the live Session — its id, its
+> messages and the in-flight Send's cancel token. The policy below stands (one
+> Session per Game, the InputMode bound at the first committed Turn); where the
+> mechanism lives does not.
+
 > Renamed by ADR-0019: `Guide` is now `AiPlayer`; the decision below is unchanged.
 
 The advisor used to hold no conversation: `Guide::suggest` built a throwaway

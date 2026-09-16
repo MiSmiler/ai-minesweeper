@@ -82,16 +82,15 @@ describe("createSessionBox", () => {
     expect(details.open).toBe(true);
   });
 
-  it("renders an interrupt as a red tail line, not an alert", () => {
+  it("renders the caller's interrupt as a red tail line, not an alert", () => {
     render({
       phase: "interrupted",
       reasoning: "r",
       content: "c",
       user: "",
-      interruptReason: "user_interrupt",
     });
     expect(container.querySelector(".session-interrupt")!.textContent).toBe(
-      "已中断:user_interrupt",
+      "已中断",
     );
   });
 

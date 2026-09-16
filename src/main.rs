@@ -4,12 +4,11 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 
 use clap::Parser;
-use tokio_util::sync::CancellationToken;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use agent::{Agent, ContentBlock, DeepSeek, DeepSeekConfig, Message, ProviderSet, Session};
+use agent::{Agent, ContentBlock, DeepSeek, DeepSeekConfig, Message, ProviderSet, ThinkingLevel};
 use ai_player::AiPlayer;
 use game::{Difficulty, Features, Game, GameConfig, Seed};
 
@@ -98,9 +97,8 @@ async fn main() {
     // the Provider, the model, or the Agent. Absent `DEEPSEEK_API_KEY` the
     // AiPlayer still builds — its Load then fails at session creation with a
     // `config` ProviderError, so the AI is reported unconfigured before any
-    // Send. The AiPlayer holds the agent behind a `tokio::sync::Mutex` so its
-    // guard (held across the streaming network call) is `Send` for the axum
-    // handler.
+    // Send. The AiPlayer holds one `Arc<Agent>`; the Agent owns the live
+    // Session and is `Sync`, so the axum handlers need no outer lock.
     let ai_player = AiPlayer::from_env();
 
     let state = Arc::new(server::AppState { game, ai_player });
@@ -130,8 +128,8 @@ async fn main() {
 /// is not configured and this is a hard error.
 ///
 /// The self-check carries its own model: the product's model choice belongs to
-/// the ai-player context (its `MODEL` is crate-private), and #136 moves this
-/// check into `crates/agent/examples/` where it must pick one anyway.
+/// the ai-player context (its `MODEL` is crate-private); a future ticket could
+/// move this check into `crates/agent/examples/`, where it must pick one anyway.
 const SELF_CHECK_MODEL: &str = "deepseek-flash";
 
 async fn run_test_ai_chat(prompt: &str) -> Result<(), String> {
@@ -142,7 +140,10 @@ async fn run_test_ai_chat(prompt: &str) -> Result<(), String> {
     let mut agent = Agent::new(providers);
     agent.set_model(SELF_CHECK_MODEL.to_string(), Some("deepseek"));
 
-    let session = Session::new();
+    agent
+        .create_session()
+        .await
+        .map_err(|e| format!("failed to create session: {e:?}"))?;
     let pending = vec![
         Message::System {
             content: "You are a helpful assistant. Reply concisely to the user's message."
@@ -153,10 +154,7 @@ async fn run_test_ai_chat(prompt: &str) -> Result<(), String> {
         },
     ];
 
-    match agent
-        .complete_once(&session, pending, CancellationToken::new())
-        .await
-    {
+    match agent.complete_once(pending, ThinkingLevel::Low).await {
         Ok(Message::Assistant {
             content,
             reasoning_content,

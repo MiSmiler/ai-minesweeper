@@ -22,15 +22,13 @@ function mockFetch(snapshot = makeGameSnapshot()): void {
 
 /**
  * The composition's dependencies over a stubbed `AiApi`. Its Send records the
- * callbacks the composition hands it, and the first session one fixture
- * creates is always `session-0`.
+ * callbacks the composition hands it.
  */
 function makeDeps(): AppDeps {
-  let seq = 0;
   return {
     getPlayMode: () => "ai",
     aiApi: {
-      createSession: vi.fn(async () => ({ sessionId: `session-${seq++}` })),
+      begin: vi.fn(async () => {}),
       send: vi.fn(),
       interrupt_by_user: vi.fn().mockResolvedValue(undefined),
     },
@@ -38,12 +36,12 @@ function makeDeps(): AppDeps {
   };
 }
 
-/** The `onEvent` / `onProviderError` callbacks the composition hands to the
- * Nth Send (the 3rd and 4th arguments of `AiApi.send`). */
+/** The `onEvent` / `onFailure` callbacks the composition hands to the Nth Send
+ * (the 2nd and 3rd arguments of `AiApi.send`). */
 const onEvent = (deps: AppDeps, n = 0) =>
+  vi.mocked(deps.aiApi.send).mock.calls[n][1];
+const onFailure = (deps: AppDeps, n = 0) =>
   vi.mocked(deps.aiApi.send).mock.calls[n][2];
-const onProviderError = (deps: AppDeps, n = 0) =>
-  vi.mocked(deps.aiApi.send).mock.calls[n][3];
 
 function mount(): HTMLElement {
   const root = document.createElement("div");
@@ -219,7 +217,7 @@ describe("composeAiPlayMode session controls", () => {
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
 
     send.click();
-    onEvent(deps)({ kind: "interrupt", reason: "user_interrupt" });
+    onEvent(deps)({ kind: "interrupted" });
     expect(mode.disabled).toBe(false);
     expect($(root, ".session-interrupt").textContent).toContain("已中断");
   });
@@ -245,11 +243,10 @@ describe("composeAiPlayMode send flow", () => {
 
     send.click();
     expect(deps.aiApi.send).toHaveBeenCalledTimes(1);
-    const req = vi.mocked(deps.aiApi.send).mock.calls[0][1] as {
+    const req = vi.mocked(deps.aiApi.send).mock.calls[0][0] as {
       inputMode: string;
     };
     expect(req.inputMode).toBe("plain");
-    expect(vi.mocked(deps.aiApi.send).mock.calls[0][0]).toBe("session-0");
 
     onEvent(deps)({ kind: "reasoning", text: "think" });
     onEvent(deps)({ kind: "content", text: "(2,3)" });
@@ -270,7 +267,7 @@ describe("composeAiPlayMode send flow", () => {
     send.click(); // send → interrupt
     expect(deps.aiApi.interrupt_by_user).toHaveBeenCalledTimes(1);
 
-    onEvent(deps)({ kind: "interrupt", reason: "user_interrupt" });
+    onEvent(deps)({ kind: "interrupted" });
     expect(send.textContent).toBe("发送");
   });
 
@@ -288,7 +285,7 @@ describe("composeAiPlayMode send flow", () => {
     send.click();
     await flush();
     expect(deps.captureBoardImage).toHaveBeenCalled();
-    const req = vi.mocked(deps.aiApi.send).mock.calls[0][1] as {
+    const req = vi.mocked(deps.aiApi.send).mock.calls[0][0] as {
       inputMode: string;
       imageDataUrl?: string;
     };
@@ -305,7 +302,7 @@ describe("composeAiPlayMode send flow", () => {
     const send = $(root, ".send-btn") as HTMLButtonElement;
 
     send.click();
-    let req = vi.mocked(deps.aiApi.send).mock.calls[0][1] as {
+    let req = vi.mocked(deps.aiApi.send).mock.calls[0][0] as {
       inputMode: string;
       thinkingLevel: string;
     };
@@ -319,14 +316,14 @@ describe("composeAiPlayMode send flow", () => {
 
     // The next Send carries the new level.
     send.click();
-    req = vi.mocked(deps.aiApi.send).mock.calls[1][1] as {
+    req = vi.mocked(deps.aiApi.send).mock.calls[1][0] as {
       inputMode: string;
       thinkingLevel: string;
     };
     expect(req.thinkingLevel).toBe("max");
   });
 
-  it("a provider error alerts and reverts the button", async () => {
+  it("a provider failure alerts and reverts the button", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -335,12 +332,25 @@ describe("composeAiPlayMode send flow", () => {
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
     send.click();
-    onProviderError(deps)({
-      kind: "config",
-      code: null,
-      message: "no provider",
+    onFailure(deps)({
+      kind: "provider",
+      error: { kind: "config", code: null, message: "no provider" },
     });
     expect(alertSpy).toHaveBeenCalled();
+    expect(send.textContent).toBe("发送");
+  });
+
+  it("a refused failure does not alert", async () => {
+    mockFetch();
+    const root = mount();
+    const deps = makeDeps();
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    composeAiPlayMode(root, deps);
+    await startSession(root);
+    const send = $(root, ".send-btn") as HTMLButtonElement;
+    send.click();
+    onFailure(deps)({ kind: "refused", status: 409, message: "busy" });
+    expect(alertSpy).not.toHaveBeenCalled();
     expect(send.textContent).toBe("发送");
   });
 
@@ -378,7 +388,7 @@ describe("composeAiPlayMode session lifecycle", () => {
     const root = mount();
     const deps = makeDeps();
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-    vi.mocked(deps.aiApi.createSession).mockRejectedValueOnce({
+    vi.mocked(deps.aiApi.begin).mockRejectedValueOnce({
       kind: "config",
       code: null,
       message: "no provider",
@@ -399,7 +409,7 @@ describe("composeAiPlayMode session lifecycle", () => {
 
     await startSession(root);
     expect(confirmSpy).toHaveBeenCalled();
-    expect(deps.aiApi.createSession).toHaveBeenCalledTimes(2);
+    expect(deps.aiApi.begin).toHaveBeenCalledTimes(2);
     // The fresh session is empty again: the InputMode lock reopens.
     expect(
       (root.querySelector(".input-mode-select") as HTMLSelectElement).disabled,
@@ -415,7 +425,7 @@ describe("composeAiPlayMode session lifecycle", () => {
     await seedOneCommittedTurn(root, deps);
 
     await startSession(root);
-    expect(deps.aiApi.createSession).toHaveBeenCalledTimes(1);
+    expect(deps.aiApi.begin).toHaveBeenCalledTimes(1);
     // The non-empty session survives: the InputMode stays locked.
     expect(
       (root.querySelector(".input-mode-select") as HTMLSelectElement).disabled,

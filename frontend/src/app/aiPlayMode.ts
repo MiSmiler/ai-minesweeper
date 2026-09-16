@@ -49,11 +49,11 @@ function labeledField(caption: string, control: HTMLElement): HTMLElement {
   return row;
 }
 
-/** Buckets a `load-failed` / `prepare-failed` error into a human alert message
+/** Buckets a provider failure into a human alert message
  * (issue #97 ①). 4xx/5xx surface via the HTTP status / provider kind; the alert
  * blocks (synchronous `window.alert`).
  *
- * This is the Load / Prepare consumer of the `kind` field on the backend
+ * This is the consumer of the `kind` field on the backend
  * `ProviderError` body (issue #123): `config` ("AI 未配置") and `upstream`
  * ("AI 服务异常") must stay distinct, and they are *not* derivable from `code`
  * when the error carries no HTTP status (no provider / bad key / transport
@@ -104,7 +104,7 @@ export function composeAiPlayMode(
     onNewGame: () => {
       // A new game ends the AI Session (the backend's new-game action already
       // ended it, issue #133).
-      machine.endSession();
+      machine.end();
     },
     // A new game discards a non-empty AI Session; ask first exactly when the
     // session is non-empty (issue #133). Pressing New Game during an in-flight
@@ -228,11 +228,10 @@ export function composeAiPlayMode(
     sendBtn.disabled = state.sessionState === "none";
     modeSelect.disabled =
       state.sessionState === "non-empty" || state.phase === "running";
-    if (
-      (state.phase === "load-failed" || state.phase === "prepare-failed") &&
-      state.providerError
-    ) {
-      window.alert(providerAlertMessage(state.providerError));
+    // Only a provider failure alerts; a refusal (NoSession / Busy / the
+    // InputMode lock) is reported by the disabled controls, not an alert.
+    if (state.phase === "failed" && state.failure?.kind === "provider") {
+      window.alert(providerAlertMessage(state.failure.error));
     }
   });
 
@@ -270,7 +269,7 @@ export function composeAiPlayMode(
     }
     // Pressing new session during an in-flight Send interrupts it first.
     if (running) await machine.interrupt_by_user();
-    await machine.newSession();
+    await machine.begin();
   }
 
   sendBtn.addEventListener("click", () => {
@@ -283,7 +282,7 @@ export function composeAiPlayMode(
 
   const dispose = (): void => {
     unsubscribe();
-    machine.endSession();
+    machine.end();
     axis?.destroy();
     gameArea.dispose();
     container.remove();

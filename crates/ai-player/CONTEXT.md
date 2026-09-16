@@ -1,15 +1,15 @@
 # ai-player
 
 The Minesweeper binding for the agent runtime: how this game's Board is put in
-front of the Agent, and the Session this product keeps per Game. What is policy
-rather than vocabulary — one Session per Game, the InputMode bound by the first
-committed Turn, a New Game ending the Session — lives in this context's ADRs
-(0016, 0017).
+front of the Agent. The Session is the Agent's, not this context's; what lives
+here is policy — one Game drives one Agent, the InputMode bound by the first
+committed Turn, a New Game ending the Session. That policy is in this context's
+ADRs (0016, 0017).
 
 ## Language
 
 **AiPlayer**:
-A Player that plays a Game by deciding its moves with an Agent. One AiPlayer exists per app instance, and today it is driven by the HumanPlayer, who sends the Board and applies the reply.
+A Player that plays a Game by deciding its moves with an Agent. One AiPlayer exists per app instance and holds one Agent; it begins and ends a Session through the Agent and never names one. Today it is driven by the HumanPlayer, who sends the Board and applies the reply.
 _Avoid_: AI, agent, bot, AI opponent, guide, advisor
 
 **InputMode**:
