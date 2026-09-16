@@ -100,27 +100,32 @@ describe("mountLayout layout", () => {
     expect(column.children[1]?.classList.contains("ai-session-box")).toBe(true);
   });
 
-  it("dashboard has send, new session, input mode, axis — no strategy", () => {
+  it("dashboard has new session, input mode, level — no strategy", () => {
     mockFetch();
     const root = mount();
     mountLayout(root, makeDeps());
     const dash = $(root, ".ai-dashboard");
-    expect(dash.querySelector(".send-btn")).toBeTruthy();
     expect(dash.querySelector(".new-session-btn")).toBeTruthy();
     expect(dash.querySelector(".input-mode-select")).toBeTruthy();
-    expect(dash.querySelector(".axis-checkbox")).toBeTruthy();
+    expect(dash.querySelector(".level-select")).toBeTruthy();
+    // Send and the axis toggle moved to the driver strip (below the Board).
+    expect(dash.querySelector(".send-btn")).toBeNull();
+    expect(dash.querySelector(".axis-checkbox")).toBeNull();
     // The SessionStrategy dropdown is gone (issue #125).
     expect(dash.querySelector(".strategy-select")).toBeNull();
     expect(dash.textContent).not.toContain("会话策略");
   });
 
-  it("places the new-session button to the left of Send", () => {
+  it("puts the axis toggle and Send in the strip below the Board", () => {
     mockFetch();
     const root = mount();
     mountLayout(root, makeDeps());
-    const row = $(root, ".button-row");
-    expect(row.children[0]?.classList.contains("new-session-btn")).toBe(true);
-    expect(row.children[1]?.classList.contains("send-btn")).toBe(true);
+    const strip = $(root, ".game-zone .manual-driver-strip");
+    expect(strip.querySelector(".axis-checkbox")).toBeTruthy();
+    expect(strip.querySelector(".send-btn")).toBeTruthy();
+    // Axis toggle left, Send right.
+    expect(strip.children[0]?.classList.contains("axis-toggle")).toBe(true);
+    expect(strip.children[1]?.classList.contains("send-btn")).toBe(true);
   });
 
   it("input mode select offers all three modes", () => {

@@ -1,18 +1,22 @@
-// The single page layout (ADR-0023): the Board on the left, the AI column on
-// the right holding the dashboard above the SessionBox. There is one Game and
-// one layout — the HumanPlayer plays with the mouse while the AiPlayer is
-// driven by hand through the dashboard (ADR-0019), rather than two PlayModes
-// to switch between.
+// The single page layout (ADR-0023): the Board on the left with the
+// manual-driver strip below it, the AI column on the right holding the
+// dashboard above the SessionBox. There is one Game and one layout — the
+// HumanPlayer plays with the mouse while the AiPlayer is driven by hand
+// (ADR-0019), rather than two PlayModes to switch between.
 //
 // `mountLayout` is the app's composition root for the page: it builds the DOM,
 // instantiates the game slice, the AI dashboard and the SessionBox, and wires
 // the `AiPlayerMachine` to them. `main.ts` calls it once and keeps only the
 // `beforeunload` guard.
 //
-// The dashboard follows the AI Session (issue #133): Send is disabled while
+// The controls follow the AI Session (issue #133): Send is disabled while
 // there is no session, the InputMode select locks while a Send runs / the
 // session is non-empty, and the discard confirms fire exactly when the session
 // is `non-empty`. The SessionBox itself is hidden until a Session exists.
+//
+// Send and the axis toggle are temporary manual-driver affordances (ADR-0019),
+// so they sit in `.manual-driver-strip` below the Board; the dashboard keeps
+// only the new-session button and the two Send-strength settings, on one row.
 
 import type {
   AiApi,
@@ -143,6 +147,13 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   // drives setVisible.
   axis = createBoardAxis(gameArea.boardEl);
 
+  // The manual-driver strip: the controls a human uses to drive the AiPlayer
+  // by hand. Both are temporary — the Send goes when the tool loop lands — so
+  // they sit below the Board instead of in the dashboard.
+  const driverStrip = document.createElement("div");
+  driverStrip.className = "manual-driver-strip";
+  gameZone.appendChild(driverStrip);
+
   // --- Right: the AI column (dashboard above the SessionBox) ---
   const aiColumn = document.createElement("div");
   aiColumn.className = "ai-column";
@@ -152,12 +163,14 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   dashboard.className = "ai-dashboard";
   aiColumn.appendChild(dashboard);
 
-  // Send / interrupt button (dual state, user story #34) next to the new
-  // session button (issue #133).
-  const buttonRow = document.createElement("div");
-  buttonRow.className = "button-row";
-  dashboard.appendChild(buttonRow);
+  // The dashboard row: the new-session button and the two Send-strength
+  // settings side by side.
+  const dashRow = document.createElement("div");
+  dashRow.className = "dashboard-row";
+  dashboard.appendChild(dashRow);
 
+  // Send / interrupt button (dual state, user story #34); mounted in the
+  // driver strip below the Board, not here.
   const sendBtn = document.createElement("button");
   sendBtn.type = "button";
   sendBtn.className = "send-btn";
@@ -169,8 +182,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   newSessionBtn.className = "new-session-btn";
   newSessionBtn.textContent = "新建AI会话";
 
-  // New session sits to the left of Send (issue #133).
-  buttonRow.append(newSessionBtn, sendBtn);
+  dashRow.appendChild(newSessionBtn);
 
   // Input-mode dropdown (3 modes, user story #20/#21).
   const modeSelect = document.createElement("select");
@@ -181,7 +193,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
     opt.textContent = m.label;
     modeSelect.appendChild(opt);
   }
-  dashboard.appendChild(labeledField("输入模式", modeSelect));
+  dashRow.appendChild(labeledField("输入模式", modeSelect));
   modeSelect.addEventListener("change", () => {
     const next = modeSelect.value as InputMode;
     if (next === currentMode) return;
@@ -202,7 +214,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
     levelSelect.appendChild(opt);
   }
   levelSelect.value = currentLevel;
-  dashboard.appendChild(labeledField("思考深度", levelSelect));
+  dashRow.appendChild(labeledField("思考深度", levelSelect));
   levelSelect.addEventListener("change", () => {
     currentLevel = levelSelect.value as ThinkingLevel;
   });
@@ -214,7 +226,9 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   const axisToggle = document.createElement("label");
   axisToggle.className = "axis-toggle";
   axisToggle.append(axisCheckbox, document.createTextNode("行列号"));
-  dashboard.appendChild(axisToggle);
+  // Axis toggle left, Send right; the strip hugs its content and sits at the
+  // zone's right edge.
+  driverStrip.append(axisToggle, sendBtn);
   axisCheckbox.addEventListener("change", () => {
     axis.setVisible(axisCheckbox.checked);
   });

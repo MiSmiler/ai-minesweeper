@@ -270,7 +270,7 @@ button:disabled:hover {
 
 /* --- game area --- */
 
-/* One game area (difficulty row + frame). Centered inside the game zone.
+/* One game area (difficulty row + frame). Centered inside the game zone. */
 .game-area {
   display: flex;
   flex-direction: column;
@@ -295,8 +295,30 @@ button:disabled:hover {
   align-items: start;
 }
 
+/* The game zone centers the game area and the driver strip on one shared
+   width: the wider of the difficulty row and the Board frame. */
 .game-zone {
   grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* The temporary manual-driver controls (ADR-0019), below the Board: a compact
+   pill holding the axis toggle and Send, right-aligned to the widest of the
+   difficulty row and the Board frame. */
+.manual-driver-strip {
+  align-self: flex-end;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 4px;
+  background: var(--face);
+  border-radius: 8px;
+  box-shadow:
+    inset 1px 1px 0 var(--hidden-light),
+    inset -1px -1px 0 var(--hidden-dark);
 }
 
 /* The AI column fills the viewport height so the SessionBox can absorb the
@@ -324,15 +346,15 @@ button:disabled:hover {
 }
 
 .ai-dashboard select,
-.ai-dashboard .send-btn,
 .ai-dashboard .new-session-btn {
   width: max-content;
 }
 
-/* The Send and new-session buttons sit side by side (issue #133). */
-.ai-dashboard .button-row {
+/* New session, InputMode and ThinkingLevel share one row. */
+.ai-dashboard .dashboard-row {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
 }
 
 .send-btn.running {
