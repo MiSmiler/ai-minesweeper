@@ -1,8 +1,8 @@
 // The ai-player state machine (issue #119, #133): owns the Send run's phase, the
 // AI Session's `sessionState`, and the accumulated `reasoning` / `content`
 // text. It is deliberately thin — phase + text accumulation + session
-// lifecycle only. The discard confirm and the Load / Prepare alerts live in the
-// `app/` assembly layer.
+// lifecycle only. The discard confirm and the Load alerts live in the `app/`
+// assembly layer.
 //
 // Generation tracking: each `begin()` / `end()` / `send()` bumps a
 // generation counter, and the event callbacks capture the generation they were
@@ -12,12 +12,13 @@
 // corrupt the current state.
 //
 // The AI Session itself is the Agent's (ADR-0021): `begin()` asks the backend
-// to begin one, `send()` appends to it, and `end()` drops it. The machine holds
-// only the session's `empty` / `non-empty` predicate.
+// to begin one under an InputMode, `send()` appends to it, and `end()` drops
+// it. The machine holds only the session's `unused` / `used` predicate.
 
 import { isProviderError } from "./api";
 import type {
   AiApi,
+  InputMode,
   ReplyEvent,
   SendFailure,
   ProviderError,
@@ -30,14 +31,12 @@ import type {
 export type AiPlayerPhase =
   "idle" | "running" | "done" | "interrupted" | "failed";
 
-/** Whether an AI Session is live: `none` (no session), `empty` (created, no
- * committed Turn), `non-empty` (at least one committed Turn). The `empty` /
- * `non-empty` split drives both the InputMode lock and the discard confirm.
- *
- * TODO: consider renaming `empty` / `non-empty` to `unused` / `used` — the
- * pair tracks whether the Session has been used (a committed Turn), which
- * these names only hint at. */
-export type SessionState = "none" | "empty" | "non-empty";
+/** Whether an AI Session is live: `none` (no session), `unused` (created, no
+ * Send yet), `used` (a Send has been made — the player's message is part of
+ * the Session's history, whether or not the reply ever landed). The `used` half
+ * drives the discard confirm and the refresh guard; the InputMode lock follows
+ * the Session itself, not this predicate. */
+export type SessionState = "none" | "unused" | "used";
 
 /** The accumulated state of the current Send and its AI Session. */
 export interface AiPlayerState {
@@ -51,13 +50,14 @@ export interface AiPlayerState {
   user: string;
   /** Present for the image form: the screenshot the player sent (data URL). */
   userImageUrl?: string;
-  /** Set only when `phase === "failed"`: why the Send produced no Turn. */
+  /** Set only when `phase === "failed"`: why the Send produced no reply. */
   failure?: SendFailure;
 }
 
 export interface AiPlayerMachine {
-  /** Loads the AI runtime and begins an empty AI Session on the backend. */
-  begin(): Promise<void>;
+  /** Loads the AI runtime and begins an AI Session on the backend under
+   * `mode`. */
+  begin(mode: InputMode): Promise<void>;
   /** Ends the live AI Session (New Game / PlayMode switch). */
   end(): void;
   /** Appends the current board to the live AI Session. */
@@ -80,7 +80,7 @@ function idleState(sessionState: SessionState): AiPlayerState {
 }
 
 /** Builds an `AiPlayerMachine` over the given `AiApi`. The AiPlayer addresses no
- * Session by id (ADR-0021); the machine tracks only its `empty` / `non-empty`
+ * Session by id (ADR-0021); the machine tracks only its `unused` / `used`
  * predicate and its own generation for superseded streams. */
 export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
   let state: AiPlayerState = idleState("none");
@@ -108,11 +108,10 @@ export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
         state = { ...state, user: e.text };
         break;
       case "sse_done":
-        // A committed Turn: an empty session becomes non-empty.
-        state = { ...state, phase: "done", sessionState: "non-empty" };
+        state = { ...state, phase: "done" };
         break;
       case "interrupted":
-        // The caller's own act: no Turn is committed.
+        // The caller's own act: the reply never lands.
         state = { ...state, phase: "interrupted" };
         break;
       case "provider_error":
@@ -135,14 +134,14 @@ export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
   };
 
   return {
-    async begin() {
+    async begin(mode) {
       const g = ++generation;
       // The old session is being replaced: reset to `none` immediately so any
       // in-flight Send becomes stale.
       state = idleState("none");
       emit();
       try {
-        await deps.api.begin();
+        await deps.api.begin(mode);
       } catch (err) {
         if (g !== generation) return; // superseded while beginning
         const providerError: ProviderError = isProviderError(err)
@@ -161,7 +160,7 @@ export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
         return;
       }
       if (g !== generation) return; // superseded while beginning
-      state = { ...state, sessionState: "empty" };
+      state = { ...state, sessionState: "unused" };
       emit();
     },
     end() {
@@ -174,7 +173,9 @@ export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
       const g = ++generation;
       state = {
         phase: "running",
-        sessionState: state.sessionState,
+        // The player sent it, whatever the reply turns out to be: the Session
+        // is used from this moment. An Interrupt only cuts the assistant half.
+        sessionState: "used",
         reasoning: "",
         content: "",
         user: "",

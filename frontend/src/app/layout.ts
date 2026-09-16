@@ -10,13 +10,13 @@
 // `beforeunload` guard.
 //
 // The controls follow the AI Session (issue #133): Send is disabled while
-// there is no session, the InputMode select locks while a Send runs / the
-// session is non-empty, and the discard confirms fire exactly when the session
-// is `non-empty`. The SessionBox itself is hidden until a Session exists.
+// there is no session, the InputMode select locks for as long as one is live
+// (the mode is the Session's), and the discard confirms fire exactly when the
+// session is `used`. The SessionBox itself is hidden until a Session exists.
 //
 // The session button carries the two lifecycle operations: "启动AI会话" is
 // enabled only while the session is `none`, and "关闭AI会话" ends it — behind
-// the discard confirm when it is `non-empty`. A live Session is closed, never
+// the discard confirm when it is `used`. A live Session is closed, never
 // replaced in place.
 //
 // Send and the axis toggle are temporary manual-driver affordances (ADR-0019),
@@ -52,10 +52,10 @@ export interface AppDeps {
 export interface LayoutHandle {
   /** Tears down the listeners, the timer poll, the AI Session and the DOM. */
   dispose(): void;
-  /** True while the AI Session holds at least one committed Turn — the
-   * `non-empty` half of the session's `empty` / `non-empty` predicate
-   * (ADR-0017), read by `main.ts`'s beforeunload guard. */
-  hasNonEmptySession(): boolean;
+  /** True once the player has sent something into the live Session — the
+   * `used` half of the session's `unused` / `used` predicate, read by
+   * `main.ts`'s beforeunload guard. */
+  hasUsedSession(): boolean;
 }
 
 const MODES: ReadonlyArray<{ value: InputMode; label: string }> = [
@@ -134,12 +134,12 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
       // ended it, issue #133).
       machine.end();
     },
-    // A new game discards a non-empty AI Session; ask first exactly when the
-    // session is non-empty (issue #133). Pressing New Game during an in-flight
+    // A new game discards a used AI Session; ask first exactly when the
+    // session is `used` (issue #133). Pressing New Game during an in-flight
     // Send interrupts it first.
     beforeNewGame: () => {
       if (
-        sessionState === "non-empty" &&
+        sessionState === "used" &&
         !window.confirm("开始新游戏将结束当前 AI 会话，是否继续？")
       ) {
         return false;
@@ -206,8 +206,8 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   modeSelect.addEventListener("change", () => {
     const next = modeSelect.value as InputMode;
     if (next === currentMode) return;
-    // The select is locked once a Send runs / commits, so a change happens
-    // only while the session is empty.
+    // The select is locked for as long as a Session is live, so a change
+    // happens only while there is none.
     currentMode = next;
   });
 
@@ -282,11 +282,10 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
     sessionState = state.sessionState;
     syncSessionBtn();
     setRunning(state.phase === "running");
-    // The InputMode is bound by the first committed Send: lock the select
-    // while a Send runs or the session is non-empty (issue #133).
+    // The InputMode belongs to the Session: the player picks it at 启动AI会话 and
+    // can change it only by closing the Session.
     sendBtn.disabled = state.sessionState === "none";
-    modeSelect.disabled =
-      state.sessionState === "non-empty" || state.phase === "running";
+    modeSelect.disabled = state.sessionState !== "none";
     // Only a provider failure alerts; a refusal (NoSession / Busy / the
     // InputMode lock) is reported by the disabled controls, not an alert.
     if (state.phase === "failed" && state.failure?.kind === "provider") {
@@ -296,9 +295,10 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
 
   async function startSend(): Promise<void> {
     if (running || sessionState === "none") return;
-    const mode = currentMode;
+    // The Session's InputMode is `currentMode`: the select is locked for as
+    // long as a Session is live, so it still holds the value `begin` was given.
     let imageDataUrl: string | undefined;
-    if (mode === "image") {
+    if (currentMode === "image") {
       try {
         imageDataUrl = await deps.captureBoardImage(gameArea.boardEl, {
           pixelRatio: 1,
@@ -310,7 +310,6 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
       }
     }
     const req: SendRequest = {
-      inputMode: mode,
       thinkingLevel: currentLevel,
       imageDataUrl,
     };
@@ -325,19 +324,19 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
     beginPending = true;
     syncSessionBtn();
     try {
-      await machine.begin();
+      await machine.begin(currentMode);
     } finally {
       beginPending = false;
       syncSessionBtn();
     }
   }
 
-  /** The close face: ending a non-empty Session discards its Turns, so ask
-   * first (the same predicate as the InputMode lock, issue #133); an in-flight
-   * Send is interrupted first. */
+  /** The close face: ending a used Session discards its history, so ask first
+   * (the same predicate as the InputMode lock, issue #133); an in-flight Send
+   * is interrupted first. */
   async function closeSession(): Promise<void> {
     if (
-      sessionState === "non-empty" &&
+      sessionState === "used" &&
       !window.confirm("关闭AI会话将结束当前会话，是否继续？")
     ) {
       return;
@@ -365,7 +364,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
 
   return {
     dispose,
-    /** True while the AI Session holds Turns a refresh would clear. */
-    hasNonEmptySession: () => sessionState === "non-empty",
+    /** True once the Session holds messages a refresh would clear. */
+    hasUsedSession: () => sessionState === "used",
   };
 }

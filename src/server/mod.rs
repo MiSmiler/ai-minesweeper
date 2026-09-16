@@ -176,7 +176,6 @@ mod tests {
 
     fn send_request() -> SendRequest {
         SendRequest {
-            input_mode: InputMode::Plain,
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         }
@@ -185,7 +184,7 @@ mod tests {
     #[tokio::test]
     async fn a_new_game_action_ends_the_ai_session() {
         let state = app_state();
-        state.ai_player.begin().await.unwrap();
+        state.ai_player.begin(InputMode::Plain).await.unwrap();
         let game = state.game.lock().unwrap().clone();
         assert!(state.ai_player.send(&game, send_request()).await.is_ok());
 

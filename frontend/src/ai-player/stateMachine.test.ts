@@ -1,5 +1,5 @@
 // Tests for the ai-player state machine (issue #119, #133): phase transitions, the
-// AI Session lifecycle (`none` / `empty` / `non-empty`), text accumulation, and
+// AI Session lifecycle (`none` / `unused` / `used`), text accumulation, and
 // generation-based invalidation of stale streams.
 
 import { describe, expect, it, vi } from "vitest";
@@ -38,48 +38,48 @@ describe("createAiPlayerMachine session lifecycle", () => {
 
   it("send without a session is a no-op", () => {
     const h = makeMachine();
-    h.machine.send({ inputMode: "plain" });
+    h.machine.send({});
     expect(h.api.send).not.toHaveBeenCalled();
     expect(h.states).toHaveLength(0);
   });
 
-  it("begin creates an empty session", async () => {
+  it("begin creates an unused session with the given mode", async () => {
     const h = makeMachine();
-    await h.machine.begin();
-    expect(h.api.begin).toHaveBeenCalledTimes(1);
+    await h.machine.begin("emoji");
+    expect(h.api.begin).toHaveBeenCalledWith("emoji");
     expect(last(h).phase).toBe("idle");
-    expect(last(h).sessionState).toBe("empty");
+    expect(last(h).sessionState).toBe("unused");
   });
 
-  it("send appends to the current session and runs", async () => {
+  it("send marks the session used and runs", async () => {
     const h = makeMachine();
-    await h.machine.begin();
-    h.machine.send({ inputMode: "emoji" });
+    await h.machine.begin("plain");
+    h.machine.send({});
     const s = last(h);
     expect(s.phase).toBe("running");
-    expect(s.sessionState).toBe("empty");
+    expect(s.sessionState).toBe("used");
     expect(h.api.send).toHaveBeenCalledTimes(1);
     expect(h.api.send).toHaveBeenCalledWith(
-      { inputMode: "emoji" },
+      {},
       expect.any(Function),
       expect.any(Function),
     );
   });
 
-  it("a second send after a committed Turn runs again", async () => {
+  it("a second send after a reply runs again", async () => {
     const h = makeMachine();
-    await h.machine.begin();
-    h.machine.send({ inputMode: "emoji" });
+    await h.machine.begin("plain");
+    h.machine.send({});
     onEvent(h)({ kind: "sse_done" });
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     expect(h.api.send).toHaveBeenCalledTimes(2);
     expect(last(h).phase).toBe("running");
   });
 
   it("end returns to none and clears the text", async () => {
     const h = makeMachine();
-    await h.machine.begin();
-    h.machine.send({ inputMode: "emoji" });
+    await h.machine.begin("plain");
+    h.machine.send({});
     onEvent(h)({ kind: "content", text: "early" });
     h.machine.end();
     const s = last(h);
@@ -87,14 +87,14 @@ describe("createAiPlayerMachine session lifecycle", () => {
     expect(s.sessionState).toBe("none");
     expect(s.content).toBe("");
     // The session is gone, so a later send is a no-op.
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     expect(h.api.send).toHaveBeenCalledTimes(1);
   });
 
   it("a failed begin surfaces a provider failure and leaves no session", async () => {
     const h = makeMachine();
     vi.mocked(h.api.begin).mockRejectedValueOnce(new Error("offline"));
-    await h.machine.begin();
+    await h.machine.begin("plain");
     const s = last(h);
     expect(s.phase).toBe("failed");
     expect(s.sessionState).toBe("none");
@@ -111,7 +111,7 @@ describe("createAiPlayerMachine session lifecycle", () => {
       code: null,
       message: "no key",
     });
-    await h.machine.begin();
+    await h.machine.begin("plain");
     expect(last(h).failure).toEqual({
       kind: "provider",
       error: { kind: "config", code: null, message: "no key" },
@@ -127,12 +127,12 @@ describe("createAiPlayerMachine session lifecycle", () => {
         resolve = r;
       }),
     );
-    const pending = h.machine.begin();
+    const pending = h.machine.begin("plain");
     h.machine.end();
     resolve();
     await pending;
     expect(last(h).sessionState).toBe("none");
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     expect(h.api.send).not.toHaveBeenCalled();
   });
 });
@@ -140,13 +140,13 @@ describe("createAiPlayerMachine session lifecycle", () => {
 describe("createAiPlayerMachine run transitions", () => {
   async function emptySession() {
     const h = makeMachine();
-    await h.machine.begin();
+    await h.machine.begin("plain");
     return h;
   }
 
   it("accumulates reasoning and content streams", async () => {
     const h = await emptySession();
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     onEvent(h)({ kind: "reasoning", text: "a" });
     onEvent(h)({ kind: "content", text: "hi" });
     onEvent(h)({ kind: "reasoning", text: "b" });
@@ -158,43 +158,43 @@ describe("createAiPlayerMachine run transitions", () => {
     expect(s.content).toBe("hi (2,3)");
   });
 
-  it("sse_done completes the run and marks the session non-empty", async () => {
+  it("sse_done completes the run and keeps the session used", async () => {
     const h = await emptySession();
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     onEvent(h)({ kind: "sse_done" });
     const s = last(h);
     expect(s.phase).toBe("done");
-    expect(s.sessionState).toBe("non-empty");
+    expect(s.sessionState).toBe("used");
   });
 
-  it("an interrupted first send leaves the session empty", async () => {
+  it("an interrupted send keeps the session used", async () => {
     const h = await emptySession();
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     onEvent(h)({ kind: "interrupted" });
     const s = last(h);
     expect(s.phase).toBe("interrupted");
-    expect(s.sessionState).toBe("empty");
+    expect(s.sessionState).toBe("used");
   });
 
-  it("an interrupted later send keeps the session non-empty", async () => {
+  it("a later interrupted send keeps the session used", async () => {
     const h = await emptySession();
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     onEvent(h)({ kind: "sse_done" });
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     onEvent(h, 1)({ kind: "interrupted" });
-    expect(last(h).sessionState).toBe("non-empty");
+    expect(last(h).sessionState).toBe("used");
   });
 
-  it("a send failure enters failed without changing the session", async () => {
+  it("a send failure enters failed and keeps the session used", async () => {
     const h = await emptySession();
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     onFailure(h)({
       kind: "provider",
       error: { kind: "config", code: null, message: "no" },
     });
     const s = last(h);
     expect(s.phase).toBe("failed");
-    expect(s.sessionState).toBe("empty");
+    expect(s.sessionState).toBe("used");
     expect(s.failure).toEqual({
       kind: "provider",
       error: { kind: "config", code: null, message: "no" },
@@ -203,7 +203,7 @@ describe("createAiPlayerMachine run transitions", () => {
 
   it("a mid-stream provider_error event fails with the provider failure", async () => {
     const h = await emptySession();
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     onEvent(h)({
       kind: "provider_error",
       error: { kind: "upstream", code: 429, message: "rate limited" },
@@ -218,7 +218,7 @@ describe("createAiPlayerMachine run transitions", () => {
 
   it("a refused failure enters failed with the refusal", async () => {
     const h = await emptySession();
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     onFailure(h)({ kind: "refused", status: 409, message: "busy" });
     const s = last(h);
     expect(s.phase).toBe("failed");
@@ -231,7 +231,7 @@ describe("createAiPlayerMachine run transitions", () => {
 
   it("end invalidates a stale in-flight stream", async () => {
     const h = await emptySession();
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     onEvent(h)({ kind: "content", text: "early" });
     h.machine.end();
     expect(last(h).phase).toBe("idle");
@@ -250,7 +250,7 @@ describe("createAiPlayerMachine run transitions", () => {
 
   it("interrupt_by_user cancels the live session", async () => {
     const h = await emptySession();
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     await h.machine.interrupt_by_user();
     expect(h.api.interrupt_by_user).toHaveBeenCalledTimes(1);
   });
@@ -263,7 +263,7 @@ describe("createAiPlayerMachine run transitions", () => {
 
   it("captures the user message event into state.user", async () => {
     const h = await emptySession();
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     onEvent(h)({ kind: "user", text: "........." });
     expect(last(h).user).toBe(".........");
   });
@@ -271,7 +271,6 @@ describe("createAiPlayerMachine run transitions", () => {
   it("seeds userImageUrl from the request for the image mode", async () => {
     const h = await emptySession();
     h.machine.send({
-      inputMode: "image",
       imageDataUrl: "data:image/png;base64,AAAA",
     });
     const s = last(h);
@@ -281,14 +280,14 @@ describe("createAiPlayerMachine run transitions", () => {
 
   it("leaves userImageUrl unset for a text mode", async () => {
     const h = await emptySession();
-    h.machine.send({ inputMode: "emoji" });
+    h.machine.send({});
     expect(last(h).userImageUrl).toBeUndefined();
   });
 
   it("onState unsubscribe stops notifications", async () => {
     const h = makeMachine();
     h.unsubscribe();
-    await h.machine.begin();
+    await h.machine.begin("plain");
     expect(h.states).toHaveLength(0);
   });
 });

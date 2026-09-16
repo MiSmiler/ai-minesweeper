@@ -296,7 +296,7 @@ impl DeepSeek {
 impl Provider for DeepSeek {
     /// Loads the provider for `model`: fetches/caches `GET /models` and checks
     /// the model is in it. A missing/invalid key or an unknown model surfaces
-    /// here, before any Turn starts. Pure delegation to [`Self::validate_model`].
+    /// here, before any Send starts. Pure delegation to [`Self::validate_model`].
     async fn load(&self, model: &str) -> Result<(), ProviderError> {
         self.validate_model(model).await
     }

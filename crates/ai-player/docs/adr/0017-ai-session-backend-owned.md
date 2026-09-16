@@ -5,6 +5,9 @@
 > Session per Game, the InputMode bound at the first committed Turn); where the
 > mechanism lives does not.
 
+> Amended by ADR-0024: the second half of that policy changes — the InputMode is
+> chosen when the Session is created, not bound by its first committed Turn.
+
 > Renamed by ADR-0019: `Guide` is now `AiPlayer`; the decision below is unchanged.
 
 The advisor used to hold no conversation: `Guide::suggest` built a throwaway

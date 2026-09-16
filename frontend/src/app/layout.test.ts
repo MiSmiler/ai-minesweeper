@@ -65,8 +65,8 @@ async function closeSession(root: HTMLElement): Promise<void> {
   await flush();
 }
 
-/** Creates a session and commits one Send so the session is non-empty. */
-async function seedOneCommittedTurn(
+/** Creates a session and sends one board so the session is used. */
+async function seedUsedSession(
   root: HTMLElement,
   deps: AppDeps,
 ): Promise<void> {
@@ -198,18 +198,7 @@ describe("mountLayout session controls", () => {
     expect(mode.disabled).toBe(false);
   });
 
-  it("a new session enables Send and keeps the InputMode select enabled", async () => {
-    mockFetch();
-    const root = mount();
-    mountLayout(root, makeDeps());
-    await startSession(root);
-    const send = $(root, ".send-btn") as HTMLButtonElement;
-    const mode = $(root, ".input-mode-select") as HTMLSelectElement;
-    expect(send.disabled).toBe(false);
-    expect(mode.disabled).toBe(false);
-  });
-
-  it("the first committed Send locks the InputMode", async () => {
+  it("a new session enables Send and locks the InputMode select", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -217,16 +206,31 @@ describe("mountLayout session controls", () => {
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
+    expect(send.disabled).toBe(false);
+    // The Session's InputMode is fixed from here on.
+    expect(mode.disabled).toBe(true);
+    expect(deps.aiApi.begin).toHaveBeenCalledWith("plain");
+  });
 
-    send.click(); // running: locked while the Send is in flight
+  it("the live Session locks the InputMode", async () => {
+    mockFetch();
+    const root = mount();
+    const deps = makeDeps();
+    mountLayout(root, deps);
+    await startSession(root);
+    const send = $(root, ".send-btn") as HTMLButtonElement;
+    const mode = $(root, ".input-mode-select") as HTMLSelectElement;
+    expect(mode.disabled).toBe(true);
+
+    send.click(); // running: still locked
     expect(mode.disabled).toBe(true);
     expect(send.textContent).toBe("中断");
     onEvent(deps)({ kind: "sse_done" });
-    expect(mode.disabled).toBe(true); // committed: still locked
+    expect(mode.disabled).toBe(true); // and after the reply
     expect(send.textContent).toBe("发送");
   });
 
-  it("an interrupted first Send leaves the InputMode editable", async () => {
+  it("an interrupted Send keeps the InputMode locked", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -237,7 +241,7 @@ describe("mountLayout session controls", () => {
 
     send.click();
     onEvent(deps)({ kind: "interrupted" });
-    expect(mode.disabled).toBe(false);
+    expect(mode.disabled).toBe(true);
     expect($(root, ".session-interrupt").textContent).toContain("已中断");
   });
 
@@ -263,9 +267,9 @@ describe("mountLayout send flow", () => {
     send.click();
     expect(deps.aiApi.send).toHaveBeenCalledTimes(1);
     const req = vi.mocked(deps.aiApi.send).mock.calls[0][0] as {
-      inputMode: string;
+      thinkingLevel: string;
     };
-    expect(req.inputMode).toBe("plain");
+    expect(req.thinkingLevel).toBe("low");
 
     onEvent(deps)({ kind: "reasoning", text: "think" });
     onEvent(deps)({ kind: "content", text: "(2,3)" });
@@ -295,20 +299,20 @@ describe("mountLayout send flow", () => {
     const root = mount();
     const deps = makeDeps();
     mountLayout(root, deps);
-    await startSession(root);
+    // The mode is picked before the Session exists: `begin` fixes it.
     const select = root.querySelector<HTMLSelectElement>(".input-mode-select")!;
     select.value = "image";
     select.dispatchEvent(new Event("change"));
+    await startSession(root);
 
     const send = $(root, ".send-btn") as HTMLButtonElement;
     send.click();
     await flush();
     expect(deps.captureBoardImage).toHaveBeenCalled();
+    expect(deps.aiApi.begin).toHaveBeenCalledWith("image");
     const req = vi.mocked(deps.aiApi.send).mock.calls[0][0] as {
-      inputMode: string;
       imageDataUrl?: string;
     };
-    expect(req.inputMode).toBe("image");
     expect(req.imageDataUrl).toBeTruthy();
   });
 
@@ -322,7 +326,6 @@ describe("mountLayout send flow", () => {
 
     send.click();
     let req = vi.mocked(deps.aiApi.send).mock.calls[0][0] as {
-      inputMode: string;
       thinkingLevel: string;
     };
     expect(req.thinkingLevel).toBe("low");
@@ -336,7 +339,6 @@ describe("mountLayout send flow", () => {
     // The next Send carries the new level.
     send.click();
     req = vi.mocked(deps.aiApi.send).mock.calls[1][0] as {
-      inputMode: string;
       thinkingLevel: string;
     };
     expect(req.thinkingLevel).toBe("max");
@@ -389,10 +391,10 @@ describe("mountLayout send flow", () => {
     const root = mount();
     const deps = makeDeps();
     mountLayout(root, deps);
-    await startSession(root);
     const select = root.querySelector<HTMLSelectElement>(".input-mode-select")!;
     select.value = "image";
     select.dispatchEvent(new Event("change"));
+    await startSession(root);
     ($(root, ".send-btn") as HTMLButtonElement).click();
     await flush(); // let captureBoardImage resolve; send seeds userImageUrl
     const img = root.querySelector(".session-user-image") as HTMLImageElement;
@@ -454,13 +456,13 @@ describe("mountLayout session lifecycle", () => {
     expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("closing a non-empty session discards it after confirmation", async () => {
+  it("closing a used session discards it after confirmation", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     mountLayout(root, deps);
-    await seedOneCommittedTurn(root, deps);
+    await seedUsedSession(root, deps);
 
     await closeSession(root);
     expect(confirmSpy).toHaveBeenCalled();
@@ -482,17 +484,17 @@ describe("mountLayout session lifecycle", () => {
     const deps = makeDeps();
     vi.spyOn(window, "confirm").mockReturnValue(false);
     mountLayout(root, deps);
-    await seedOneCommittedTurn(root, deps);
+    await seedUsedSession(root, deps);
 
     await closeSession(root);
-    // The non-empty session survives: the box stays and the InputMode locked.
+    // The used session survives: the box stays and the InputMode locked.
     expect($(root, ".ai-session-box").style.display).toBe("");
     expect(
       (root.querySelector(".input-mode-select") as HTMLSelectElement).disabled,
     ).toBe(true);
   });
 
-  it("closing an empty session never confirms", async () => {
+  it("closing an unused session never confirms", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -510,6 +512,8 @@ describe("mountLayout session lifecycle", () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
+    // A Send makes the Session `used`, so closing it asks first.
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     mountLayout(root, deps);
     await startSession(root);
     ($(root, ".send-btn") as HTMLButtonElement).click(); // running
@@ -526,7 +530,7 @@ describe("mountLayout session lifecycle", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     mountLayout(root, deps);
     await flush(); // init done, so the game area click listener is live
-    await seedOneCommittedTurn(root, deps);
+    await seedUsedSession(root, deps);
 
     const difficulty = root.querySelector<HTMLButtonElement>(
       '[data-difficulty="beginner"]',
@@ -544,7 +548,7 @@ describe("mountLayout session lifecycle", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     mountLayout(root, deps);
     await flush();
-    await seedOneCommittedTurn(root, deps);
+    await seedUsedSession(root, deps);
 
     const difficulty = root.querySelector<HTMLButtonElement>(
       '[data-difficulty="beginner"]',
@@ -562,7 +566,7 @@ describe("mountLayout session lifecycle", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     mountLayout(root, deps);
     await flush();
-    await seedOneCommittedTurn(root, deps);
+    await seedUsedSession(root, deps);
 
     const smiley = root.querySelector<HTMLButtonElement>(".smiley")!;
     smiley.click();
@@ -570,7 +574,7 @@ describe("mountLayout session lifecycle", () => {
     expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("a new game on an in-flight first Send interrupts without confirming", async () => {
+  it("a new game on an in-flight Send confirms and interrupts", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -578,51 +582,38 @@ describe("mountLayout session lifecycle", () => {
     mountLayout(root, deps);
     await flush();
     await startSession(root);
-    ($(root, ".send-btn") as HTMLButtonElement).click(); // running, still empty
+    ($(root, ".send-btn") as HTMLButtonElement).click(); // running, already used
 
     const smiley = root.querySelector<HTMLButtonElement>(".smiley")!;
     smiley.click();
     await flush();
-    expect(confirmSpy).not.toHaveBeenCalled();
+    // A Send makes the Session `used` even before its reply lands.
+    expect(confirmSpy).toHaveBeenCalled();
     expect(deps.aiApi.interrupt_by_user).toHaveBeenCalledTimes(1);
   });
 
-  it("changing the InputMode while empty does not confirm", async () => {
-    mockFetch();
-    const root = mount();
-    const deps = makeDeps();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    mountLayout(root, deps);
-    await startSession(root);
-    confirmSpy.mockClear();
-
-    const select = root.querySelector<HTMLSelectElement>(".input-mode-select")!;
-    select.value = "emoji";
-    select.dispatchEvent(new Event("change"));
-    expect(confirmSpy).not.toHaveBeenCalled();
-    expect(select.value).toBe("emoji");
-  });
-
-  it("reports hasNonEmptySession for the refresh guard", async () => {
+  it("reports hasUsedSession for the refresh guard", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
     const layout = mountLayout(root, deps);
-    expect(layout.hasNonEmptySession()).toBe(false);
+    expect(layout.hasUsedSession()).toBe(false);
 
-    // An empty (created but uncommitted) session does not guard either.
+    // A created but unused session does not guard either.
     await startSession(root);
-    expect(layout.hasNonEmptySession()).toBe(false);
+    expect(layout.hasUsedSession()).toBe(false);
 
+    // A Send makes it used before any reply lands.
     ($(root, ".send-btn") as HTMLButtonElement).click();
+    expect(layout.hasUsedSession()).toBe(true);
     onEvent(deps)({ kind: "sse_done" });
     await flush();
-    expect(layout.hasNonEmptySession()).toBe(true);
+    expect(layout.hasUsedSession()).toBe(true);
 
-    // Closing drops the Turns the guard was protecting.
+    // Closing drops what the guard was protecting.
     vi.spyOn(window, "confirm").mockReturnValue(true);
     await closeSession(root);
-    expect(layout.hasNonEmptySession()).toBe(false);
+    expect(layout.hasUsedSession()).toBe(false);
   });
 
   it("the axis checkbox toggles the axis layer", () => {
@@ -689,7 +680,7 @@ describe("mountLayout SessionBox visibility", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     mountLayout(root, deps);
     await flush(); // init done, so the game area click listener is live
-    await seedOneCommittedTurn(root, deps);
+    await seedUsedSession(root, deps);
     expect($(root, ".ai-session-box").style.display).toBe("");
 
     root

@@ -21,5 +21,5 @@ const layout = mountLayout(ROOT, deps);
 // A custom confirm can't block unload, so this is the only browser-sanctioned
 // way to warn (issue #112 US-32 spirit).
 window.addEventListener("beforeunload", (e) => {
-  if (layout.hasNonEmptySession()) e.preventDefault();
+  if (layout.hasUsedSession()) e.preventDefault();
 });

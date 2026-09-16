@@ -45,7 +45,7 @@ export interface GameAreaOptions {
    * the AI Session. */
   onNewGame?: () => void;
   /** Called before a new game (smiley / difficulty) is confirmed; return false
-   * to cancel. The layout uses it to guard a discard of a non-empty Session. */
+   * to cancel. The layout uses it to guard a discard of a used Session. */
   beforeNewGame?: () => boolean;
   /** Called after the Board renders a fresh snapshot (initial load and every
    * action response). The layout uses it to keep its axis labels in sync

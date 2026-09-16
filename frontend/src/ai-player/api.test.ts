@@ -102,17 +102,18 @@ describe("createAiApi.send (SSE consumer)", () => {
         ),
     );
 
-    const events = await collect(api, { inputMode: "emoji" });
+    const events = await collect(api, {});
 
     expect(events).toEqual([
       { kind: "reasoning", text: "think" },
       { kind: "content", text: "(2,3)" },
       { kind: "sse_done" },
     ]);
-    // The request POSTs to the session route with the input_mode body.
+    // The request POSTs to the session route; the InputMode is the Session's,
+    // so it is not in the body.
     const [url, init] = vi.mocked(fetch).mock.calls[0]!;
     expect(url).toBe("/ai/send");
-    expect(JSON.parse(init!.body as string)).toEqual({ input_mode: "emoji" });
+    expect(JSON.parse(init!.body as string)).toEqual({});
   });
 
   it("parses events that straddle a chunk boundary", async () => {
@@ -132,7 +133,7 @@ describe("createAiApi.send (SSE consumer)", () => {
         ),
     );
 
-    const events = await collect(api, { inputMode: "emoji" });
+    const events = await collect(api, {});
     expect(events).toEqual([
       { kind: "reasoning", text: "think" },
       { kind: "content", text: "hello world" },
@@ -148,13 +149,11 @@ describe("createAiApi.send (SSE consumer)", () => {
     );
 
     await collect(api, {
-      inputMode: "image",
       imageDataUrl: "data:image/png;base64,AAAA",
     });
 
     const [, init] = vi.mocked(fetch).mock.calls[0]!;
     expect(JSON.parse(init!.body as string)).toEqual({
-      input_mode: "image",
       image_data_url: "data:image/png;base64,AAAA",
     });
   });
@@ -166,11 +165,10 @@ describe("createAiApi.send (SSE consumer)", () => {
       vi.fn().mockResolvedValue(okResponse(["data: [DONE]\n\n"])),
     );
 
-    await collect(api, { inputMode: "emoji", thinkingLevel: "high" });
+    await collect(api, { thinkingLevel: "high" });
 
     const [, init] = vi.mocked(fetch).mock.calls[0]!;
     expect(JSON.parse(init!.body as string)).toEqual({
-      input_mode: "emoji",
       thinking_level: "high",
     });
   });
@@ -189,7 +187,7 @@ describe("createAiApi.send (SSE consumer)", () => {
         ),
     );
 
-    const events = await collect(api, { inputMode: "emoji" });
+    const events = await collect(api, {});
     expect(events[1]).toEqual({ kind: "interrupted" });
   });
 
@@ -206,7 +204,7 @@ describe("createAiApi.send (SSE consumer)", () => {
         ),
     );
 
-    const events = await collect(api, { inputMode: "emoji" });
+    const events = await collect(api, {});
     expect(events[0]).toEqual({
       kind: "provider_error",
       error: { kind: "upstream", code: 429, message: "rate limited" },
@@ -227,7 +225,7 @@ describe("createAiApi.send (SSE consumer)", () => {
       ),
     );
 
-    const events = await collect(api, { inputMode: "emoji" }, failures);
+    const events = await collect(api, {}, failures);
     expect(events).toEqual([]);
     expect(failures).toEqual([
       {
@@ -251,7 +249,7 @@ describe("createAiApi.send (SSE consumer)", () => {
       } as unknown as Response),
     );
 
-    await collect(api, { inputMode: "emoji" }, failures);
+    await collect(api, {}, failures);
     expect(failures).toEqual([
       {
         kind: "refused",
@@ -275,7 +273,7 @@ describe("createAiApi.send (SSE consumer)", () => {
       } as unknown as Response),
     );
 
-    await collect(api, { inputMode: "emoji" }, failures);
+    await collect(api, {}, failures);
     expect(failures).toEqual([
       {
         kind: "provider",
@@ -293,7 +291,7 @@ describe("createAiApi.send (SSE consumer)", () => {
     const failures: SendFailure[] = [];
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("boom")));
 
-    await collect(api, { inputMode: "emoji" }, failures);
+    await collect(api, {}, failures);
     expect(failures[0]).toEqual({
       kind: "provider",
       error: { kind: "upstream", code: null, message: "boom" },
@@ -309,9 +307,11 @@ describe("createAiApi.begin", () => {
       vi.fn().mockResolvedValue({ ok: true, status: 204 } as Response),
     );
 
-    await expect(api.begin()).resolves.toBeUndefined();
+    await expect(api.begin("plain")).resolves.toBeUndefined();
     expect(vi.mocked(fetch)).toHaveBeenCalledWith("/ai/begin", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input_mode: "plain" }),
     });
   });
 
@@ -327,7 +327,7 @@ describe("createAiApi.begin", () => {
         }),
       ),
     );
-    await expect(api.begin()).rejects.toEqual({
+    await expect(api.begin("plain")).rejects.toEqual({
       kind: "config",
       code: null,
       message: "no provider",
@@ -337,7 +337,7 @@ describe("createAiApi.begin", () => {
   it("shapes a network failure as an upstream ProviderError", async () => {
     const api = createAiApi();
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    await expect(api.begin()).rejects.toEqual({
+    await expect(api.begin("plain")).rejects.toEqual({
       kind: "upstream",
       code: null,
       message: "offline",

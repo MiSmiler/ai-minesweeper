@@ -141,20 +141,16 @@ async fn run_test_ai_chat(prompt: &str) -> Result<(), String> {
     agent.set_model(SELF_CHECK_MODEL.to_string(), Some("deepseek"));
 
     agent
-        .create_session()
+        .create_session(
+            "You are a helpful assistant. Reply concisely to the user's message.".to_string(),
+        )
         .await
         .map_err(|e| format!("failed to create session: {e:?}"))?;
-    let pending = vec![
-        Message::System {
-            content: "You are a helpful assistant. Reply concisely to the user's message."
-                .to_string(),
-        },
-        Message::User {
-            content: vec![ContentBlock::Text(prompt.to_string())],
-        },
-    ];
+    let messages = vec![Message::User {
+        content: vec![ContentBlock::Text(prompt.to_string())],
+    }];
 
-    match agent.complete_once(pending, ThinkingLevel::Low).await {
+    match agent.complete_once(messages, ThinkingLevel::Low).await {
         Ok(Message::Assistant {
             content,
             reasoning_content,

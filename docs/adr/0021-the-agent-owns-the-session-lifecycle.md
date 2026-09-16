@@ -1,5 +1,9 @@
 # The Agent owns the Session lifecycle
 
+> Amended by ADR-0024: the AiPlayer has no `prepare` step any more — that half of
+> `AiPlayer::send` is the free `board_message` render — and the InputMode is
+> handed to `begin` rather than bound by a Send.
+
 The agent runtime was stateless: `Session` was a shared `Vec<Message>` handle, and every lifecycle concern — the id, the in-flight cancel token, Load before the first Send, which run may commit — lived one layer up in the ai-player binding (`SessionBinding`, `InFlight`). The glossary had already attributed Session, Send, Prepare, Turn and Load to the agent context, so the names and the code disagreed on the day that glossary landed. The Agent now owns the live Session — its id, its messages and the in-flight Send's cancel token — and at most one Session is live per Agent, so a caller addresses the Agent and never a Session. The binding keeps only policy: one Game drives one Agent, the InputMode lock, a New Game ending the Session. (Supersedes ADR-0017.)
 
 Considered options: an id-addressed registry inside the Agent (rejected — with one live Session it is a one-entry map, and the id indirection is exactly what this change removes); the caller holding the Session and passing it to every call (rejected — the caller would hold the mechanism the Agent owns, and `interrupt` would have to compare ids to learn whose Send it is cancelling); leaving the mechanism in the binding (rejected — it makes the agent glossary wrong, and every second consumer — an example, a test, a headless harness — has to reimplement the bookkeeping ADR-0013 promised the runtime would carry).

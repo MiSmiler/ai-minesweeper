@@ -2,8 +2,8 @@
 
 The Minesweeper binding for the agent runtime: how this game's Board is put in
 front of the Agent. The Session is the Agent's, not this context's; what lives
-here is policy — one Game drives one Agent, the InputMode bound by the first
-committed Turn, a New Game ending the Session. That policy is in this context's
+here is policy — one Game drives one Agent, the InputMode chosen at session
+creation, a New Game ending the Session. That policy is in this context's
 ADRs (0016, 0017).
 
 ## Language
@@ -13,7 +13,7 @@ A Player that plays a Game by deciding its moves with an Agent. One AiPlayer exi
 _Avoid_: AI, agent, bot, AI opponent, guide, advisor
 
 **InputMode**:
-The way the Board is put in front of DeepSeek: `Plain` (the character grid), `Emoji`, or `Image` (a screenshot of the Board).
+The way the Board is put in front of DeepSeek: `Plain` (the character grid), `Emoji`, or `Image` (a screenshot of the Board). The AiPlayer picks one at session creation: it decides the Session's system prompt, and it stays fixed until the Session ends.
 _Avoid_: BoardFormat, format, input format
 
 **BoardView**:

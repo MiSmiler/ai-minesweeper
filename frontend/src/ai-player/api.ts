@@ -41,19 +41,19 @@ export type ProviderError = {
   message: string;
 };
 
-/** Why a Send produced no Turn, as the frontend sees it. A `provider` failure
- * is the Provider's own cause, wherever it happened (Load, Prepare or
- * mid-stream) and carries it intact; a `refused` failure is the AiPlayer
- * rejecting the Send before the exchange started. */
+/** Why a Send produced no reply, as the frontend sees it. A `provider` failure
+ * is the Provider's own cause, wherever it happened (Load, or a Send) and
+ * carries it intact; a `refused` failure is the AiPlayer rejecting the Send
+ * before the exchange started. */
 export type SendFailure =
   | { kind: "provider"; error: ProviderError }
   | { kind: "refused"; status: number; message: string };
 
-/** The frontend's Send request: only `inputMode` plus an optional
- * `imageDataUrl` for the image mode. No model is sent — the backend picks its
- * DeepSeek default. */
+/** The frontend's Send request: the per-call settings only (an optional
+ * `imageDataUrl` for the image mode). No model is sent — the backend picks its
+ * DeepSeek default. The InputMode is not here: the Session carries the one it
+ * was created under. */
 export interface SendRequest {
-  inputMode: InputMode;
   /** #122 reasoning depth; the backend defaults to `low` when absent. */
   thinkingLevel?: ThinkingLevel;
   imageDataUrl?: string;
@@ -63,13 +63,14 @@ export interface SendRequest {
  * (`createAiApi`) talks to the backend AI Session routes: `begin` POSTs
  * `/ai/begin`, `send` POSTs `/ai/send` (issue #131, #133). */
 export interface AiApi {
-  /** Loads the AI runtime, then begins an EMPTY AI Session (no InputMode
-   * bound yet). A load failure rejects with a `ProviderError` (see
+  /** Loads the AI runtime, then begins an AI Session under `mode` — `mode`'s
+   * system prompt is the Session's, and `mode` stays this Session's for its
+   * whole life. A load failure rejects with a `ProviderError` (see
    * `isProviderError`). */
-  begin(): Promise<void>;
-  /** Appends the current board; the first committed Send binds the InputMode.
-   * A refusal or a provider failure before the stream starts arrives on
-   * `onFailure`; a mid-stream failure arrives as a `ReplyEvent`. */
+  begin(mode: InputMode): Promise<void>;
+  /** Appends the current board. A refusal or a provider failure before the
+   * stream starts arrives on `onFailure`; a mid-stream failure arrives as a
+   * `ReplyEvent`. */
   send(
     req: SendRequest,
     onEvent: (e: ReplyEvent) => void,
@@ -84,10 +85,14 @@ export interface AiApi {
  * `interrupt` event on the open stream (issue #97, #119). */
 export function createAiApi(): AiApi {
   return {
-    async begin() {
+    async begin(mode) {
       let res: Response;
       try {
-        res = await fetch("/ai/begin", { method: "POST" });
+        res = await fetch("/ai/begin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ input_mode: mode }),
+        });
       } catch (err) {
         log.error("POST /ai/begin failed", err);
         throw asProviderError(err);
@@ -121,7 +126,6 @@ export function createAiApi(): AiApi {
  * `ai_adapter::SendRequest` field is snake_case `image_data_url`. */
 function wireRequest(req: SendRequest): Record<string, unknown> {
   return {
-    input_mode: req.inputMode,
     thinking_level: req.thinkingLevel,
     image_data_url: req.imageDataUrl,
   };
@@ -152,7 +156,7 @@ async function consumeEvents(
 }
 
 /** Shapes an unknown failure as an `upstream` `ProviderError`, so the machine
- * can alert it through the same path as a Send's Prepare failure. */
+ * can alert it through the same path as a Send failure. */
 function asProviderError(err: unknown): ProviderError {
   return {
     kind: "upstream",

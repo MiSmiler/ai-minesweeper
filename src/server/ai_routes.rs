@@ -1,9 +1,10 @@
 //! SSE transport for the AiPlayer's `/ai/...` routes (issue #117, ADR-0013).
 //!
 //! A thin transport layer over the `ai_player::AiPlayer` seam: it begins an AI
-//! Session (`POST /ai/begin`), appends one board to it and forwards the reply
-//! as an SSE stream terminated by `[DONE]` (`POST /ai/send`), and cancels the
-//! in-flight Send (`POST /ai/interrupt`).
+//! Session under an InputMode (`POST /ai/begin`), appends one board to it and
+//! forwards the reply as an SSE stream terminated by `[DONE]`
+//! (`POST /ai/send`), and cancels the in-flight Send
+//! (`POST /ai/interrupt`).
 //!
 //! This module never reaches into `ai_player` internals and never writes to
 //! the `Game` — it only takes a player-visible board snapshot (cloned under a
@@ -21,7 +22,7 @@ use axum::routing::post;
 use axum::{Json, Router};
 use futures::StreamExt;
 use futures::stream;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use agent::SendError as AgentSendError;
 use agent::{ProviderError, ProviderErrorKind, StreamChunk};
@@ -46,7 +47,7 @@ pub(crate) enum ReplyEvent {
     Content {
         text: String,
     },
-    /// The caller's own Interrupt: the Send commits no Turn.
+    /// The caller's own Interrupt: the reply never lands.
     Interrupted,
     /// The Provider's failure, carrying its own cause intact.
     ProviderError {
@@ -76,13 +77,24 @@ pub(crate) fn ai_routes(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
+/// The `POST /ai/begin` body: the InputMode the Session is created under. Its
+/// system prompt is `mode`'s, and it stays this Session's for its whole life.
+#[derive(Debug, Deserialize)]
+struct BeginRequest {
+    input_mode: InputMode,
+}
+
 /// `POST /ai/begin`: loads the AI runtime, then replaces the live AI Session
-/// with an empty one (the old session's Send is cancelled). The UI holds the
-/// discard confirm; the backend replaces unconditionally. A Load failure (no
-/// provider / bad key / unreachable model) maps to the same `ProviderError`
-/// body as a Send's Prepare failure, so the frontend alerts it before any Send.
-async fn handle_begin(State(state): State<Arc<AppState>>) -> Response {
-    match state.ai_player.begin().await {
+/// with one created under the body's `input_mode` (the old session's Send is
+/// cancelled). The UI holds the discard confirm; the backend replaces
+/// unconditionally. A Load failure (no provider / bad key / unreachable model)
+/// maps to the same `ProviderError` body as a Send failure, so the frontend
+/// alerts it before any Send.
+async fn handle_begin(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BeginRequest>,
+) -> Response {
+    match state.ai_player.begin(req.input_mode).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(pe) => provider_error_response(pe),
     }
@@ -91,15 +103,6 @@ async fn handle_begin(State(state): State<Arc<AppState>>) -> Response {
 /// `POST /ai/send`: appends the current board to the live AI Session and
 /// downstreams the reply as SSE.
 async fn handle_send(State(state): State<Arc<AppState>>, Json(req): Json<SendRequest>) -> Response {
-    // An image Send must carry the screenshot it describes; reject it before
-    // the session is touched, so the Send never starts.
-    if req.input_mode == InputMode::Image && req.image_data_url.is_none() {
-        return error_response(
-            StatusCode::BAD_REQUEST,
-            "image mode requires image_data_url".to_string(),
-        );
-    }
-
     // `/ai/...` is read-only: clone a player-visible snapshot under a *short*
     // lock, then drop the lock before the (potentially long) network round trip
     // so `/state` and `/action` stay responsive during the Send. The clone
@@ -157,17 +160,17 @@ fn to_event(item: Result<StreamChunk, AgentSendError>) -> Result<Event, axum::Er
     Ok(event)
 }
 
-/// Maps a [`SendError`] to a status + body. The AiPlayer's own refusal is
-/// `ModeMismatch`; the agent's `NoSession` / `Busy` refusals carry
+/// Maps a [`SendError`] to a status + body. The AiPlayer's own refusal is a
+/// missing screenshot; the agent's `NoSession` / `Busy` refusals carry
 /// `{"error": "..."}` (the status code is the machine signal). A Provider
 /// failure keeps the `{kind,code,message}` body; an Interrupt at delivery (a
 /// defensive branch: a cancel before the stream begins surfaces *through* the
 /// stream) is a refusal too.
 fn send_error_response(err: SendError) -> Response {
     match err {
-        SendError::ModeMismatch { bound, requested } => error_response(
+        SendError::MissingScreenshot => error_response(
             StatusCode::BAD_REQUEST,
-            format!("input mode is locked to {bound:?}, requested {requested:?}"),
+            "image mode requires image_data_url".to_string(),
         ),
         SendError::Agent(AgentSendError::NoSession) => {
             error_response(StatusCode::CONFLICT, "no live AI session".to_string())
@@ -195,7 +198,7 @@ fn error_response(status: StatusCode, message: String) -> Response {
 
 /// Maps a [`ProviderError`] into an HTTP status + a `{kind,code,message}` body;
 /// no SSE is started. Both provider failure paths land here: a Load failure
-/// (session creation) and a Send's Prepare failure. The status is the
+/// (session creation) and a Send failure. The status is the
 /// provider's own `code` when it parses, otherwise the `kind` decides:
 /// `Config` is 503 (a setup the caller cannot fix by retrying), `Upstream` is
 /// 502.
@@ -271,16 +274,16 @@ mod tests {
         Arc::new(AppState { game, ai_player })
     }
 
-    fn request_in(mode: InputMode) -> SendRequest {
+    fn plain_request() -> SendRequest {
         SendRequest {
-            input_mode: mode,
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         }
     }
 
-    fn plain_request() -> SendRequest {
-        request_in(InputMode::Plain)
+    /// The `POST /ai/begin` body for `mode`.
+    fn begin_request(mode: InputMode) -> Json<BeginRequest> {
+        Json(BeginRequest { input_mode: mode })
     }
 
     async fn body_as_string(resp: Response) -> String {
@@ -291,7 +294,7 @@ mod tests {
     #[tokio::test]
     async fn send_future_is_send() {
         let (state, _mock) = app_state();
-        state.ai_player.begin().await.unwrap();
+        state.ai_player.begin(InputMode::Plain).await.unwrap();
         let game = state.game.lock().unwrap().clone();
         let fut = state.ai_player.send(&game, plain_request());
         require_send(fut);
@@ -353,7 +356,7 @@ mod tests {
     #[tokio::test]
     async fn begin_answers_204_with_no_session_id() {
         let (state, _mock) = app_state();
-        let resp = handle_begin(State(state.clone())).await;
+        let resp = handle_begin(State(state.clone()), begin_request(InputMode::Plain)).await;
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
         let body = body_as_string(resp).await;
         assert!(body.is_empty());
@@ -372,7 +375,7 @@ mod tests {
             )))),
             ai_player,
         });
-        let resp = handle_begin(State(state.clone())).await;
+        let resp = handle_begin(State(state.clone()), begin_request(InputMode::Plain)).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body = body_as_string(resp).await;
         assert!(body.contains("\"kind\":\"config\""));
@@ -423,7 +426,7 @@ mod tests {
     #[tokio::test]
     async fn send_streams_reasoning_content_and_done() {
         let (state, _mock) = app_state();
-        state.ai_player.begin().await.unwrap();
+        state.ai_player.begin(InputMode::Plain).await.unwrap();
         let resp = handle_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_as_string(resp).await;
@@ -431,7 +434,7 @@ mod tests {
         assert!(body.contains("Mock reasoning."));
         assert!(body.contains("\"kind\":\"content\""));
         // The content delta is the mock's echo of the player's board — the
-        // user turn is the bare board (ADR-0016), not a header-prefixed body.
+        // board is the whole user message (ADR-0016).
         assert!(body.contains("........."));
         // The player's message is emitted first (issue #124).
         assert!(body.contains("\"kind\":\"user\""));
@@ -447,7 +450,7 @@ mod tests {
             code: Some(429),
             message: "rate limited".into(),
         })));
-        state.ai_player.begin().await.unwrap();
+        state.ai_player.begin(InputMode::Plain).await.unwrap();
         let resp = handle_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_as_string(resp).await;
@@ -462,7 +465,7 @@ mod tests {
     #[tokio::test]
     async fn a_second_send_while_in_flight_is_409() {
         let (state, _mock) = app_state();
-        state.ai_player.begin().await.unwrap();
+        state.ai_player.begin(InputMode::Plain).await.unwrap();
         let first = handle_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(first.status(), StatusCode::OK);
         // `first`'s body is still unread, so its Send is still in flight.
@@ -472,21 +475,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_mode_switch_after_the_first_commit_is_400() {
-        let (state, _mock) = app_state();
-        state.ai_player.begin().await.unwrap();
-        let first = handle_send(State(state.clone()), Json(plain_request())).await;
-        // Draining the body commits the Turn and locks the InputMode.
-        let _ = body_as_string(first).await;
-        let second = handle_send(State(state.clone()), Json(request_in(InputMode::Emoji))).await;
-        assert_eq!(second.status(), StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
     async fn image_mode_without_a_data_url_is_400() {
         let (state, _mock) = app_state();
-        state.ai_player.begin().await.unwrap();
-        let resp = handle_send(State(state.clone()), Json(request_in(InputMode::Image))).await;
+        state.ai_player.begin(InputMode::Image).await.unwrap();
+        let resp = handle_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         // The Send never started, so there is nothing to interrupt.
         assert!(!state.ai_player.interrupt());
@@ -497,7 +489,7 @@ mod tests {
     #[tokio::test]
     async fn interrupt_cancels_and_drives_the_sse_event() {
         let (state, _mock) = app_state();
-        state.ai_player.begin().await.unwrap();
+        state.ai_player.begin(InputMode::Plain).await.unwrap();
         let send_resp = handle_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(send_resp.status(), StatusCode::OK);
 
