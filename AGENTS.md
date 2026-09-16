@@ -12,6 +12,10 @@ Align **one point at a time**. Put a single question or decision to the user, th
 
 ## Development habits
 
+### Apply the `coding` skill
+
+The `coding` skill governs every code decision in this repo — an interface design, a module boundary, a naming choice, and a trade-off proposal as much as the code that lands. Read it before proposing a design and before writing or editing code, in any language or file.
+
 ### Design before code
 
 Rounds of discussion converging is not the design being settled. Both halves — functional design and interface design — are aligned with the user first, and only then does implementation open; a few rounds is the expected cost, not a delay to be cut short.
