@@ -3,13 +3,17 @@
 // generation-based invalidation of stale streams.
 
 import { describe, expect, it, vi } from "vitest";
-import type { AiApi } from "./api";
+import type { AiApi, Message } from "./api";
 import { createAiPlayerMachine, type AiPlayerState } from "./stateMachine";
+
+/** Lets the machine's own awaits settle, so a state emitted after one is visible. */
+const flush = () => new Promise<void>((r) => setTimeout(r, 0));
 
 /** A machine over a stubbed `AiApi`, with every state it emitted recorded. */
 function makeMachine() {
   const api: AiApi = {
     begin: vi.fn(async () => {}),
+    messages: vi.fn().mockResolvedValue([]),
     send: vi.fn(),
     interrupt_by_user: vi.fn().mockResolvedValue(undefined),
   };
@@ -134,6 +138,74 @@ describe("createAiPlayerMachine session lifecycle", () => {
     expect(last(h).sessionState).toBe("none");
     h.machine.send({});
     expect(h.api.send).not.toHaveBeenCalled();
+  });
+
+  it("fills the message list from the snapshot after begin", async () => {
+    const h = makeMachine();
+    vi.mocked(h.api.messages).mockResolvedValueOnce([
+      { role: "system", content: "be helpful" },
+    ]);
+
+    await h.machine.begin("plain");
+
+    expect(h.api.messages).toHaveBeenCalledTimes(1);
+    expect(last(h).messages).toEqual([
+      { role: "system", content: "be helpful" },
+    ]);
+  });
+
+  it("shows the session before the snapshot lands, then fills it", async () => {
+    const h = makeMachine();
+    let resolveRead!: (messages: Message[]) => void;
+    vi.mocked(h.api.messages).mockReturnValueOnce(
+      new Promise((r) => {
+        resolveRead = r;
+      }),
+    );
+
+    const pending = h.machine.begin("plain");
+    await flush();
+    // The box shows the live Session while the read is still in flight.
+    expect(last(h).sessionState).toBe("unused");
+    expect(last(h).messages).toEqual([]);
+
+    resolveRead([{ role: "system", content: "be helpful" }]);
+    await pending;
+    expect(last(h).messages).toEqual([
+      { role: "system", content: "be helpful" },
+    ]);
+  });
+
+  it("keeps the message list across a send", async () => {
+    const h = makeMachine();
+    vi.mocked(h.api.messages).mockResolvedValue([
+      { role: "system", content: "be helpful" },
+    ]);
+    await h.machine.begin("plain");
+
+    h.machine.send({});
+
+    expect(last(h).messages).toEqual([
+      { role: "system", content: "be helpful" },
+    ]);
+  });
+
+  it("ignores a snapshot read superseded by end", async () => {
+    const h = makeMachine();
+    let resolveRead!: (messages: Message[]) => void;
+    vi.mocked(h.api.messages).mockReturnValueOnce(
+      new Promise((r) => {
+        resolveRead = r;
+      }),
+    );
+    const pending = h.machine.begin("plain");
+
+    h.machine.end();
+    resolveRead([{ role: "system", content: "be helpful" }]);
+    await pending;
+
+    expect(last(h).sessionState).toBe("none");
+    expect(last(h).messages).toEqual([]);
   });
 });
 

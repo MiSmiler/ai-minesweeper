@@ -234,6 +234,15 @@ impl AiPlayer {
         self.agent.interrupt()
     }
 
+    /// The `Agent` behind this binding. A caller reads the live Session through
+    /// it ([`Agent::messages`]) rather than through a relaying method here: the
+    /// Session and its message list are the Agent's (ADR-0021), and the binding
+    /// keeps no copy to hand out. What stays here is policy — the InputMode the
+    /// live Session was created under, and the board rendering a Send carries.
+    pub fn agent(&self) -> &Agent {
+        &self.agent
+    }
+
     /// Appends the current board to the live Session and starts the Send.
     ///
     /// The user message renders the board in the live Session's [`InputMode`],

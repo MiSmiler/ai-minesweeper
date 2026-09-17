@@ -1,9 +1,11 @@
 // The SessionBox renderer (issue #119): `reasoning` is a light,
 // smaller, whole-block collapsible; `content` is normal font and never
 // collapses; the trailing `(row,col)` coordinate is plain text — never parsed,
-// never highlighted (issue #95). The caller's own Interrupt renders
-// as a red `已中断` tail line; a provider failure is the app's alert instead.
-// The auto-scroll respects the user's
+// never highlighted (issue #95). The Session's own `system` entries (its system
+// prompt) sit above the exchange, light green: they belong to the Session and
+// outlive a Send, unlike the four blocks below them. The caller's own Interrupt
+// renders as a red `已中断` tail line; a provider failure is the app's alert
+// instead. The auto-scroll respects the user's
 // scrollbar (issue #128): it stays pinned to the bottom only while the user
 // is not scrolling away, and releases the moment they scroll up.
 
@@ -87,7 +89,13 @@ export function createSessionBox(container: HTMLElement): SessionBox {
     lightbox.style.display = "none";
   });
 
+  // The Session's system prompt: read off the message list, so it is there from
+  // the moment the Session begins and stays across Sends.
+  const systemBlock = document.createElement("div");
+  systemBlock.className = "session-block session-system";
+
   container.replaceChildren(
+    systemBlock,
     userBlock,
     collapse,
     contentBlock,
@@ -96,6 +104,20 @@ export function createSessionBox(container: HTMLElement): SessionBox {
   );
 
   const render = (state: SessionBoxState): void => {
+    // Every `system` entry, not just the first: the message list decides what is
+    // a system prompt, not its position in the list.
+    const systemText = state.messages
+      .filter((m) => m.role === "system")
+      .map((m) => m.content)
+      .join("\n\n");
+    if (systemText) {
+      systemBlock.textContent = systemText;
+      systemBlock.style.display = "";
+    } else {
+      systemBlock.textContent = "";
+      systemBlock.style.display = "none";
+    }
+
     // The player's boxed turn: show only when there is text or a screenshot.
     const hasUser = state.user !== "" || state.userImageUrl !== undefined;
     if (hasUser) {
@@ -158,7 +180,7 @@ export function createSessionBox(container: HTMLElement): SessionBox {
     if (pinned) container.scrollTop = container.scrollHeight;
   };
 
-  render({ phase: "idle", reasoning: "", content: "", user: "" });
+  render({ phase: "idle", reasoning: "", content: "", user: "", messages: [] });
 
   return { render };
 }

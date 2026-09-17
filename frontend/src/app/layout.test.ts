@@ -28,6 +28,7 @@ function makeDeps(): AppDeps {
   return {
     aiApi: {
       begin: vi.fn(async () => {}),
+      messages: vi.fn().mockResolvedValue([]),
       send: vi.fn(),
       interrupt_by_user: vi.fn().mockResolvedValue(undefined),
     },
@@ -196,6 +197,21 @@ describe("mountLayout session controls", () => {
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
     expect(send.disabled).toBe(true);
     expect(mode.disabled).toBe(false);
+  });
+
+  it("shows the Session's system prompt as soon as it begins", async () => {
+    mockFetch();
+    const root = mount();
+    const deps = makeDeps();
+    vi.mocked(deps.aiApi.messages).mockResolvedValueOnce([
+      { role: "system", content: "be helpful" },
+    ]);
+    mountLayout(root, deps);
+
+    await startSession(root);
+
+    expect($(root, ".session-system").textContent).toBe("be helpful");
+    expect($(root, ".ai-session-box").style.display).toBe("");
   });
 
   it("a new session enables Send and locks the InputMode select", async () => {

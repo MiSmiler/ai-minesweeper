@@ -1,8 +1,8 @@
 // The ai-player state machine (issue #119, #133): owns the Send run's phase, the
-// AI Session's `sessionState`, and the accumulated `reasoning` / `content`
-// text. It is deliberately thin — phase + text accumulation + session
-// lifecycle only. The discard confirm and the Load alerts live in the `app/`
-// assembly layer.
+// AI Session's `sessionState` and message list, and the accumulated `reasoning`
+// / `content` text. It is deliberately thin — phase + text accumulation + the
+// Session's own data only. The discard confirm and the Load alerts live in the
+// `app/` assembly layer.
 //
 // Generation tracking: each `begin()` / `end()` / `send()` bumps a
 // generation counter, and the event callbacks capture the generation they were
@@ -19,6 +19,7 @@ import { isProviderError } from "./api";
 import type {
   AiApi,
   InputMode,
+  Message,
   ReplyEvent,
   SendFailure,
   ProviderError,
@@ -48,6 +49,9 @@ export interface AiPlayerState {
   content: string;
   /** The verbatim player message (the `role: user` turn), echoed by the backend. */
   user: string;
+  /** The Session's message list, oldest first; empty until the snapshot lands
+   * (and if it never does). It belongs to the Session, not to a Send. */
+  messages: Message[];
   /** Present for the image form: the screenshot the player sent (data URL). */
   userImageUrl?: string;
   /** Set only when `phase === "failed"`: why the Send produced no reply. */
@@ -76,6 +80,7 @@ function idleState(sessionState: SessionState): AiPlayerState {
     reasoning: "",
     content: "",
     user: "",
+    messages: [],
   };
 }
 
@@ -162,6 +167,12 @@ export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
       if (g !== generation) return; // superseded while beginning
       state = { ...state, sessionState: "unused" };
       emit();
+      // The snapshot lands on top of a box that is already on screen; a failed
+      // read leaves the list empty and never fails the Session.
+      const messages = await deps.api.messages();
+      if (g !== generation) return; // superseded while reading
+      state = { ...state, messages };
+      emit();
     },
     end() {
       generation++; // invalidate any in-flight stream
@@ -180,6 +191,8 @@ export function createAiPlayerMachine(deps: { api: AiApi }): AiPlayerMachine {
         content: "",
         user: "",
         userImageUrl: req.imageDataUrl,
+        // The message list is the Session's: a Send clears this round, not it.
+        messages: state.messages,
       };
       emit();
       deps.api.send(

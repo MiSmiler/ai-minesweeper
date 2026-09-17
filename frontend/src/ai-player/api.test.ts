@@ -345,6 +345,48 @@ describe("createAiApi.begin", () => {
   });
 });
 
+describe("createAiApi.messages", () => {
+  it("GETs /ai/messages and unwraps the envelope", async () => {
+    const api = createAiApi();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          messages: [{ role: "system", content: "be helpful" }],
+        }),
+      } as unknown as Response),
+    );
+
+    await expect(api.messages()).resolves.toEqual([
+      { role: "system", content: "be helpful" },
+    ]);
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith("/ai/messages");
+  });
+
+  it("resolves with an empty list on a non-OK response", async () => {
+    const api = createAiApi();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: "no live AI session" }),
+      } as unknown as Response),
+    );
+
+    await expect(api.messages()).resolves.toEqual([]);
+  });
+
+  it("resolves with an empty list when the request fails", async () => {
+    const api = createAiApi();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    await expect(api.messages()).resolves.toEqual([]);
+  });
+});
+
 describe("isProviderError", () => {
   it("recognizes a provider error shape", () => {
     expect(isProviderError({ kind: "config", code: null, message: "x" })).toBe(

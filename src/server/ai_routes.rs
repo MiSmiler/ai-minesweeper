@@ -4,7 +4,9 @@
 //! Session under an InputMode (`POST /ai/begin`), appends one board to it and
 //! forwards the reply as an SSE stream terminated by `[DONE]`
 //! (`POST /ai/send`), and cancels the in-flight Send
-//! (`POST /ai/interrupt`).
+//! (`POST /ai/interrupt`). The live Session's message list is read back through
+//! the `Agent` the binding holds (`GET /ai/messages`): the list is the Session's
+//! — the binding keeps no copy of it — so that route addresses the Agent.
 //!
 //! This module never reaches into `ai_player` internals and never writes to
 //! the `Game` — it only takes a player-visible board snapshot (cloned under a
@@ -18,7 +20,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::StreamExt;
 use futures::stream;
@@ -29,6 +31,7 @@ use agent::{ProviderError, ProviderErrorKind, StreamChunk};
 use ai_player::{InputMode, SendError, SendRequest};
 
 use super::AppState;
+use super::wire::MessagesDto;
 
 /// The SSE wire events (issue #117). Tagged by `kind` so the frontend's
 /// `ReplyEvent(TS)` type is isomorphic on the wire:
@@ -74,6 +77,7 @@ pub(crate) fn ai_routes(state: Arc<AppState>) -> Router {
         .route("/ai/begin", post(handle_begin))
         .route("/ai/send", post(handle_send))
         .route("/ai/interrupt", post(handle_interrupt))
+        .route("/ai/messages", get(handle_messages))
         .with_state(state)
 }
 
@@ -130,6 +134,16 @@ async fn handle_send(State(state): State<Arc<AppState>>, Json(req): Json<SendReq
 async fn handle_interrupt(State(state): State<Arc<AppState>>) -> Response {
     state.ai_player.interrupt();
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// `GET /ai/messages`: the live AI Session's message list, oldest first, in the
+/// [`MessagesDto`] envelope. No live Session is the same 409 `send` refuses on.
+/// The list is read off the `Agent`, which owns it.
+async fn handle_messages(State(state): State<Arc<AppState>>) -> Response {
+    match state.ai_player.agent().messages() {
+        Some(messages) => Json(MessagesDto { messages }).into_response(),
+        None => error_response(StatusCode::CONFLICT, "no live AI session".to_string()),
+    }
 }
 
 /// Maps one `AiPlayer::send` stream item to an SSE event. `Ok(Done)` becomes the
@@ -509,5 +523,35 @@ mod tests {
         let (state, _mock) = app_state();
         let resp = handle_interrupt(State(state.clone())).await;
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    // --- GET /ai/messages ---
+
+    #[tokio::test]
+    async fn messages_without_a_live_session_is_409() {
+        let (state, _mock) = app_state();
+        let resp = handle_messages(State(state.clone())).await;
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+        let body = body_as_string(resp).await;
+        assert_eq!(body, r#"{"error":"no live AI session"}"#);
+    }
+
+    #[tokio::test]
+    async fn messages_carries_the_session_list_in_an_envelope() {
+        let (state, _mock) = app_state();
+        state.ai_player.begin(InputMode::Plain).await.unwrap();
+
+        let resp = handle_messages(State(state.clone())).await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_as_string(resp).await;
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let messages = value["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(
+            messages[0]["content"].as_str().unwrap(),
+            InputMode::Plain.system_prompt().as_str()
+        );
     }
 }

@@ -40,12 +40,60 @@ function mockScrollMetrics(
 }
 
 describe("createSessionBox", () => {
+  it("renders the Session's system prompt above the exchange", () => {
+    render({
+      phase: "idle",
+      reasoning: "",
+      content: "",
+      user: "",
+      messages: [{ role: "system", content: "be helpful" }],
+    });
+    const system = container.querySelector(".session-system")!;
+    expect(system.textContent).toBe("be helpful");
+    expect(system.classList.contains("session-block")).toBe(true);
+    // It sits at the top, above the player's boxed turn.
+    expect(system.nextElementSibling!.classList.contains("session-user")).toBe(
+      true,
+    );
+  });
+
+  it("renders every system entry, not just the first", () => {
+    render({
+      phase: "idle",
+      reasoning: "",
+      content: "",
+      user: "",
+      messages: [
+        { role: "user", content: [{ type: "text", text: "........." }] },
+        { role: "system", content: "one" },
+        { role: "system", content: "two" },
+      ],
+    });
+    expect(container.querySelector(".session-system")!.textContent).toBe(
+      "one\n\ntwo",
+    );
+  });
+
+  it("hides the system block when the message list carries none", () => {
+    render({
+      phase: "idle",
+      reasoning: "",
+      content: "",
+      user: "",
+      messages: [{ role: "assistant", content: "hi" }],
+    });
+    const system = container.querySelector(".session-system") as HTMLElement;
+    expect(system.textContent).toBe("");
+    expect(system.style.display).toBe("none");
+  });
+
   it("renders reasoning and content into their blocks", () => {
     render({
       phase: "running",
       reasoning: "think",
       content: "(2,3)",
       user: "",
+      messages: [],
     });
     expect(container.querySelector(".session-reasoning")!.textContent).toBe(
       "think",
@@ -56,7 +104,13 @@ describe("createSessionBox", () => {
   });
 
   it("makes the reasoning block a collapsible details, content not", () => {
-    render({ phase: "running", reasoning: "think", content: "hi", user: "" });
+    render({
+      phase: "running",
+      reasoning: "think",
+      content: "hi",
+      user: "",
+      messages: [],
+    });
     // The reasoning block is inside a <details> collapsible.
     expect(container.querySelector(".session-collapse")).toBeTruthy();
     expect(
@@ -76,9 +130,21 @@ describe("createSessionBox", () => {
     expect(details.open).toBe(true);
 
     // The user-visible `open` state is preserved when streaming updates arrive.
-    c.render({ phase: "running", reasoning: "更多", content: "x", user: "" });
+    c.render({
+      phase: "running",
+      reasoning: "更多",
+      content: "x",
+      user: "",
+      messages: [],
+    });
     expect(details.open).toBe(true);
-    c.render({ phase: "done", reasoning: "结论", content: "y", user: "" });
+    c.render({
+      phase: "done",
+      reasoning: "结论",
+      content: "y",
+      user: "",
+      messages: [],
+    });
     expect(details.open).toBe(true);
   });
 
@@ -88,6 +154,7 @@ describe("createSessionBox", () => {
       reasoning: "r",
       content: "c",
       user: "",
+      messages: [],
     });
     expect(container.querySelector(".session-interrupt")!.textContent).toBe(
       "已中断",
@@ -100,6 +167,7 @@ describe("createSessionBox", () => {
       reasoning: "",
       content: "(2,3)",
       user: "",
+      messages: [],
     });
     const content = container.querySelector(".session-content")!;
     expect(content.textContent).toBe("(2,3)");
@@ -108,7 +176,13 @@ describe("createSessionBox", () => {
   });
 
   it("hides the empty reasoning/content/interrupt blocks", () => {
-    render({ phase: "idle", reasoning: "", content: "", user: "" });
+    render({
+      phase: "idle",
+      reasoning: "",
+      content: "",
+      user: "",
+      messages: [],
+    });
     const collapse = container.querySelector(
       ".session-collapse",
     ) as HTMLElement;
@@ -123,12 +197,19 @@ describe("createSessionBox", () => {
 
   it("shows interleaved reasoning and content as accumulated blocks", () => {
     const c = createSessionBox(container);
-    c.render({ phase: "running", reasoning: "思考", content: "", user: "" });
+    c.render({
+      phase: "running",
+      reasoning: "思考",
+      content: "",
+      user: "",
+      messages: [],
+    });
     c.render({
       phase: "running",
       reasoning: "思考中",
       content: "答案出来",
       user: "",
+      messages: [],
     });
     expect(container.querySelector(".session-reasoning")!.textContent).toBe(
       "思考中",
@@ -144,6 +225,7 @@ describe("createSessionBox", () => {
       reasoning: "think",
       content: "(2,3)",
       user: "0F\n2.",
+      messages: [],
     });
     const user = container.querySelector(".session-user")!;
     const userText = container.querySelector(".session-user-text")!;
@@ -157,10 +239,22 @@ describe("createSessionBox", () => {
 
   it("hides the player box when the exchange carries no message", () => {
     const c = createSessionBox(container);
-    c.render({ phase: "idle", reasoning: "", content: "", user: "" });
+    c.render({
+      phase: "idle",
+      reasoning: "",
+      content: "",
+      user: "",
+      messages: [],
+    });
     const user = container.querySelector(".session-user") as HTMLElement;
     expect(user.style.display).toBe("none");
-    c.render({ phase: "running", reasoning: "", content: "", user: "hi" });
+    c.render({
+      phase: "running",
+      reasoning: "",
+      content: "",
+      user: "hi",
+      messages: [],
+    });
     expect(user.style.display).toBe("");
   });
 
@@ -172,6 +266,7 @@ describe("createSessionBox", () => {
       content: "",
       user: "棋盘：下面是一张棋盘截图",
       userImageUrl: "data:image/png;base64,AAAA",
+      messages: [],
     });
     const img = container.querySelector(
       ".session-user-image",
@@ -203,13 +298,20 @@ describe("createSessionBox auto-scroll (issue #128)", () => {
   it("stays pinned to the bottom as content streams in", () => {
     mockScrollMetrics(container, 100, 200);
     const c = createSessionBox(container);
-    c.render({ phase: "running", reasoning: "think", content: "", user: "" });
+    c.render({
+      phase: "running",
+      reasoning: "think",
+      content: "",
+      user: "",
+      messages: [],
+    });
     expect(container.scrollTop).toBe(200);
     c.render({
       phase: "running",
       reasoning: "think more",
       content: "",
       user: "",
+      messages: [],
     });
     expect(container.scrollTop).toBe(200);
   });
@@ -217,7 +319,13 @@ describe("createSessionBox auto-scroll (issue #128)", () => {
   it("releases the lock when the user scrolls away from the bottom", () => {
     mockScrollMetrics(container, 100, 200);
     const c = createSessionBox(container);
-    c.render({ phase: "running", reasoning: "think", content: "", user: "" });
+    c.render({
+      phase: "running",
+      reasoning: "think",
+      content: "",
+      user: "",
+      messages: [],
+    });
     expect(container.scrollTop).toBe(200);
     // The user drags the scrollbar up; the pin is released.
     scrollTo(container, 40);
@@ -226,6 +334,7 @@ describe("createSessionBox auto-scroll (issue #128)", () => {
       reasoning: "think more",
       content: "",
       user: "",
+      messages: [],
     });
     expect(container.scrollTop).toBe(40); // stays where the user put it
   });
@@ -235,7 +344,13 @@ describe("createSessionBox auto-scroll (issue #128)", () => {
     const c = createSessionBox(container);
     // Unlock by scrolling up.
     scrollTo(container, 40);
-    c.render({ phase: "running", reasoning: "think", content: "", user: "" });
+    c.render({
+      phase: "running",
+      reasoning: "think",
+      content: "",
+      user: "",
+      messages: [],
+    });
     expect(container.scrollTop).toBe(40);
     // Back to the bottom: the lock re-engages.
     scrollTo(container, 100);
@@ -244,6 +359,7 @@ describe("createSessionBox auto-scroll (issue #128)", () => {
       reasoning: "think more",
       content: "",
       user: "",
+      messages: [],
     });
     expect(container.scrollTop).toBe(200);
   });
@@ -253,10 +369,22 @@ describe("createSessionBox auto-scroll (issue #128)", () => {
     const c = createSessionBox(container);
     // A previous run ended with the user scrolled up (unlocked).
     scrollTo(container, 40);
-    c.render({ phase: "done", reasoning: "old", content: "c", user: "" });
+    c.render({
+      phase: "done",
+      reasoning: "old",
+      content: "c",
+      user: "",
+      messages: [],
+    });
     expect(container.scrollTop).toBe(40);
     // A new analysis begins: start() emits an empty running state.
-    c.render({ phase: "running", reasoning: "", content: "", user: "" });
+    c.render({
+      phase: "running",
+      reasoning: "",
+      content: "",
+      user: "",
+      messages: [],
+    });
     expect(container.scrollTop).toBe(200);
   });
 });

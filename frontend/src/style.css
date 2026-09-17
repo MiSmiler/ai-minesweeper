@@ -452,6 +452,12 @@ button:disabled:hover {
      .session-block 13px), no box. */
 }
 
+/* The Session's system prompt, above the exchange: light green marks it as the
+   Session's own text rather than part of the current round. */
+.session-system {
+  background: #e3f2e3;
+}
+
 /* Issue #124: the player message is the only boxed turn — a deeper panel that
    clearly separates the user's half from the unboxed AI text. */
 .session-user {

@@ -2,9 +2,11 @@
 //!
 //! The wire contract has its own home here. The structs are pure data with
 //! serde derives; `GameSnapshot::from_game` maps a `core::Game` into this
-//! shape. This module depends on the `game` crate for that mapping and on
-//! `serde`, but not on axum (the handlers live in `server::mod.rs`).
+//! shape, and `MessagesDto` carries the AI Session's own `agent::Message`s.
+//! This module depends on the `game` and `agent` crates for those two mappings
+//! and on `serde`, but not on axum (the handlers live in `server::mod.rs`).
 
+use agent::Message;
 use serde::{Deserialize, Serialize};
 
 use game::{CellContent, Game, GameState, Position};
@@ -76,6 +78,13 @@ pub enum ActionKind {
     Flag,
     Chord,
     NewGame,
+}
+
+/// The `GET /ai/messages` body: the live AI Session's message list, oldest
+/// first, of which the first entry is the Session's system prompt.
+#[derive(Debug, Serialize)]
+pub(crate) struct MessagesDto {
+    pub(crate) messages: Vec<Message>,
 }
 
 // --- Core mapping ---
