@@ -15,16 +15,19 @@ use tokio_util::sync::CancellationToken;
 
 use crate::provider::Provider;
 use crate::provider::openai_api::{
-    ChatRequest, Message, ReasoningEffort, ThinkingMode, ThinkingToggle, ToolCall, ToolDecl,
+    self, ChatRequest, ReasoningEffort, ThinkingMode, ThinkingToggle, ToolCall, ToolDecl,
 };
 use crate::provider::{ProviderError, ProviderErrorKind, StreamChunk};
 
-/// The reasoning depth the agent should use for one Send (issue #122),
-/// translated onto the provider-agnostic `ChatRequest` fields
-/// (`reasoning_effort` / `thinking`). It is per Send — the model is fixed at
-/// construction, the depth is not — and it is also the
-/// `SendRequest.thinking_level` wire value. `Off` disables thinking mode; the
-/// rest set the effort. `low` is the default.
+mod message;
+
+pub use message::Message;
+
+/// The reasoning depth the agent should use for one Send (issue #122), mapped
+/// onto the `ChatRequest` fields (`reasoning_effort` / `thinking`). It is per
+/// Send — the model is fixed at construction, the depth is not — and it is
+/// also the `SendRequest.thinking_level` wire value. `Off` disables thinking
+/// mode; the rest set the effort. `low` is the default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThinkingLevel {
@@ -40,9 +43,8 @@ impl Default for ThinkingLevel {
     }
 }
 
-/// Maps the agent's reasoning depth onto the provider-agnostic `ChatRequest`
-/// fields. `Off` disables thinking (no effort); the rest enable it at the
-/// matching effort.
+/// Maps the agent's reasoning depth onto the `ChatRequest` fields. `Off`
+/// disables thinking (no effort); the rest enable it at the matching effort.
 fn thinking_to_wire(level: ThinkingLevel) -> (Option<ReasoningEffort>, Option<ThinkingToggle>) {
     match level {
         ThinkingLevel::Off => (
@@ -84,7 +86,9 @@ pub trait Tool: Send + Sync {
 /// leaves the crate. It carries its own `seq`, its history, and the Send in
 /// flight against it. The history opens with the system prompt the Session was
 /// created with; a Send appends the caller's messages as soon as it reaches the
-/// Provider, and the round trip's assistant half follows on `Done`.
+/// Provider, and the round trip's assistant half follows on `Done` — or an
+/// Interrupt marker in its place. It is the agent's own log (ADR-0026): what
+/// the Provider is sent is projected from it.
 struct Session {
     seq: u64,
     messages: Vec<Message>,
@@ -112,8 +116,10 @@ pub enum SendError {
     /// Refused before the exchange: a Send is already in flight.
     Busy,
     /// The caller interrupted the Send: the assistant half of the round trip
-    /// never lands. It is an act, not a cause — a Provider failing mid-stream
-    /// is a `Provider` failure.
+    /// never lands as a reply. It lands as an Interrupt marker instead — a fact
+    /// about the Session's log, never something the Provider is sent. It is an
+    /// act, not a cause — a Provider failing mid-stream is a `Provider`
+    /// failure.
     Interrupted,
     /// The Provider/model exchange failed. The cause travels intact, in the
     /// same variant at delivery and mid-stream.
@@ -305,12 +311,24 @@ impl Agent {
         }
     }
 
+    /// The live Session's history, oldest first; `None` when no Session is
+    /// live. This is the log itself, not the projection the Provider is sent
+    /// (ADR-0026): it may hold entries the model never reads.
+    pub fn messages(&self) -> Option<Vec<Message>> {
+        self.live
+            .lock()
+            .expect("session poisoned")
+            .as_ref()
+            .map(|session| session.messages.clone())
+    }
+
     /// One Send: appends `messages` to the live Session, streams the reply, and
     /// appends the assistant half when the stream reaches `Done`. `NoSession`
-    /// and `Busy` refuse before the exchange; an interrupted or failed stream
-    /// leaves the caller's messages behind and adds no reply. The model is
-    /// fixed at construction, while `level` is per Send. One cancel token spans
-    /// the whole Send.
+    /// and `Busy` refuse before the exchange; a failed stream leaves the
+    /// caller's messages behind with no reply, and an interrupted one leaves
+    /// them with an Interrupt marker where the reply would have gone. The model
+    /// is fixed at construction, while `level` is per Send. One cancel token
+    /// spans the whole Send.
     pub async fn send(
         &self,
         messages: Vec<Message>,
@@ -341,8 +359,15 @@ impl Agent {
             .get(&self.current_provider)
             .ok_or_else(|| SendError::Provider(no_provider_error()))?;
         let (reasoning_effort, thinking) = thinking_to_wire(level);
-        let mut request_messages = history;
-        request_messages.extend(messages.iter().cloned());
+        // The Session's log holds more than the Provider is shown: the request
+        // carries its lossy projection, which is the log minus the Interrupt
+        // markers. The blocks are shared, so that filter is the whole of the
+        // mapping — a filter-map, not a `From`.
+        let request_messages: Vec<openai_api::Message> = history
+            .into_iter()
+            .chain(messages.iter().cloned())
+            .filter_map(message::to_provider_message)
+            .collect();
         let req = ChatRequest {
             messages: request_messages,
             model: self.current_model.clone(),
@@ -351,6 +376,13 @@ impl Agent {
             reasoning_effort,
             thinking,
         };
+        // Known corner, accepted and not handled: a failure here returns
+        // before anything lands, so an `interrupt` racing this exchange is
+        // reported as this `Provider` failure rather than `Interrupted`, and
+        // leaves no trace in the history. That follows ADR-0024 — a Session
+        // records what reached the Provider, and this Send did not — and it is
+        // left as is: an interruption with no caller message behind it and no
+        // reply it cut is not a fact worth recording.
         let inner = provider
             .stream_chat(req, cancel.clone())
             .await
@@ -358,7 +390,7 @@ impl Agent {
 
         // The Send reached the Provider: the caller's messages are the
         // Session's history now, whatever the reply turns out to be. From here
-        // on an Interrupt cuts only the assistant half.
+        // on an Interrupt cuts only the assistant half, landing its marker.
         guard.append(messages);
 
         // The wrapper maps every `ProviderError` to [`SendError::Provider`]
@@ -375,15 +407,18 @@ impl Agent {
                     return Poll::Ready(None);
                 }
                 reported_cancel = true;
+                // The caller's act is a fact about the log, so it lands as a
+                // marker of its own. Whatever had already streamed is dropped:
+                // an interrupted reply is not a Reply.
+                guard.append(vec![Message::new_interrupt_marker()]);
                 return Poll::Ready(Some(Err(SendError::Interrupted)));
             }
             match Stream::poll_next(inner.as_mut(), cx) {
                 Poll::Ready(Some(Ok(StreamChunk::Done))) => {
-                    guard.append(vec![Message::Assistant {
-                        content: std::mem::take(&mut content),
-                        reasoning_content: reasoning.take(),
-                        tool_calls: None,
-                    }]);
+                    guard.append(vec![Message::new_assistant_reply(
+                        std::mem::take(&mut content),
+                        reasoning.take(),
+                    )]);
                     Poll::Ready(Some(Ok(StreamChunk::Done)))
                 }
                 Poll::Ready(Some(Ok(StreamChunk::ReasoningDelta(text)))) => {
@@ -421,11 +456,7 @@ impl Agent {
                 StreamChunk::Done => break,
             }
         }
-        Ok(Message::Assistant {
-            content,
-            reasoning_content: reasoning,
-            tool_calls: None,
-        })
+        Ok(Message::new_assistant_reply(content, reasoning))
     }
 
     /// The multi-Reply tool loop: stream one Reply; if it requests tool calls,
@@ -516,15 +547,14 @@ mod tests {
         vec![user_message(text)]
     }
 
-    /// The live Session's history (a crate-internal read).
+    /// The live Session's history, read the way a caller reads it.
     fn history(agent: &Agent) -> Vec<Message> {
-        agent
-            .live
-            .lock()
-            .expect("session poisoned")
-            .as_ref()
-            .map(|session| session.messages.clone())
-            .unwrap_or_default()
+        agent.messages().unwrap_or_default()
+    }
+
+    /// One reply as the `MockProvider` produces it: the last user text echoed.
+    fn reply_message(text: &str) -> Message {
+        Message::new_assistant_reply(text.into(), Some("Mock reasoning.".into()))
     }
 
     #[tokio::test]
@@ -535,14 +565,7 @@ mod tests {
             .complete_once(user_messages("hello"), ThinkingLevel::Low)
             .await
             .unwrap();
-        assert_eq!(
-            reply,
-            Message::Assistant {
-                content: "hello".into(),
-                reasoning_content: Some("Mock reasoning.".into()),
-                tool_calls: None,
-            }
-        );
+        assert_eq!(reply, reply_message("hello"));
 
         // The request that reached the provider matches the contract: model
         // filled by `set_model`, `stream` on, roles in order.
@@ -552,13 +575,13 @@ mod tests {
         assert_eq!(req.messages.len(), 2);
         assert_eq!(
             req.messages[0],
-            Message::System {
+            openai_api::Message::System {
                 content: "sys".into()
             }
         );
         assert_eq!(
             req.messages[1],
-            Message::User {
+            openai_api::Message::User {
                 content: vec![ContentBlock::Text("hello".into())],
             }
         );
@@ -568,11 +591,7 @@ mod tests {
             vec![
                 system_message(SYSTEM),
                 user_message("hello"),
-                Message::Assistant {
-                    content: "hello".into(),
-                    reasoning_content: Some("Mock reasoning.".into()),
-                    tool_calls: None,
-                },
+                reply_message("hello"),
             ]
         );
     }
@@ -620,7 +639,8 @@ mod tests {
         // The displaced Send reports the caller's interrupt on its next poll…
         assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
         assert_eq!(stream.next().await, None);
-        // …and the replacement holds only its system prompt.
+        // …and its marker lands nowhere: a superseded Send must not touch the
+        // replacement's log. That is all the replacement holds.
         assert_eq!(history(&agent), vec![system_message(SYSTEM)]);
     }
 
@@ -635,6 +655,7 @@ mod tests {
         agent.end_session();
         assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
         assert_eq!(stream.next().await, None);
+        // No Session is left, so the marker has nowhere to land.
         assert!(history(&agent).is_empty());
     }
 
@@ -657,10 +678,15 @@ mod tests {
         assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
         assert_eq!(stream.next().await, None);
         // The Interrupt cut only the assistant half: the user's message landed
-        // as soon as the Send reached the Provider.
+        // as soon as the Send reached the Provider, and the marker landed with
+        // it.
         assert_eq!(
             history(&agent),
-            vec![system_message(SYSTEM), user_message("hi")]
+            vec![
+                system_message(SYSTEM),
+                user_message("hi"),
+                Message::new_interrupt_marker()
+            ]
         );
         agent.end_session();
         let Err(err) = agent.send(user_messages("hi"), ThinkingLevel::Low).await else {
@@ -697,11 +723,7 @@ mod tests {
             vec![
                 system_message("sys"),
                 user_message("hi"),
-                Message::Assistant {
-                    content: "hi".into(),
-                    reasoning_content: Some("Mock reasoning.".into()),
-                    tool_calls: None,
-                },
+                reply_message("hi"),
             ]
         );
     }
@@ -726,7 +748,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_interrupted_stream_leaves_the_user_message_without_a_reply() {
+    async fn an_interrupted_stream_lands_a_marker_instead_of_a_reply() {
         let (agent, _mock) = agent_with_mock("m", "mock");
         agent.create_session(SYSTEM.into()).await.unwrap();
         let mut stream = agent
@@ -737,9 +759,68 @@ mod tests {
         assert!(agent.interrupt());
         assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
         assert_eq!(stream.next().await, None);
+        // The reasoning delta that had already streamed is not part of the
+        // marker: an interrupted reply is not a Reply.
         assert_eq!(
             history(&agent),
-            vec![system_message(SYSTEM), user_message("hi")]
+            vec![
+                system_message(SYSTEM),
+                user_message("hi"),
+                Message::new_interrupt_marker()
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_interrupt_marker_stays_out_of_the_next_request() {
+        let (agent, mock) = agent_with_mock("m", "mock");
+        agent.create_session(SYSTEM.into()).await.unwrap();
+        {
+            let mut stream = agent
+                .send(user_messages("hi"), ThinkingLevel::Low)
+                .await
+                .unwrap();
+            assert!(stream.next().await.is_some());
+            assert!(agent.interrupt());
+            while stream.next().await.is_some() {}
+        }
+        let mut stream = agent
+            .send(user_messages("again"), ThinkingLevel::Low)
+            .await
+            .unwrap();
+        while stream.next().await.is_some() {}
+        // The log holds the marker; the request is the log minus it, so two
+        // caller messages in a row are what the model reads.
+        let req = mock.last_request().expect("mock recorded a request");
+        assert_eq!(req.messages.len(), 3);
+        assert!(matches!(
+            req.messages[0],
+            openai_api::Message::System { .. }
+        ));
+        assert!(matches!(req.messages[1], openai_api::Message::User { .. }));
+        assert!(matches!(req.messages[2], openai_api::Message::User { .. }));
+    }
+
+    #[tokio::test]
+    async fn two_sends_land_two_exchanges_and_no_marker() {
+        let (agent, _mock) = agent_with_mock("m", "mock");
+        agent.create_session(SYSTEM.into()).await.unwrap();
+        for text in ["hi", "again"] {
+            let mut stream = agent
+                .send(user_messages(text), ThinkingLevel::Low)
+                .await
+                .unwrap();
+            while stream.next().await.is_some() {}
+        }
+        assert_eq!(
+            history(&agent),
+            vec![
+                system_message(SYSTEM),
+                user_message("hi"),
+                reply_message("hi"),
+                user_message("again"),
+                reply_message("again"),
+            ]
         );
     }
 
@@ -839,14 +920,7 @@ mod tests {
             .run_loop(user_messages("hi"), ThinkingLevel::Low)
             .await
             .unwrap();
-        assert_eq!(
-            reply,
-            Message::Assistant {
-                content: "hi".into(),
-                reasoning_content: Some("Mock reasoning.".into()),
-                tool_calls: None,
-            }
-        );
+        assert_eq!(reply, reply_message("hi"));
     }
 
     #[test]

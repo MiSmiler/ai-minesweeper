@@ -450,6 +450,7 @@ mod tests {
     use super::*;
     use agent::ChatRequest;
     use agent::ProviderSet;
+    use agent::provider::openai_api;
     use agent::{MockProvider, Provider, ProviderErrorKind, ProviderStream};
     use agent::{ReasoningEffort, ThinkingMode, ThinkingToggle};
     use async_trait::async_trait;
@@ -774,7 +775,7 @@ mod tests {
         let req = mock.last_request().unwrap();
         assert_eq!(
             req.messages[0],
-            Message::System {
+            openai_api::Message::System {
                 content: InputMode::Emoji.system_prompt()
             }
         );
@@ -793,10 +794,16 @@ mod tests {
         // System, User, Assistant, User.
         let req = mock.last_request().unwrap();
         assert_eq!(req.messages.len(), 4);
-        assert!(matches!(req.messages[0], Message::System { .. }));
-        assert!(matches!(req.messages[1], Message::User { .. }));
-        assert!(matches!(req.messages[2], Message::Assistant { .. }));
-        assert!(matches!(req.messages[3], Message::User { .. }));
+        assert!(matches!(
+            req.messages[0],
+            openai_api::Message::System { .. }
+        ));
+        assert!(matches!(req.messages[1], openai_api::Message::User { .. }));
+        assert!(matches!(
+            req.messages[2],
+            openai_api::Message::Assistant { .. }
+        ));
+        assert!(matches!(req.messages[3], openai_api::Message::User { .. }));
     }
 
     #[tokio::test]
@@ -810,16 +817,28 @@ mod tests {
             assert!(stream.next().await.is_some());
             assert!(ai_player.interrupt());
             while stream.next().await.is_some() {}
+            // The log is the Agent's (ADR-0026): the player's message stayed,
+            // and the Interrupt landed a marker of its own in place of a reply.
+            assert!(matches!(
+                ai_player.agent.messages().expect("a live session").last(),
+                Some(Message::Assistant {
+                    interrupt: true,
+                    ..
+                })
+            ));
         }
-        // The Interrupt cut only the assistant half: the player's message
-        // stayed, and the next request carries it.
+        // The Interrupt cut only the assistant half: the next request carries
+        // the player's message, and not the marker.
         let (_user_text, mut stream) = ai_player.send(&game, default_request()).await.unwrap();
         while stream.next().await.is_some() {}
         let req = mock.last_request().unwrap();
         assert_eq!(req.messages.len(), 3);
-        assert!(matches!(req.messages[0], Message::System { .. }));
-        assert!(matches!(req.messages[1], Message::User { .. }));
-        assert!(matches!(req.messages[2], Message::User { .. }));
+        assert!(matches!(
+            req.messages[0],
+            openai_api::Message::System { .. }
+        ));
+        assert!(matches!(req.messages[1], openai_api::Message::User { .. }));
+        assert!(matches!(req.messages[2], openai_api::Message::User { .. }));
     }
 
     #[tokio::test]
@@ -883,7 +902,7 @@ mod tests {
         // `user_message`'s return value.
         let request = mock.last_request().expect("mock recorded a request");
         match request.messages.last() {
-            Some(Message::User { content }) => {
+            Some(openai_api::Message::User { content }) => {
                 let expected = vec![ContentBlock::ImageUrl(
                     "data:image/png;base64,not-valid!!!".to_string(),
                 )];
@@ -1025,7 +1044,7 @@ mod tests {
         let req = mock.last_request().expect("mock recorded a request");
         // The user turn is the plain board alone. The two hidden Mines (0,1)
         // and (1,0) render as hidden '.', never as a revealed mine '*'.
-        let Message::User { content } = &req.messages[1] else {
+        let openai_api::Message::User { content } = &req.messages[1] else {
             panic!("expected the user turn");
         };
         let ContentBlock::Text(board) = &content[0] else {

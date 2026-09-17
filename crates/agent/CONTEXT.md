@@ -19,15 +19,15 @@ The Agent bringing its Provider and model up: the configuration is resolved and 
 _Avoid_: preflight, pre-flight, startup, initialization
 
 **Session**:
-The history its Sends have built — the system prompt it was created with, then every message the caller's Sends have landed, in order — plus the Send in flight against it. `create_session` opens the history with the caller's system prompt; a Send appends the caller's messages as soon as it reaches the Provider, and the reply follows on `Done`, so an interrupted or failed Send leaves the caller's messages behind with no reply. At most one is live per Agent, so a caller addresses the Agent and never a Session.
+The log its Sends have built — the system prompt it was created with, then every entry the caller's Sends have landed, in order — plus the Send in flight against it. `create_session` opens the log with the caller's system prompt; a Send appends the caller's messages as soon as it reaches the Provider, and the reply follows on `Done`. An Interrupt appends a marker in place of that reply, so the log can hold entries that are not Replies; what the Provider is sent is a lossy projection of it. At most one is live per Agent, so a caller addresses the Agent and never a Session.
 _Avoid_: conversation, chat, context, transcript
 
 **Send**:
-One call that appends the caller's messages to a Session and asks the Agent for a reply. The messages land when the Send reaches the Provider; the reply lands on `Done`. A Send that never reaches its end — interrupted, failed or unread — leaves the messages behind with no reply.
+One call that appends the caller's messages to a Session and asks the Agent for a reply. The messages land when the Send reaches the Provider; the reply lands on `Done`. A Send that never reaches its end — failed or unread — leaves the messages behind with no reply; an interrupted one lands an Interrupt marker in its place.
 _Avoid_: analysis, request, prompt, query
 
 **Reply**:
-The assistant's half of a Send — the Agent's answer to the caller.
+The assistant's half of a Send — the Agent's answer to the caller. Not every assistant-shaped entry is one: the Interrupt marker records an act, not an answer.
 _Avoid_: response, answer, completion, message
 
 **Interrupt**:
