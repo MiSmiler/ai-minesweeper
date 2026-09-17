@@ -1,17 +1,20 @@
-//! Provider-agnostic value types for the AI runtime (issue #113).
+//! The request shape of the OpenAI-compatible chat completions API — the wire
+//! this project's providers speak.
 //!
-//! `ai::protocol` defines the shared wire contract exchanged with any provider
-//! — [`ChatRequest`] / [`Message`] / [`ContentBlock`] / [`ToolCall`] /
-//! [`ToolDecl`] — plus the stream cell ([`StreamChunk`]) and error type
-//! ([`ProviderError`]) flowing out of a provider. It knows nothing about a
-//! concrete vendor or about Minesweeper; it depends on `serde` only.
+//! [`ChatRequest`] is serialized straight into the body of `POST
+//! /chat/completions` (see [`deepseek`](crate::provider::deepseek)), so its
+//! parts — [`Message`], [`ContentBlock`], [`ToolCall`], [`ToolDecl`] and the
+//! thinking pair ([`ReasoningEffort`] / [`ThinkingToggle`]) — are that API
+//! family's shapes, not a neutral vocabulary. A vendor that is not
+//! OpenAI-compatible gets a module of its own and translates, rather than
+//! mixing two shapes into one file.
 //!
 //! These types are consumed on the **output side**: `provider` / `ai-player`
 //! / the app all produce them and serialize them out (to the provider's wire
 //! or to the frontend). They are never parsed back from a wire body in this
 //! layer, so they carry only `Serialize` (the real DeepSeek provider parses
 //! its own OpenAI wire and *constructs* these values; it does not deserialize
-//! `protocol` types directly).
+//! them directly).
 //!
 //! Key shapes:
 //! - [`Message`] is tagged externally by `role` (`system` / `user` /
@@ -19,7 +22,6 @@
 //! - [`ContentBlock`]'s *internal* representation differs from its *wire*
 //!   shape (`{type:"text",text}` / `{type:"image_url",image_url:{url}}`); the
 //!   conversion is handled by hand-written serde.
-//! - [`ProviderError`] serializes as `{kind,code,message}`.
 
 use serde::Serialize;
 
@@ -127,8 +129,7 @@ pub struct ToolDecl {
 /// The chain-of-thought depth the provider should use, when thinking mode is
 /// on. Values are the non-collapsing subset of DeepSeek's `reasoning_effort`:
 /// `medium`/`xhigh` map to `high` upstream, so only `low`/`high`/`max` are
-/// distinct. Provider-agnostic: a provider that has no notion of effort simply
-/// ignores it.
+/// distinct. A provider that has no notion of effort simply ignores it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
@@ -173,41 +174,6 @@ pub struct ChatRequest {
     /// this and `reasoning_effort`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<ThinkingToggle>,
-}
-
-/// One cell of a streaming chat response.
-///
-/// `Done` marks a normal end of stream on the wire-adjacent contract; the
-/// frontend's `[DONE]` terminator is a transport concern and never appears as
-/// a block on the wire.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub enum StreamChunk {
-    ReasoningDelta(String),
-    ContentDelta(String),
-    Done,
-}
-
-/// The class of a provider failure, serialized lowercased.
-/// The variants are produced by the future provider (issue #116); the mock
-/// runtime never fails, so they're only exercised by tests today.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-#[allow(dead_code)]
-pub enum ProviderErrorKind {
-    /// Misconfiguration: bad auth, unknown model, malformed request.
-    Config,
-    /// An upstream/transient failure: network, rate limit, server error.
-    Upstream,
-}
-
-/// A provider failure, serialized as `{kind,code,message}`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ProviderError {
-    pub kind: ProviderErrorKind,
-    /// The upstream HTTP status, when one was seen; `None` for transport
-    /// failures (no HTTP response).
-    pub code: Option<u16>,
-    pub message: String,
 }
 
 #[cfg(test)]
@@ -288,28 +254,6 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&block).unwrap(),
             serde_json::json!({"type": "image_url", "image_url": {"url": "data:...png", "detail": "low"}})
-        );
-    }
-
-    #[test]
-    fn provider_error_serializes_to_kind_code_message() {
-        let err = ProviderError {
-            kind: ProviderErrorKind::Config,
-            code: Some(401),
-            message: "unauthorized".into(),
-        };
-        assert_eq!(
-            serde_json::to_value(&err).unwrap(),
-            serde_json::json!({"kind": "config", "code": 401, "message": "unauthorized"})
-        );
-        let err = ProviderError {
-            kind: ProviderErrorKind::Upstream,
-            code: None,
-            message: "connect failed".into(),
-        };
-        assert_eq!(
-            serde_json::to_value(&err).unwrap(),
-            serde_json::json!({"kind": "upstream", "code": null, "message": "connect failed"})
         );
     }
 

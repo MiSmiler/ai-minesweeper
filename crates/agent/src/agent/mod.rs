@@ -13,11 +13,11 @@ use futures::{Stream, StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::protocol::{
-    ChatRequest, Message, ProviderError, ProviderErrorKind, ReasoningEffort, StreamChunk,
-    ThinkingMode, ThinkingToggle, ToolCall, ToolDecl,
-};
 use crate::provider::Provider;
+use crate::provider::openai_api::{
+    ChatRequest, Message, ReasoningEffort, ThinkingMode, ThinkingToggle, ToolCall, ToolDecl,
+};
+use crate::provider::{ProviderError, ProviderErrorKind, StreamChunk};
 
 /// The reasoning depth the agent should use for one Send (issue #122),
 /// translated onto the provider-agnostic `ChatRequest` fields
@@ -483,7 +483,7 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::ContentBlock;
+    use crate::provider::openai_api::ContentBlock;
     use crate::provider::{MockProvider, Provider, ProviderStream};
 
     fn agent_with_mock(model: &str, provider_name: &str) -> (Agent, MockProvider) {
@@ -762,7 +762,7 @@ mod tests {
         set.insert(
             "mock".to_string(),
             Box::new(ErroringProvider(ProviderError {
-                kind: crate::protocol::ProviderErrorKind::Upstream,
+                kind: crate::provider::ProviderErrorKind::Upstream,
                 code: Some(500),
                 message: "boom".into(),
             })),
@@ -778,7 +778,7 @@ mod tests {
         // lossy bucket: kind, code and message all survive.
         match stream.next().await {
             Some(Err(SendError::Provider(pe))) => {
-                assert_eq!(pe.kind, crate::protocol::ProviderErrorKind::Upstream);
+                assert_eq!(pe.kind, crate::provider::ProviderErrorKind::Upstream);
                 assert_eq!(pe.code, Some(500));
                 assert_eq!(pe.message, "boom");
             }

@@ -22,9 +22,8 @@ use futures::StreamExt;
 use futures::stream::{self, BoxStream};
 use tokio_util::sync::CancellationToken;
 
-use crate::protocol::{ChatRequest, ProviderError, ProviderErrorKind, StreamChunk};
-
-use super::{Provider, ProviderStream};
+use super::openai_api::ChatRequest;
+use super::{Provider, ProviderError, ProviderErrorKind, ProviderStream, StreamChunk};
 
 /// A transport-level failure (no HTTP status): 'kind Upstream, code None'.
 fn transport_error(e: impl std::fmt::Display) -> ProviderError {
@@ -355,7 +354,7 @@ impl Provider for DeepSeek {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{ContentBlock, Message};
+    use crate::provider::openai_api::{ContentBlock, Message};
     use futures::StreamExt;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

@@ -10,9 +10,8 @@ use async_trait::async_trait;
 use futures::stream;
 use tokio_util::sync::CancellationToken;
 
-use crate::protocol::{ChatRequest, ContentBlock, Message, ProviderError, StreamChunk};
-
-use super::{Provider, ProviderStream};
+use super::openai_api::{ChatRequest, ContentBlock, Message};
+use super::{Provider, ProviderError, ProviderStream, StreamChunk};
 
 /// A deterministic, offline provider.
 ///
