@@ -41,11 +41,12 @@ asked:
 
 ### After a coding round
 
-A round of code changes (feature, fix, or a batch of edits) is not done until the formatting and tests for the sides of the stack it touched pass:
+A round of code changes (feature, fix, or a batch of edits) is not done until the formatting, lints, and tests for the sides of the stack it touched pass:
 
 **Rust** (`src/`):
 1. Run `cargo fmt` to format the code.
-2. Run `cargo test` and ensure everything passes.
+2. Run `cargo clippy --workspace --all-targets` and account for every finding — fix it, or say why it stands.
+3. Run `cargo test --workspace` and ensure everything passes.
 
 **Frontend** (`frontend/`):
 1. Run `npm run format` to format the code.
