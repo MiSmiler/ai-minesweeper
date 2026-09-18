@@ -151,18 +151,19 @@ async fn run_test_ai_chat(prompt: &str) -> Result<(), String> {
     }];
 
     match agent.complete_once(messages, ThinkingLevel::Low).await {
-        Ok(Message::Assistant {
+        Ok(Some(Message::Assistant {
             content,
             reasoning_content,
             ..
-        }) => {
+        })) => {
             if let Some(reasoning) = &reasoning_content {
                 println!("reasoning: {reasoning}");
             }
             println!("assistant: {content}");
             Ok(())
         }
-        Ok(other) => Err(format!("unexpected reply: {other:?}")),
+        Ok(Some(other)) => Err(format!("unexpected reply: {other:?}")),
+        Ok(None) => Err("the reply was interrupted".to_string()),
         Err(err) => Err(format!("agent error: {err:?}")),
     }
 }

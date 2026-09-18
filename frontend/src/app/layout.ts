@@ -23,7 +23,8 @@
 // so they sit in `.aux-bar` below the Board; the dashboard keeps
 // only the session button and the two Send-strength settings, on one row.
 
-import type { AgentApi, ProviderError } from "../agent/api";
+import type { AgentApi } from "../agent/api";
+import type { ProviderError } from "../agent/run";
 import { createAgentMachine, type SessionState } from "../agent/machine";
 import { createSessionBox } from "../agent/sessionBox";
 import type {
@@ -345,7 +346,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   }
 
   /** The close face: ending a used Session discards its history, so ask first
-   * (the same predicate as the InputMode lock, issue #133); an in-flight Send
+   * (the same predicate as the InputMode lock, issue #133); an in-flight Run
    * is interrupted first. */
   async function closeSession(): Promise<void> {
     if (

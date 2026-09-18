@@ -528,7 +528,7 @@ describe("mountLayout session lifecycle", () => {
     expect($(root, ".ai-session-box").style.display).toBe("none");
   });
 
-  it("closing interrupts an in-flight Send first", async () => {
+  it("closing interrupts an in-flight Run first", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -594,7 +594,7 @@ describe("mountLayout session lifecycle", () => {
     expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("a new game on an in-flight Send confirms and interrupts", async () => {
+  it("a new game on an in-flight Run confirms and interrupts", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();

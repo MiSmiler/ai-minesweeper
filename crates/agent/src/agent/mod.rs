@@ -83,19 +83,19 @@ pub trait Tool: Send + Sync {
 }
 
 /// The live Session the `Agent` owns (ADR-0021), crate-internal: it never
-/// leaves the crate. It carries its own `seq`, its history, and the Send in
+/// leaves the crate. It carries its own `seq`, its history, and the Run in
 /// flight against it. The history opens with the system prompt the Session was
 /// created with; a Send appends the caller's messages as soon as it reaches the
-/// Provider, and the round trip's assistant half follows on `Done` — or an
-/// Interrupt marker in its place. It is the agent's own log (ADR-0026): what
-/// the Provider is sent is projected from it.
+/// Provider, and the round trip's assistant half follows on its Run's `Done` —
+/// or an Interrupt marker in its place. It is the agent's own log (ADR-0026):
+/// what the Provider is sent is projected from it.
 struct Session {
     seq: u64,
     messages: Vec<Message>,
     in_flight: Option<CancellationToken>,
 }
 
-/// Cancels a Session's Send in flight, if any. The Session is consumed: it is
+/// Cancels a Session's Run in flight, if any. The Session is consumed: it is
 /// either the one being replaced by [`Agent::create_session`] or the one being
 /// ended by [`Agent::end_session`].
 fn cancel_in_flight(session: Option<Session>) {
@@ -104,26 +104,55 @@ fn cancel_in_flight(session: Option<Session>) {
     }
 }
 
-/// Why a Send produced no reply. The variant set is position-restricted:
-/// [`SendError::NoSession`] and [`SendError::Busy`] appear only in `send`'s
-/// return value, [`SendError::Interrupted`] only as a stream item, and
-/// [`SendError::Provider`] in both. The compiler cannot enforce this, so it is
-/// documented here.
+/// One cell of a Run's stream. The Run owns this type instead of borrowing the
+/// Provider's [`StreamChunk`]: a Provider never produces an
+/// [`RunEvent::Interrupted`], and the caller's own act belongs on the stream
+/// the caller reads.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RunEvent {
+    ReasoningDelta(String),
+    ContentDelta(String),
+    Done,
+    /// The caller's own Interrupt: the reply never lands. It is an act, not a
+    /// cause — a Provider failing mid-stream is [`RunError::Provider`].
+    Interrupted,
+}
+
+/// Why a Run failed: the Provider's own cause, intact, from the mid-stream
+/// exchange. The caller's own act is not here — an Interrupt is a
+/// [`RunEvent`].
+#[derive(Debug, PartialEq)]
+pub enum RunError {
+    /// The Provider/model exchange failed mid-stream, after the Run had begun.
+    Provider(ProviderError),
+}
+
+/// Why a Send produced no Run. [`SendError::NoSession`] and
+/// [`SendError::Busy`] refuse before the exchange, and [`SendError::Provider`]
+/// is the delivery-time failure — the Run never began. A failure once the Run
+/// is going is a [`RunError`], so whether a failure can appear here or there
+/// is a matter of position, and the types say which.
 #[derive(Debug, PartialEq)]
 pub enum SendError {
     /// Refused before the exchange: there is no live Session to Send into.
     NoSession,
     /// Refused before the exchange: a Send is already in flight.
     Busy,
-    /// The caller interrupted the Send: the assistant half of the round trip
-    /// never lands as a reply. It lands as an Interrupt marker instead — a fact
-    /// about the Session's log, never something the Provider is sent. It is an
-    /// act, not a cause — a Provider failing mid-stream is a `Provider`
-    /// failure.
-    Interrupted,
-    /// The Provider/model exchange failed. The cause travels intact, in the
-    /// same variant at delivery and mid-stream.
+    /// The Provider/model exchange failed at delivery. The cause travels
+    /// intact; the mid-stream failure is [`RunError::Provider`].
     Provider(ProviderError),
+}
+
+/// An aggregate that spans both positions ([`Agent::complete_once`] /
+/// [`Agent::run_loop`]) folds the Run's failure back into the Send's result:
+/// `Provider` is the one cause both positions carry, so the fact survives
+/// intact.
+impl From<RunError> for SendError {
+    fn from(err: RunError) -> Self {
+        match err {
+            RunError::Provider(error) => Self::Provider(error),
+        }
+    }
 }
 
 /// The `Config` failure of an Agent with no provider selected: formed at the
@@ -291,13 +320,13 @@ impl Agent {
         Ok(())
     }
 
-    /// Ends the live Session: cancels its in-flight Send and forgets it. A
+    /// Ends the live Session: cancels its in-flight Run and forgets it. A
     /// no-op when there is no Session.
     pub fn end_session(&self) {
         cancel_in_flight(self.live.lock().expect("session poisoned").take());
     }
 
-    /// Cancels the Send in flight, if any; `false` when none is in flight (or
+    /// Cancels the Run in flight, if any; `false` when none is in flight (or
     /// there is no live Session). The stream frees the slot itself, so the
     /// Send is free as soon as the cancelled task notices.
     pub fn interrupt(&self) -> bool {
@@ -322,18 +351,18 @@ impl Agent {
             .map(|session| session.messages.clone())
     }
 
-    /// One Send: appends `messages` to the live Session, streams the reply, and
-    /// appends the assistant half when the stream reaches `Done`. `NoSession`
-    /// and `Busy` refuse before the exchange; a failed stream leaves the
-    /// caller's messages behind with no reply, and an interrupted one leaves
-    /// them with an Interrupt marker where the reply would have gone. The model
-    /// is fixed at construction, while `level` is per Send. One cancel token
-    /// spans the whole Send.
+    /// One Send: appends `messages` to the live Session and returns the Run
+    /// once they have landed. The assistant half is appended when the stream
+    /// reaches `Done`. `NoSession` and `Busy` refuse before the exchange; a
+    /// failed stream leaves the caller's messages behind with no reply, and an
+    /// interrupted one leaves them with an Interrupt marker where the reply
+    /// would have gone. The model is fixed at construction, while `level` is
+    /// per Send. One cancel token spans the Send and its Run.
     pub async fn send(
         &self,
         messages: Vec<Message>,
         level: ThinkingLevel,
-    ) -> Result<impl Stream<Item = Result<StreamChunk, SendError>> + Send + use<>, SendError> {
+    ) -> Result<impl Stream<Item = Result<RunEvent, RunError>> + Send + use<>, SendError> {
         // Admission under one lock: a Send needs a live Session and must be
         // the only one in flight. Registering the cancel token here means a
         // concurrent `interrupt` / `create_session` / `end_session` finds it.
@@ -393,9 +422,9 @@ impl Agent {
         // on an Interrupt cuts only the assistant half, landing its marker.
         guard.append(messages);
 
-        // The wrapper maps every `ProviderError` to [`SendError::Provider`]
-        // (the cause intact) and reports a fired `cancel` as
-        // [`SendError::Interrupted`].
+        // The wrapper maps every `ProviderError` to [`RunError::Provider`] (the
+        // cause intact) and reports a fired `cancel` as
+        // [`RunEvent::Interrupted`].
         let canceller = cancel;
         let mut inner = inner;
         let mut content = String::new();
@@ -411,7 +440,7 @@ impl Agent {
                 // marker of its own. Whatever had already streamed is dropped:
                 // an interrupted reply is not a Reply.
                 guard.append(vec![Message::new_interrupt_marker()]);
-                return Poll::Ready(Some(Err(SendError::Interrupted)));
+                return Poll::Ready(Some(Ok(RunEvent::Interrupted)));
             }
             match Stream::poll_next(inner.as_mut(), cx) {
                 Poll::Ready(Some(Ok(StreamChunk::Done))) => {
@@ -419,17 +448,17 @@ impl Agent {
                         std::mem::take(&mut content),
                         reasoning.take(),
                     )]);
-                    Poll::Ready(Some(Ok(StreamChunk::Done)))
+                    Poll::Ready(Some(Ok(RunEvent::Done)))
                 }
                 Poll::Ready(Some(Ok(StreamChunk::ReasoningDelta(text)))) => {
                     reasoning.get_or_insert_with(String::new).push_str(&text);
-                    Poll::Ready(Some(Ok(StreamChunk::ReasoningDelta(text))))
+                    Poll::Ready(Some(Ok(RunEvent::ReasoningDelta(text))))
                 }
                 Poll::Ready(Some(Ok(StreamChunk::ContentDelta(text)))) => {
                     content.push_str(&text);
-                    Poll::Ready(Some(Ok(StreamChunk::ContentDelta(text))))
+                    Poll::Ready(Some(Ok(RunEvent::ContentDelta(text))))
                 }
-                Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(SendError::Provider(e)))),
+                Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(RunError::Provider(e)))),
                 Poll::Ready(None) => Poll::Ready(None),
                 Poll::Pending => Poll::Pending,
             }
@@ -438,47 +467,57 @@ impl Agent {
 
     /// Runs one [`Agent::send`] and aggregates it into one
     /// [`Message::Assistant`]. The reply lands in the live Session; it is
-    /// returned too, for inspection.
+    /// returned too, for inspection. `None` means the Run ended without a reply
+    /// — the caller interrupted it, and an Interrupt marker is what landed
+    /// instead.
     pub async fn complete_once(
         &self,
         pending: Vec<Message>,
         level: ThinkingLevel,
-    ) -> Result<Message, SendError> {
+    ) -> Result<Option<Message>, SendError> {
         let mut stream = self.send(pending, level).await?;
         let mut content = String::new();
         let mut reasoning = None;
-        while let Some(chunk) = stream.next().await {
-            match chunk? {
-                StreamChunk::ReasoningDelta(text) => {
+        while let Some(event) = stream.next().await {
+            match event? {
+                RunEvent::ReasoningDelta(text) => {
                     reasoning.get_or_insert_with(String::new).push_str(&text);
                 }
-                StreamChunk::ContentDelta(text) => content.push_str(&text),
-                StreamChunk::Done => break,
+                RunEvent::ContentDelta(text) => content.push_str(&text),
+                RunEvent::Done => break,
+                // The caller's own act cut the reply: there is none to
+                // aggregate, and the marker has already landed in the log.
+                RunEvent::Interrupted => return Ok(None),
             }
         }
-        Ok(Message::new_assistant_reply(content, reasoning))
+        Ok(Some(Message::new_assistant_reply(content, reasoning)))
     }
 
     /// The multi-Reply tool loop: stream one Reply; if it requests tool calls,
     /// execute them and continue with the results as its next messages, until a
     /// Reply has no calls. Each Reply lands in the live Session via
-    /// [`Agent::complete_once`]. A skeleton in this ticket; exercised by the
-    /// adapter (issue #115).
+    /// [`Agent::complete_once`], and `None` comes back when an Interrupt cut
+    /// the Run. A skeleton for now; exercised by the adapter (issue #115).
     #[allow(dead_code)]
     pub async fn run_loop(
         &self,
         messages: Vec<Message>,
         level: ThinkingLevel,
-    ) -> Result<Message, SendError> {
+    ) -> Result<Option<Message>, SendError> {
         let mut messages = messages;
         loop {
-            let reply = self.complete_once(messages, level).await?;
+            let reply = match self.complete_once(messages, level).await? {
+                Some(reply) => reply,
+                // The caller's own act ends the whole loop, not just this
+                // Reply: there is nothing left to continue with.
+                None => return Ok(None),
+            };
             let tool_calls = match &reply {
                 Message::Assistant {
                     tool_calls: Some(calls),
                     ..
                 } if !calls.is_empty() => calls.clone(),
-                _ => return Ok(reply),
+                _ => return Ok(Some(reply)),
             };
             let mut next = Vec::with_capacity(tool_calls.len());
             for call in tool_calls {
@@ -564,7 +603,8 @@ mod tests {
         let reply = agent
             .complete_once(user_messages("hello"), ThinkingLevel::Low)
             .await
-            .unwrap();
+            .unwrap()
+            .expect("a reply landed");
         assert_eq!(reply, reply_message("hello"));
 
         // The request that reached the provider matches the contract: model
@@ -637,7 +677,7 @@ mod tests {
             .unwrap();
         agent.create_session(SYSTEM.into()).await.unwrap();
         // The displaced Send reports the caller's interrupt on its next poll…
-        assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
+        assert_eq!(stream.next().await, Some(Ok(RunEvent::Interrupted)));
         assert_eq!(stream.next().await, None);
         // …and its marker lands nowhere: a superseded Send must not touch the
         // replacement's log. That is all the replacement holds.
@@ -653,7 +693,7 @@ mod tests {
             .await
             .unwrap();
         agent.end_session();
-        assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
+        assert_eq!(stream.next().await, Some(Ok(RunEvent::Interrupted)));
         assert_eq!(stream.next().await, None);
         // No Session is left, so the marker has nowhere to land.
         assert!(history(&agent).is_empty());
@@ -672,10 +712,10 @@ mod tests {
             .unwrap();
         assert_eq!(
             stream.next().await,
-            Some(Ok(StreamChunk::ReasoningDelta("Mock reasoning.".into())))
+            Some(Ok(RunEvent::ReasoningDelta("Mock reasoning.".into())))
         );
         assert!(agent.interrupt());
-        assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
+        assert_eq!(stream.next().await, Some(Ok(RunEvent::Interrupted)));
         assert_eq!(stream.next().await, None);
         // The Interrupt cut only the assistant half: the user's message landed
         // as soon as the Send reached the Provider, and the marker landed with
@@ -705,7 +745,7 @@ mod tests {
             .unwrap();
         assert!(agent.interrupt());
         // The wrapper reports `Interrupted` once, then ends.
-        assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
+        assert_eq!(stream.next().await, Some(Ok(RunEvent::Interrupted)));
         assert_eq!(stream.next().await, None);
     }
 
@@ -757,7 +797,7 @@ mod tests {
             .unwrap();
         assert!(stream.next().await.is_some());
         assert!(agent.interrupt());
-        assert_eq!(stream.next().await, Some(Err(SendError::Interrupted)));
+        assert_eq!(stream.next().await, Some(Ok(RunEvent::Interrupted)));
         assert_eq!(stream.next().await, None);
         // The reasoning delta that had already streamed is not part of the
         // marker: an interrupted reply is not a Reply.
@@ -858,7 +898,7 @@ mod tests {
         // The mid-stream failure keeps the provider's own cause intact, not a
         // lossy bucket: kind, code and message all survive.
         match stream.next().await {
-            Some(Err(SendError::Provider(pe))) => {
+            Some(Err(RunError::Provider(pe))) => {
                 assert_eq!(pe.kind, crate::provider::ProviderErrorKind::Upstream);
                 assert_eq!(pe.code, Some(500));
                 assert_eq!(pe.message, "boom");
@@ -881,13 +921,13 @@ mod tests {
             .unwrap();
         assert_eq!(
             stream.next().await,
-            Some(Ok(StreamChunk::ReasoningDelta("Mock reasoning.".into())))
+            Some(Ok(RunEvent::ReasoningDelta("Mock reasoning.".into())))
         );
         assert_eq!(
             stream.next().await,
-            Some(Ok(StreamChunk::ContentDelta("hi".into())))
+            Some(Ok(RunEvent::ContentDelta("hi".into())))
         );
-        assert_eq!(stream.next().await, Some(Ok(StreamChunk::Done)));
+        assert_eq!(stream.next().await, Some(Ok(RunEvent::Done)));
         assert_eq!(stream.next().await, None);
     }
 
@@ -919,8 +959,63 @@ mod tests {
         let reply = agent
             .run_loop(user_messages("hi"), ThinkingLevel::Low)
             .await
-            .unwrap();
+            .unwrap()
+            .expect("a reply landed");
         assert_eq!(reply, reply_message("hi"));
+    }
+
+    /// A provider whose stream yields one reasoning delta and then stays open
+    /// until its `cancel` fires — the way a real transport's body parks until
+    /// the cancellation it observes ends it.
+    struct HangingProvider;
+
+    #[async_trait]
+    impl Provider for HangingProvider {
+        async fn stream_chat(
+            &self,
+            _req: ChatRequest,
+            cancel: CancellationToken,
+        ) -> Result<ProviderStream, ProviderError> {
+            let delta = stream::once(async {
+                Ok::<_, ProviderError>(StreamChunk::ReasoningDelta("Mock reasoning.".into()))
+            });
+            let until_cancelled = stream::once(async move {
+                cancel.cancelled().await;
+                Ok::<_, ProviderError>(StreamChunk::Done)
+            });
+            Ok(Box::pin(delta.chain(until_cancelled)))
+        }
+    }
+
+    #[tokio::test]
+    async fn complete_once_has_no_reply_when_the_run_is_interrupted() {
+        let mut set = ProviderSet::new();
+        set.insert("hanging".to_string(), Box::new(HangingProvider));
+        let mut agent = Agent::new(set);
+        agent.set_model("m".to_string(), Some("hanging"));
+        agent.create_session(SYSTEM.into()).await.unwrap();
+
+        // The aggregation parks on the hanging stream, so the interrupt lands
+        // while the Run is in flight.
+        let interrupt = async {
+            while !agent.interrupt() {
+                tokio::task::yield_now().await;
+            }
+        };
+        let (aggregated, ()) = tokio::join!(
+            agent.complete_once(user_messages("hi"), ThinkingLevel::Low),
+            interrupt
+        );
+
+        assert_eq!(aggregated.unwrap(), None);
+        assert_eq!(
+            history(&agent),
+            vec![
+                system_message(SYSTEM),
+                user_message("hi"),
+                Message::new_interrupt_marker()
+            ]
+        );
     }
 
     #[test]

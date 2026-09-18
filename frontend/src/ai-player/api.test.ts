@@ -1,10 +1,10 @@
 // Tests for the binding's frontend half (issue #119, #133): `begin` POSTs
-// `/ai/begin`, and `send` POSTs `/ai/send`, consumes the SSE stream into
-// `ReplyEvent`s, and hands a failure to `onFailure`. The routes that address
-// the Agent are `agent/api.test.ts`.
+// `/ai/begin`, and `send` POSTs `/ai/send` and hands the response body to the
+// Agent's Run reader (`agent/run.test.ts`), with a non-2xx handed to
+// `onFailure`. The routes that address the Agent are `agent/api.test.ts`.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ProviderError, ReplyEvent, SendFailure } from "../agent/api";
+import type { ProviderError, RunEvent, RunFailure } from "../agent/run";
 import { createAiPlayerApi } from "./api";
 
 /** A minimal SSE body backed by a fake reader over `chunks`. */
@@ -52,10 +52,10 @@ function errorResponse(status: number, payload: ProviderError): Response {
 function collect(
   api: ReturnType<typeof createAiPlayerApi>,
   req: Parameters<ReturnType<typeof createAiPlayerApi>["send"]>[0],
-  failures: SendFailure[] = [],
-): Promise<ReplyEvent[]> {
+  failures: RunFailure[] = [],
+): Promise<RunEvent[]> {
   return new Promise((resolve) => {
-    const events: ReplyEvent[] = [];
+    const events: RunEvent[] = [];
     api.send(
       req,
       (e) => {
@@ -82,8 +82,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("createAiPlayerApi.send (SSE consumer)", () => {
-  it("streams reasoning, content and [DONE] into ReplyEvents", async () => {
+describe("createAiPlayerApi.send (request)", () => {
+  it("POSTs /ai/send and hands the response body to the Run reader", async () => {
     const api = createAiPlayerApi();
     vi.stubGlobal(
       "fetch",
@@ -110,31 +110,6 @@ describe("createAiPlayerApi.send (SSE consumer)", () => {
     const [url, init] = vi.mocked(fetch).mock.calls[0]!;
     expect(url).toBe("/ai/send");
     expect(JSON.parse(init!.body as string)).toEqual({});
-  });
-
-  it("parses events that straddle a chunk boundary", async () => {
-    const api = createAiPlayerApi();
-    // Split the content event's terminating blank line across two chunks.
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          okResponse([
-            'data: {"kind":"reasoning","text":"think"}\n\n',
-            'data: {"kind":"content","text":"hello world"}\n',
-            "\n",
-            "data: [DONE]\n\n",
-          ]),
-        ),
-    );
-
-    const events = await collect(api, {});
-    expect(events).toEqual([
-      { kind: "reasoning", text: "think" },
-      { kind: "content", text: "hello world" },
-      { kind: "sse_done" },
-    ]);
   });
 
   it("maps the camelCase imageDataUrl to the snake_case wire field", async () => {
@@ -169,47 +144,9 @@ describe("createAiPlayerApi.send (SSE consumer)", () => {
     });
   });
 
-  it("parses an interrupted event", async () => {
-    const api = createAiPlayerApi();
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          okResponse([
-            'data: {"kind":"reasoning","text":"think"}\n\n',
-            'data: {"kind":"interrupted"}\n\n',
-          ]),
-        ),
-    );
-
-    const events = await collect(api, {});
-    expect(events[1]).toEqual({ kind: "interrupted" });
-  });
-
-  it("parses a provider_error event with the provider's own error", async () => {
-    const api = createAiPlayerApi();
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          okResponse([
-            'data: {"kind":"provider_error","error":{"kind":"upstream","code":429,"message":"rate limited"}}\n\n',
-          ]),
-        ),
-    );
-
-    const events = await collect(api, {});
-    expect(events[0]).toEqual({
-      kind: "provider_error",
-      error: { kind: "upstream", code: 429, message: "rate limited" },
-    });
-  });
-
   it("hands a provider-body failure to onFailure and emits no events", async () => {
     const api = createAiPlayerApi();
-    const failures: SendFailure[] = [];
+    const failures: RunFailure[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -233,7 +170,7 @@ describe("createAiPlayerApi.send (SSE consumer)", () => {
 
   it("hands a refusal body to onFailure as a refusal", async () => {
     const api = createAiPlayerApi();
-    const failures: SendFailure[] = [];
+    const failures: RunFailure[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -257,7 +194,7 @@ describe("createAiPlayerApi.send (SSE consumer)", () => {
 
   it("treats a non-JSON error body as an upstream provider failure", async () => {
     const api = createAiPlayerApi();
-    const failures: SendFailure[] = [];
+    const failures: RunFailure[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -284,7 +221,7 @@ describe("createAiPlayerApi.send (SSE consumer)", () => {
 
   it("maps a network failure to an upstream provider failure", async () => {
     const api = createAiPlayerApi();
-    const failures: SendFailure[] = [];
+    const failures: RunFailure[] = [];
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("boom")));
 
     await collect(api, {}, failures);

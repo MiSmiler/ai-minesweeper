@@ -1,7 +1,7 @@
 # The AI Session is backend-owned and bound to one Game
 
 > Superseded by ADR-0021: the Agent now owns the live Session — its id, its
-> messages and the in-flight Send's cancel token. The policy below stands (one
+> messages and the in-flight Run's cancel token. The policy below stands (one
 > Session per Game, the InputMode bound at the first committed Turn); where the
 > mechanism lives does not.
 

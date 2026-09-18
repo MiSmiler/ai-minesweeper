@@ -4,15 +4,16 @@
 // address the Agent, not the binding (`agent/api.ts`).
 //
 // `begin` POSTs `/ai/begin`; `send` POSTs `/ai/send` with the per-call
-// settings and hands the response body to the Agent's `consumeSse`, because the
-// stream a Send produces is that Agent's Run. The binding contributes the URL,
-// the request body and the board rendering — never the events.
+// settings and hands the response body to the Agent's `consumeSse`
+// (`agent/run.ts`), because the stream a Send produces is that Agent's Run. The
+// binding contributes the URL, the request body and the board rendering — never
+// the events.
 //
 // `send` does not `abort` the SSE on interrupt: the backend emits the
 // `interrupt` event on the open stream (issue #97, #119).
 
-import { asProviderError, consumeSse } from "../agent/api";
-import type { ProviderError, ReplyEvent, SendFailure } from "../agent/api";
+import { asProviderError, consumeSse } from "../agent/run";
+import type { ProviderError, RunEvent, RunFailure } from "../agent/run";
 import { log } from "../infra/log";
 
 /** The input modes, mirrored from the backend kebab-case
@@ -44,11 +45,11 @@ export interface AiPlayerApi {
   begin(mode: InputMode): Promise<void>;
   /** Appends the current board. A refusal or a provider failure before the
    * stream starts arrives on `onFailure`; a mid-stream failure arrives as a
-   * `ReplyEvent`. */
+   * `RunEvent`. */
   send(
     req: SendRequest,
-    onEvent: (e: ReplyEvent) => void,
-    onFailure: (f: SendFailure) => void,
+    onEvent: (e: RunEvent) => void,
+    onFailure: (f: RunFailure) => void,
   ): void;
 }
 
@@ -92,8 +93,8 @@ function wireRequest(req: SendRequest): Record<string, unknown> {
 /** POSTs the Send request and forwards the SSE stream to `onEvent`. */
 async function consumeEvents(
   req: SendRequest,
-  onEvent: (e: ReplyEvent) => void,
-  onFailure: (f: SendFailure) => void,
+  onEvent: (e: RunEvent) => void,
+  onFailure: (f: RunFailure) => void,
 ): Promise<void> {
   let res: Response;
   try {
@@ -113,11 +114,11 @@ async function consumeEvents(
   await consumeSse(res, onEvent);
 }
 
-/** Parses a non-OK send response into a `SendFailure`: a `{kind,code,message}`
+/** Parses a non-OK send response into a `RunFailure`: a `{kind,code,message}`
  * body is the Provider's failure; a `{error}` body is the AiPlayer refusing the
  * Send before it started; anything else is a transport-level provider failure
  * keyed by the status. */
-async function readFailure(res: Response): Promise<SendFailure> {
+async function readFailure(res: Response): Promise<RunFailure> {
   let body: unknown;
   try {
     body = await res.json();

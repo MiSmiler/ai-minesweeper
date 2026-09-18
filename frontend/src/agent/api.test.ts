@@ -1,10 +1,10 @@
 // Tests for the Agent's transport (issue #131, #119): `messages` GETs
-// `/ai/messages` and unwraps the envelope, `interrupt` POSTs `/ai/interrupt`,
-// and `isProviderError` narrows the error a `begin` rejects with. The binding's
-// own routes are `ai-player/api.test.ts`.
+// `/ai/messages` and unwraps the envelope, and `interrupt` POSTs
+// `/ai/interrupt`. The Run's reading is `run.test.ts`; the binding's own routes
+// are `ai-player/api.test.ts`.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createAgentApi, isProviderError } from "./api";
+import { createAgentApi } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -64,15 +64,5 @@ describe("createAgentApi.interrupt", () => {
     expect(vi.mocked(fetch)).toHaveBeenCalledWith("/ai/interrupt", {
       method: "POST",
     });
-  });
-});
-
-describe("isProviderError", () => {
-  it("recognizes a provider error shape", () => {
-    expect(isProviderError({ kind: "config", code: null, message: "x" })).toBe(
-      true,
-    );
-    expect(isProviderError(new Error("x"))).toBe(false);
-    expect(isProviderError(null)).toBe(false);
   });
 });

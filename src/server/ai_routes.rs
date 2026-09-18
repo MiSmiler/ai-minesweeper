@@ -3,7 +3,7 @@
 //! A thin transport layer over the `ai_player::AiPlayer` seam: it begins an AI
 //! Session under an InputMode (`POST /ai/begin`), appends one board to it and
 //! forwards the reply as an SSE stream terminated by `[DONE]`
-//! (`POST /ai/send`), and cancels the in-flight Send
+//! (`POST /ai/send`), and cancels the in-flight Run
 //! (`POST /ai/interrupt`). The live Session's message list is read back through
 //! the `Agent` the binding holds (`GET /ai/messages`): the list is the Session's
 //! — the binding keeps no copy of it — so that route addresses the Agent.
@@ -26,15 +26,17 @@ use futures::StreamExt;
 use futures::stream;
 use serde::{Deserialize, Serialize};
 
-use agent::SendError as AgentSendError;
-use agent::{ProviderError, ProviderErrorKind, StreamChunk};
+use agent::{
+    ProviderError, ProviderErrorKind, RunError as AgentRunError, RunEvent as AgentRunEvent,
+    SendError as AgentSendError,
+};
 use ai_player::{InputMode, SendError, SendRequest};
 
 use super::AppState;
 use super::wire::MessagesDto;
 
 /// The SSE wire events (issue #117). Tagged by `kind` so the frontend's
-/// `ReplyEvent(TS)` type is isomorphic on the wire:
+/// `RunEvent(TS)` type is isomorphic on the wire:
 /// `{kind:"reasoning",text}` / `{kind:"content",text}` /
 /// `{kind:"interrupted"}` / `{kind:"provider_error",error}`.
 ///
@@ -43,7 +45,7 @@ use super::wire::MessagesDto;
 /// internally-tagged representation.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum ReplyEvent {
+pub(crate) enum RunEvent {
     Reasoning {
         text: String,
     },
@@ -120,7 +122,7 @@ async fn handle_send(State(state): State<Arc<AppState>>, Json(req): Json<SendReq
             // #124). `once` and `map(to_event)` share the same item type
             // (`Result<Event, axum::Error>`) so `.chain` composes them into one
             // SSE stream; `position: fixed` is the frontend's concern.
-            let user_event = Event::default().json_data(ReplyEvent::User { text: user_text });
+            let user_event = Event::default().json_data(RunEvent::User { text: user_text });
             let sse = stream::once(async move { user_event }).chain(stream.map(to_event));
             Sse::new(sse).into_response()
         }
@@ -128,7 +130,7 @@ async fn handle_send(State(state): State<Arc<AppState>>, Json(req): Json<SendReq
     }
 }
 
-/// `POST /ai/interrupt`: cancels the in-flight Send, if any. The SSE connection
+/// `POST /ai/interrupt`: cancels the in-flight Run, if any. The SSE connection
 /// stays open; the `{kind:"interrupted"}` event is emitted on that stream.
 /// Always 204 — a Send that is not in flight is not an error.
 async fn handle_interrupt(State(state): State<Arc<AppState>>) -> Response {
@@ -146,29 +148,22 @@ async fn handle_messages(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
-/// Maps one `AiPlayer::send_game_board` stream item to an SSE event. `Ok(Done)` becomes the
-/// `[DONE]` terminator; the two `Err`s become the explicit `interrupted` /
-/// `provider_error` events (a reply that never receives `[DONE]`).
-fn to_event(item: Result<StreamChunk, AgentSendError>) -> Result<Event, axum::Error> {
+/// Maps one Run item to an SSE event. `Ok(Done)` becomes the `[DONE]`
+/// terminator; `Interrupted` and `Err(Provider)` become the explicit
+/// `interrupted` / `provider_error` events (a reply that never receives
+/// `[DONE]`).
+fn to_event(item: Result<AgentRunEvent, AgentRunError>) -> Result<Event, axum::Error> {
     let event = match item {
-        Ok(StreamChunk::ReasoningDelta(text)) => {
-            Event::default().json_data(ReplyEvent::Reasoning { text })?
+        Ok(AgentRunEvent::ReasoningDelta(text)) => {
+            Event::default().json_data(RunEvent::Reasoning { text })?
         }
-        Ok(StreamChunk::ContentDelta(text)) => {
-            Event::default().json_data(ReplyEvent::Content { text })?
+        Ok(AgentRunEvent::ContentDelta(text)) => {
+            Event::default().json_data(RunEvent::Content { text })?
         }
-        Ok(StreamChunk::Done) => Event::default().data("[DONE]"),
-        Err(AgentSendError::Interrupted) => Event::default().json_data(ReplyEvent::Interrupted)?,
-        Err(AgentSendError::Provider(error)) => {
-            Event::default().json_data(ReplyEvent::ProviderError { error })?
-        }
-        // `NoSession` and `Busy` are position-restricted to `send`'s return
-        // value (see `agent::SendError`), so the wrapper's stream can never
-        // yield them. Reaching this arm is a broken invariant, and inventing a
-        // `ProviderError` here would report a failure that did not happen
-        // (ADR-0022), so fail loudly instead.
-        Err(AgentSendError::NoSession | AgentSendError::Busy) => {
-            unreachable!("a refusal cannot be a reply-stream item")
+        Ok(AgentRunEvent::Done) => Event::default().data("[DONE]"),
+        Ok(AgentRunEvent::Interrupted) => Event::default().json_data(RunEvent::Interrupted)?,
+        Err(AgentRunError::Provider(error)) => {
+            Event::default().json_data(RunEvent::ProviderError { error })?
         }
     };
     Ok(event)
@@ -177,9 +172,7 @@ fn to_event(item: Result<StreamChunk, AgentSendError>) -> Result<Event, axum::Er
 /// Maps a [`SendError`] to a status + body. The AiPlayer's own refusal is a
 /// missing screenshot; the agent's `NoSession` / `Busy` refusals carry
 /// `{"error": "..."}` (the status code is the machine signal). A Provider
-/// failure keeps the `{kind,code,message}` body; an Interrupt at delivery (a
-/// defensive branch: a cancel before the stream begins surfaces *through* the
-/// stream) is a refusal too.
+/// failure at delivery keeps the `{kind,code,message}` body.
 fn send_error_response(err: SendError) -> Response {
     match err {
         SendError::MissingScreenshot => error_response(
@@ -194,14 +187,6 @@ fn send_error_response(err: SendError) -> Response {
             "a send is already in flight".to_string(),
         ),
         SendError::Agent(AgentSendError::Provider(error)) => provider_error_response(error),
-        // `Interrupted` is position-restricted to the stream (see
-        // `agent::SendError`), so a delivery-time agent error can only be a
-        // `Provider` failure; reaching this arm is an invariant violation, not
-        // a wire contract.
-        SendError::Agent(AgentSendError::Interrupted) => error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal error: a Send reported an interrupt before it started".to_string(),
-        ),
     }
 }
 
@@ -314,11 +299,11 @@ mod tests {
         require_send(fut);
     }
 
-    // --- ReplyEvent wire shape ---
+    // --- RunEvent wire shape ---
 
     #[test]
     fn reasoning_serializes_to_kind_and_text() {
-        let value = serde_json::to_value(ReplyEvent::Reasoning {
+        let value = serde_json::to_value(RunEvent::Reasoning {
             text: "think".into(),
         })
         .unwrap();
@@ -330,19 +315,19 @@ mod tests {
 
     #[test]
     fn content_serializes_to_kind_and_text() {
-        let value = serde_json::to_value(ReplyEvent::Content { text: "hi".into() }).unwrap();
+        let value = serde_json::to_value(RunEvent::Content { text: "hi".into() }).unwrap();
         assert_eq!(value, serde_json::json!({"kind": "content", "text": "hi"}));
     }
 
     #[test]
     fn interrupted_serializes_to_kind_interrupted() {
-        let value = serde_json::to_value(ReplyEvent::Interrupted).unwrap();
+        let value = serde_json::to_value(RunEvent::Interrupted).unwrap();
         assert_eq!(value, serde_json::json!({"kind": "interrupted"}));
     }
 
     #[test]
     fn provider_error_serializes_to_kind_and_error() {
-        let value = serde_json::to_value(ReplyEvent::ProviderError {
+        let value = serde_json::to_value(RunEvent::ProviderError {
             error: ProviderError {
                 kind: ProviderErrorKind::Upstream,
                 code: Some(429),
@@ -361,7 +346,7 @@ mod tests {
 
     #[test]
     fn user_serializes_to_kind_and_text() {
-        let value = serde_json::to_value(ReplyEvent::User { text: "hi".into() }).unwrap();
+        let value = serde_json::to_value(RunEvent::User { text: "hi".into() }).unwrap();
         assert_eq!(value, serde_json::json!({"kind": "user", "text": "hi"}));
     }
 
@@ -507,7 +492,7 @@ mod tests {
         let send_resp = handle_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(send_resp.status(), StatusCode::OK);
 
-        // The interrupt route cancels the in-flight Send.
+        // The interrupt route cancels the in-flight Run.
         let ir_resp = handle_interrupt(State(state.clone())).await;
         assert_eq!(ir_resp.status(), StatusCode::NO_CONTENT);
 

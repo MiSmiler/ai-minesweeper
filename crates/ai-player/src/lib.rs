@@ -31,8 +31,8 @@ use futures::Stream;
 use serde::{Deserialize, Serialize};
 
 use agent::{
-    Agent, ContentBlock, DeepSeek, DeepSeekConfig, Message, ProviderError, ProviderSet,
-    SendError as AgentSendError, StreamChunk, ThinkingLevel, Tool,
+    Agent, ContentBlock, DeepSeek, DeepSeekConfig, Message, ProviderError, ProviderSet, RunError,
+    RunEvent, SendError as AgentSendError, ThinkingLevel, Tool,
 };
 use game::{CellContent, CellState, CellView, Difficulty, Game, GameState, Position};
 
@@ -220,7 +220,7 @@ impl AiPlayer {
         Ok(())
     }
 
-    /// Ends the live AI Session: cancels its in-flight Send, forgets it, and
+    /// Ends the live AI Session: cancels its in-flight Run, forgets it, and
     /// frees the InputMode for the next one. A no-op when there is no Session.
     pub fn end(&self) {
         self.agent.end_session();
@@ -241,11 +241,10 @@ impl AiPlayer {
     /// The user message renders the board in the live Session's [`InputMode`],
     /// fixed when `begin` created it. The tuple element is the verbatim player
     /// message (the `role: user` turn) echoed back so the frontend can render
-    /// the player's half of the exchange (issue #124). The stream advances on
-    /// `Ok(StreamChunk)`; a mid-stream break is `Err(agent::SendError)` — the
-    /// caller's Interrupt or the Provider's failure, passed through intact;
-    /// `Ok(Done)` closes it. A refusal (`NoSession` / `Busy`, or a missing
-    /// screenshot for the image mode) is an `Err`, never a stream item.
+    /// the player's half of the exchange (issue #124). The returned stream is
+    /// the Run: the binding never reads it, it only relays it. A refusal
+    /// (`NoSession` / `Busy`, or a missing screenshot for the image mode) is an
+    /// `Err`, never a stream item.
     pub async fn send_game_board(
         &self,
         game: &Game,
@@ -253,7 +252,7 @@ impl AiPlayer {
     ) -> Result<
         (
             String,
-            impl Stream<Item = Result<StreamChunk, AgentSendError>> + Send + use<>,
+            impl Stream<Item = Result<RunEvent, RunError>> + Send + use<>,
         ),
         SendError,
     > {
@@ -722,17 +721,17 @@ mod tests {
         assert_eq!(user_text, fresh_beginner_board());
         assert_eq!(
             stream.next().await,
-            Some(Ok(StreamChunk::ReasoningDelta("Mock reasoning.".into())))
+            Some(Ok(RunEvent::ReasoningDelta("Mock reasoning.".into())))
         );
         match stream.next().await {
             // The mock echoes the last user text — our board body — as the
             // content delta, so it must be the rendered board, not the prompt.
-            Some(Ok(StreamChunk::ContentDelta(text))) => {
+            Some(Ok(RunEvent::ContentDelta(text))) => {
                 assert_eq!(text, fresh_beginner_board());
             }
             other => panic!("expected a content delta, got {other:?}"),
         }
-        assert_eq!(stream.next().await, Some(Ok(StreamChunk::Done)));
+        assert_eq!(stream.next().await, Some(Ok(RunEvent::Done)));
         assert_eq!(stream.next().await, None);
         // The model is the same for every input mode.
         assert_eq!(mock.last_request().unwrap().model, MODEL);
@@ -889,7 +888,7 @@ mod tests {
             .unwrap();
         ai_player.begin(InputMode::Plain).await.unwrap();
         // The displaced Send reports the caller's interrupt on its next poll...
-        assert_eq!(stream.next().await, Some(Err(AgentSendError::Interrupted)));
+        assert_eq!(stream.next().await, Some(Ok(RunEvent::Interrupted)));
         assert_eq!(stream.next().await, None);
     }
 
@@ -1058,7 +1057,7 @@ mod tests {
         // The AiPlayer does not refract: the provider's own kind, code and
         // message reach the caller untouched (ADR-0022).
         match stream.next().await {
-            Some(Err(AgentSendError::Provider(pe))) => {
+            Some(Err(RunError::Provider(pe))) => {
                 assert_eq!(pe.kind, ProviderErrorKind::Upstream);
                 assert_eq!(pe.code, Some(429));
                 assert_eq!(pe.message, "rate limited");

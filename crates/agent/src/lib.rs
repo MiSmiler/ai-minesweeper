@@ -30,7 +30,7 @@
 pub mod agent;
 pub mod provider;
 
-pub use agent::{Agent, Message, ProviderSet, SendError, ThinkingLevel, Tool};
+pub use agent::{Agent, Message, ProviderSet, RunError, RunEvent, SendError, ThinkingLevel, Tool};
 pub use provider::openai_api::{
     ChatRequest, ContentBlock, ReasoningEffort, ThinkingMode, ThinkingToggle, ToolCall, ToolDecl,
 };

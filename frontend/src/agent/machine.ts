@@ -1,4 +1,4 @@
-// The agent state machine (issue #119, #133): owns the Send run's phase, the
+// The agent state machine (issue #119, #133): owns the Run's phase, the
 // Session's status and message list, and the accumulated `reasoning` /
 // `content` text. It is deliberately thin — phase + text accumulation + the
 // Session's own data only. The discard confirm and the Load alerts live in the
@@ -6,7 +6,7 @@
 //
 // The state is two blocks, one per owner: `session` is the Session's (its
 // `none` / `unused` / `used` predicate and its message list), `run` is this
-// Send's. They expire on different acts — `begin` / `end` clear the Session,
+// Run's. They expire on different acts — `begin` / `end` clear the Session,
 // a Send clears the run — so one flat interface could not say either.
 //
 // The machine addresses no transport: the two calls it needs are handed in by
@@ -14,7 +14,7 @@
 // knows no URL and builds no payload.
 //
 // Generation tracking: the machine's async work belongs to one of two
-// lifetimes — the Session (`begin` / `end` replace it) and the Send run
+// lifetimes — the Session (`begin` / `end` replace it) and the Run
 // (`beginSend` replaces it) — and each keeps its own counter. A callback
 // captures both, so a superseded stream or snapshot is refused and can never
 // write into the current state. The Session's counter is separate because the
@@ -26,10 +26,11 @@
 // to begin one under an InputMode, a Send appends to it, and `end()` drops it.
 // The machine holds only the session's `unused` / `used` predicate.
 
-import { asProviderError } from "./api";
-import type { Message, ReplyEvent, SendFailure } from "./api";
+import type { Message } from "./api";
+import { asProviderError } from "./run";
+import type { RunEvent, RunFailure } from "./run";
 
-/** The phase of a Send run (`idle` / `running` / `done` / `interrupted`) plus
+/** The phase of a Run (`idle` / `running` / `done` / `interrupted`) plus
  * `failed`, which any failure before or during a run lands in — a Load
  * failure, a refusal or a provider failure. */
 export type RunPhase = "idle" | "running" | "done" | "interrupted" | "failed";
@@ -41,7 +42,7 @@ export type RunPhase = "idle" | "running" | "done" | "interrupted" | "failed";
  * the Session itself, not this predicate. */
 export type SessionState = "none" | "unused" | "used";
 
-/** The Agent's state: the Session's data and this Send run's, one block each. */
+/** The Agent's state: the Session's data and this Run's, one block each. */
 export interface AgentState {
   session: {
     status: SessionState;
@@ -60,8 +61,8 @@ export interface AgentState {
     user: string;
     /** Present for the image form: the screenshot the player sent (data URL). */
     userImageUrl?: string;
-    /** Set only when `phase === "failed"`: why the Send produced no reply. */
-    failure?: SendFailure;
+    /** Set only when `phase === "failed"`: why the run produced no reply. */
+    failure?: RunFailure;
   };
 }
 
@@ -75,8 +76,8 @@ export interface SessionOpener {
 /** Starts a Send over the live Session, handing it the two callbacks the run's
  * events arrive on. */
 export type SendStarter = (
-  onEvent: (e: ReplyEvent) => void,
-  onFailure: (f: SendFailure) => void,
+  onEvent: (e: RunEvent) => void,
+  onFailure: (f: RunFailure) => void,
 ) => void;
 
 export interface AgentMachine {
@@ -137,7 +138,7 @@ export function createAgentMachine(): AgentMachine {
   const isCurrent = (session: number, run: number): boolean =>
     session === sessionGeneration && run === runGeneration;
 
-  const onEvent = (session: number, run: number, e: ReplyEvent): void => {
+  const onEvent = (session: number, run: number, e: RunEvent): void => {
     if (!isCurrent(session, run)) return; // a stale stream from a superseded run
     switch (e.kind) {
       case "reasoning":
@@ -168,7 +169,7 @@ export function createAgentMachine(): AgentMachine {
     emit();
   };
 
-  const onFailure = (session: number, run: number, f: SendFailure): void => {
+  const onFailure = (session: number, run: number, f: RunFailure): void => {
     if (!isCurrent(session, run)) return;
     setRun({ phase: "failed", failure: f });
     emit();
@@ -178,7 +179,7 @@ export function createAgentMachine(): AgentMachine {
     async begin(open) {
       const session = ++sessionGeneration;
       // The old session is being replaced: reset to `none` immediately so any
-      // in-flight Send becomes stale.
+      // in-flight Run becomes stale.
       state = noSession();
       emit();
       try {

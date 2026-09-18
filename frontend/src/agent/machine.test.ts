@@ -5,7 +5,8 @@
 // `start`, so nothing here knows a URL or builds a request.
 
 import { describe, expect, it } from "vitest";
-import type { Message, ReplyEvent, SendFailure } from "./api";
+import type { Message } from "./api";
+import type { RunEvent, RunFailure } from "./run";
 import { createAgentMachine, type AgentState } from "./machine";
 
 /** Lets the machine's own awaits settle, so a state emitted after one is visible. */
@@ -25,8 +26,8 @@ function makeMachine() {
     read: async (): Promise<Message[]> => [],
   };
   const sends: {
-    onEvent: (e: ReplyEvent) => void;
-    onFailure: (f: SendFailure) => void;
+    onEvent: (e: RunEvent) => void;
+    onFailure: (f: RunFailure) => void;
   }[] = [];
 
   return {
