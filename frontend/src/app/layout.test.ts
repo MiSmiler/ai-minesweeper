@@ -21,27 +21,29 @@ function mockFetch(snapshot = makeGameSnapshot()): void {
 }
 
 /**
- * The composition's dependencies over a stubbed `AiApi`. Its Send records the
- * callbacks the composition hands it.
+ * The composition's dependencies over stubbed apis: the binding's two routes
+ * and the Agent's. The Send records the callbacks the composition hands it.
  */
 function makeDeps(): AppDeps {
   return {
-    aiApi: {
+    aiPlayerApi: {
       begin: vi.fn(async () => {}),
-      messages: vi.fn().mockResolvedValue([]),
       send: vi.fn(),
-      interrupt_by_user: vi.fn().mockResolvedValue(undefined),
+    },
+    agentApi: {
+      messages: vi.fn().mockResolvedValue([]),
+      interrupt: vi.fn().mockResolvedValue(undefined),
     },
     captureBoardImage: vi.fn().mockResolvedValue("data:image/png;base64,xxx"),
   };
 }
 
 /** The `onEvent` / `onFailure` callbacks the composition hands to the Nth Send
- * (the 2nd and 3rd arguments of `AiApi.send`). */
+ * (the 2nd and 3rd arguments of `AiPlayerApi.send`). */
 const onEvent = (deps: AppDeps, n = 0) =>
-  vi.mocked(deps.aiApi.send).mock.calls[n][1];
+  vi.mocked(deps.aiPlayerApi.send).mock.calls[n][1];
 const onFailure = (deps: AppDeps, n = 0) =>
-  vi.mocked(deps.aiApi.send).mock.calls[n][2];
+  vi.mocked(deps.aiPlayerApi.send).mock.calls[n][2];
 
 function mount(): HTMLElement {
   const root = document.createElement("div");
@@ -203,7 +205,7 @@ describe("mountLayout session controls", () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
-    vi.mocked(deps.aiApi.messages).mockResolvedValueOnce([
+    vi.mocked(deps.agentApi.messages).mockResolvedValueOnce([
       { role: "system", content: "be helpful" },
     ]);
     mountLayout(root, deps);
@@ -225,7 +227,7 @@ describe("mountLayout session controls", () => {
     expect(send.disabled).toBe(false);
     // The Session's InputMode is fixed from here on.
     expect(mode.disabled).toBe(true);
-    expect(deps.aiApi.begin).toHaveBeenCalledWith("plain");
+    expect(deps.aiPlayerApi.begin).toHaveBeenCalledWith("plain");
   });
 
   it("the live Session locks the InputMode", async () => {
@@ -267,7 +269,7 @@ describe("mountLayout session controls", () => {
     const deps = makeDeps();
     mountLayout(root, deps);
     ($(root, ".send-btn") as HTMLButtonElement).click();
-    expect(deps.aiApi.send).not.toHaveBeenCalled();
+    expect(deps.aiPlayerApi.send).not.toHaveBeenCalled();
   });
 });
 
@@ -281,11 +283,13 @@ describe("mountLayout send flow", () => {
     const send = $(root, ".send-btn") as HTMLButtonElement;
 
     send.click();
-    expect(deps.aiApi.send).toHaveBeenCalledTimes(1);
-    const req = vi.mocked(deps.aiApi.send).mock.calls[0][0] as {
-      thinkingLevel: string;
-    };
-    expect(req.thinkingLevel).toBe("low");
+    expect(deps.aiPlayerApi.send).toHaveBeenCalledTimes(1);
+    // The composition root builds the request: the level, and no screenshot
+    // outside the image mode.
+    expect(vi.mocked(deps.aiPlayerApi.send).mock.calls[0][0]).toEqual({
+      thinkingLevel: "low",
+      imageDataUrl: undefined,
+    });
 
     onEvent(deps)({ kind: "reasoning", text: "think" });
     onEvent(deps)({ kind: "content", text: "(2,3)" });
@@ -295,7 +299,7 @@ describe("mountLayout send flow", () => {
     onEvent(deps)({ kind: "sse_done" });
   });
 
-  it("interrupt calls interrupt_by_user and the event reverts the button", async () => {
+  it("interrupt calls the Agent and the event reverts the button", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -304,7 +308,7 @@ describe("mountLayout send flow", () => {
     const send = $(root, ".send-btn") as HTMLButtonElement;
     send.click();
     send.click(); // send → interrupt
-    expect(deps.aiApi.interrupt_by_user).toHaveBeenCalledTimes(1);
+    expect(deps.agentApi.interrupt).toHaveBeenCalledTimes(1);
 
     onEvent(deps)({ kind: "interrupted" });
     expect(send.textContent).toBe("发送");
@@ -325,8 +329,8 @@ describe("mountLayout send flow", () => {
     send.click();
     await flush();
     expect(deps.captureBoardImage).toHaveBeenCalled();
-    expect(deps.aiApi.begin).toHaveBeenCalledWith("image");
-    const req = vi.mocked(deps.aiApi.send).mock.calls[0][0] as {
+    expect(deps.aiPlayerApi.begin).toHaveBeenCalledWith("image");
+    const req = vi.mocked(deps.aiPlayerApi.send).mock.calls[0][0] as {
       imageDataUrl?: string;
     };
     expect(req.imageDataUrl).toBeTruthy();
@@ -341,7 +345,7 @@ describe("mountLayout send flow", () => {
     const send = $(root, ".send-btn") as HTMLButtonElement;
 
     send.click();
-    let req = vi.mocked(deps.aiApi.send).mock.calls[0][0] as {
+    let req = vi.mocked(deps.aiPlayerApi.send).mock.calls[0][0] as {
       thinkingLevel: string;
     };
     expect(req.thinkingLevel).toBe("low");
@@ -354,7 +358,7 @@ describe("mountLayout send flow", () => {
 
     // The next Send carries the new level.
     send.click();
-    req = vi.mocked(deps.aiApi.send).mock.calls[1][0] as {
+    req = vi.mocked(deps.aiPlayerApi.send).mock.calls[1][0] as {
       thinkingLevel: string;
     };
     expect(req.thinkingLevel).toBe("max");
@@ -439,7 +443,7 @@ describe("mountLayout session lifecycle", () => {
     const root = mount();
     const deps = makeDeps();
     let settleBegin: () => void = () => {};
-    vi.mocked(deps.aiApi.begin).mockImplementation(
+    vi.mocked(deps.aiPlayerApi.begin).mockImplementation(
       () => new Promise<void>((resolve) => (settleBegin = resolve)),
     );
     mountLayout(root, deps);
@@ -448,7 +452,7 @@ describe("mountLayout session lifecycle", () => {
     session.click();
     expect(session.disabled).toBe(true);
     session.click(); // a second click while the first begin() is pending
-    expect(deps.aiApi.begin).toHaveBeenCalledTimes(1);
+    expect(deps.aiPlayerApi.begin).toHaveBeenCalledTimes(1);
     expect(session.textContent).toBe("启动AI会话"); // still `none`
 
     settleBegin();
@@ -461,7 +465,7 @@ describe("mountLayout session lifecycle", () => {
     const root = mount();
     const deps = makeDeps();
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-    vi.mocked(deps.aiApi.begin).mockRejectedValueOnce({
+    vi.mocked(deps.aiPlayerApi.begin).mockRejectedValueOnce({
       kind: "config",
       code: null,
       message: "no provider",
@@ -491,7 +495,7 @@ describe("mountLayout session lifecycle", () => {
 
     // A closed session is gone for good: starting again is a fresh begin().
     await startSession(root);
-    expect(deps.aiApi.begin).toHaveBeenCalledTimes(2);
+    expect(deps.aiPlayerApi.begin).toHaveBeenCalledTimes(2);
   });
 
   it("declining to close keeps the current session", async () => {
@@ -535,7 +539,7 @@ describe("mountLayout session lifecycle", () => {
     ($(root, ".send-btn") as HTMLButtonElement).click(); // running
 
     await closeSession(root);
-    expect(deps.aiApi.interrupt_by_user).toHaveBeenCalledTimes(1);
+    expect(deps.agentApi.interrupt).toHaveBeenCalledTimes(1);
     expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -605,7 +609,7 @@ describe("mountLayout session lifecycle", () => {
     await flush();
     // A Send makes the Session `used` even before its reply lands.
     expect(confirmSpy).toHaveBeenCalled();
-    expect(deps.aiApi.interrupt_by_user).toHaveBeenCalledTimes(1);
+    expect(deps.agentApi.interrupt).toHaveBeenCalledTimes(1);
   });
 
   it("reports hasUsedSession for the refresh guard", async () => {
@@ -679,7 +683,7 @@ describe("mountLayout SessionBox visibility", () => {
     const root = mount();
     const deps = makeDeps();
     vi.spyOn(window, "alert").mockImplementation(() => {});
-    vi.mocked(deps.aiApi.begin).mockRejectedValueOnce({
+    vi.mocked(deps.aiPlayerApi.begin).mockRejectedValueOnce({
       kind: "config",
       code: null,
       message: "no provider",

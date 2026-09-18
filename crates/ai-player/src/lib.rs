@@ -3,8 +3,8 @@
 //!
 //! [`AiPlayer`] renders the player-visible side of a `game::Game` into the board
 //! presentation (the [`InputMode`]), builds the system prompt (the shared core
-//! plus the mode's own section), and wires `AiPlayer::send` — the AiPlayer's "ask
-//! the AI" entry point — to one Send of an `agent::Agent`.
+//! plus the mode's own section), and wires `AiPlayer::send_game_board` — the
+//! AiPlayer's "ask the AI" entry point — to one Send of an `agent::Agent`.
 //!
 //! The Session is the Agent's (ADR-0021): the AiPlayer never names one. What
 //! lives here is policy — one Game drives one Agent, the InputMode chosen at
@@ -227,13 +227,6 @@ impl AiPlayer {
         *self.mode.lock().expect("mode lock poisoned") = None;
     }
 
-    /// Cancels the in-flight Send, if any; `false` when none is in flight. The
-    /// stream frees the slot itself, so the Send is free as soon as the
-    /// cancelled task notices.
-    pub fn interrupt(&self) -> bool {
-        self.agent.interrupt()
-    }
-
     /// The `Agent` behind this binding. A caller reads the live Session through
     /// it ([`Agent::messages`]) rather than through a relaying method here: the
     /// Session and its message list are the Agent's (ADR-0021), and the binding
@@ -253,7 +246,7 @@ impl AiPlayer {
     /// caller's Interrupt or the Provider's failure, passed through intact;
     /// `Ok(Done)` closes it. A refusal (`NoSession` / `Busy`, or a missing
     /// screenshot for the image mode) is an `Err`, never a stream item.
-    pub async fn send(
+    pub async fn send_game_board(
         &self,
         game: &Game,
         req: SendRequest,
@@ -399,7 +392,7 @@ fn render_emoji(view: &BoardView) -> String {
 /// Persists a `data:image/png;base64,<payload>` data URL to
 /// `<exe_dir>/base64_img/YYYYMMDD_HHMMSS_<seed>.png`, best-effort: a failure
 /// returns `Err` and must never block the send. This is an internal side
-/// effect of `AiPlayer::send`, not a public interface.
+/// effect of `AiPlayer::send_game_board`, not a public interface.
 fn persist_image(data_url: &str) -> Result<(), String> {
     let payload = data_url
         .split_once("base64,")
@@ -708,7 +701,10 @@ mod tests {
     #[tokio::test]
     async fn send_without_a_live_session_is_no_session() {
         let (ai_player, _mock) = ai_player_with_mock();
-        let Err(err) = ai_player.send(&fresh_game(), default_request()).await else {
+        let Err(err) = ai_player
+            .send_game_board(&fresh_game(), default_request())
+            .await
+        else {
             panic!("expected an error");
         };
         assert_eq!(err, SendError::Agent(AgentSendError::NoSession));
@@ -719,7 +715,7 @@ mod tests {
         let (ai_player, mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Plain).await.unwrap();
         let (user_text, mut stream) = ai_player
-            .send(&fresh_game(), default_request())
+            .send_game_board(&fresh_game(), default_request())
             .await
             .unwrap();
         // The verbatim player message is the board body, not the system prompt.
@@ -759,7 +755,7 @@ mod tests {
             thinking_level: ThinkingLevel::Off,
             image_data_url: None,
         };
-        let (_user_text, mut stream) = ai_player.send(&fresh_game(), req).await.unwrap();
+        let (_user_text, mut stream) = ai_player.send_game_board(&fresh_game(), req).await.unwrap();
         while stream.next().await.is_some() {}
         let req = mock.last_request().expect("mock recorded a request");
         assert_eq!(req.reasoning_effort, None);
@@ -776,7 +772,7 @@ mod tests {
         let (ai_player, mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Emoji).await.unwrap();
         let (_user_text, mut stream) = ai_player
-            .send(&fresh_game(), default_request())
+            .send_game_board(&fresh_game(), default_request())
             .await
             .unwrap();
         while stream.next().await.is_some() {}
@@ -796,7 +792,10 @@ mod tests {
         ai_player.begin(InputMode::Plain).await.unwrap();
         let game = fresh_game();
         for _ in 0..2 {
-            let (_user_text, mut stream) = ai_player.send(&game, default_request()).await.unwrap();
+            let (_user_text, mut stream) = ai_player
+                .send_game_board(&game, default_request())
+                .await
+                .unwrap();
             while stream.next().await.is_some() {}
         }
         // The second request was taken before its own reply streamed, so it is
@@ -821,10 +820,13 @@ mod tests {
         ai_player.begin(InputMode::Plain).await.unwrap();
         let game = fresh_game();
         {
-            let (_user_text, mut stream) = ai_player.send(&game, default_request()).await.unwrap();
+            let (_user_text, mut stream) = ai_player
+                .send_game_board(&game, default_request())
+                .await
+                .unwrap();
             // The first chunk arrived; the player then interrupts.
             assert!(stream.next().await.is_some());
-            assert!(ai_player.interrupt());
+            assert!(ai_player.agent().interrupt());
             while stream.next().await.is_some() {}
             // The log is the Agent's (ADR-0026): the player's message stayed,
             // and the Interrupt landed a marker of its own in place of a reply.
@@ -838,7 +840,10 @@ mod tests {
         }
         // The Interrupt cut only the assistant half: the next request carries
         // the player's message, and not the marker.
-        let (_user_text, mut stream) = ai_player.send(&game, default_request()).await.unwrap();
+        let (_user_text, mut stream) = ai_player
+            .send_game_board(&game, default_request())
+            .await
+            .unwrap();
         while stream.next().await.is_some() {}
         let req = mock.last_request().unwrap();
         assert_eq!(req.messages.len(), 3);
@@ -855,8 +860,11 @@ mod tests {
         let (ai_player, _mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Plain).await.unwrap();
         let game = fresh_game();
-        let (_user_text, stream) = ai_player.send(&game, default_request()).await.unwrap();
-        let Err(err) = ai_player.send(&game, default_request()).await else {
+        let (_user_text, stream) = ai_player
+            .send_game_board(&game, default_request())
+            .await
+            .unwrap();
+        let Err(err) = ai_player.send_game_board(&game, default_request()).await else {
             panic!("expected an error");
         };
         assert_eq!(err, SendError::Agent(AgentSendError::Busy));
@@ -867,7 +875,7 @@ mod tests {
     async fn interrupt_without_an_in_flight_send_is_false() {
         let (ai_player, _mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Plain).await.unwrap();
-        assert!(!ai_player.interrupt());
+        assert!(!ai_player.agent().interrupt());
     }
 
     #[tokio::test]
@@ -875,7 +883,10 @@ mod tests {
         let (ai_player, _mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Plain).await.unwrap();
         let game = fresh_game();
-        let (_user_text, mut stream) = ai_player.send(&game, default_request()).await.unwrap();
+        let (_user_text, mut stream) = ai_player
+            .send_game_board(&game, default_request())
+            .await
+            .unwrap();
         ai_player.begin(InputMode::Plain).await.unwrap();
         // The displaced Send reports the caller's interrupt on its next poll...
         assert_eq!(stream.next().await, Some(Err(AgentSendError::Interrupted)));
@@ -887,10 +898,29 @@ mod tests {
         let (ai_player, _mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Plain).await.unwrap();
         ai_player.end();
-        let Err(err) = ai_player.send(&fresh_game(), default_request()).await else {
+        let Err(err) = ai_player
+            .send_game_board(&fresh_game(), default_request())
+            .await
+        else {
             panic!("expected an error");
         };
         assert_eq!(err, SendError::Agent(AgentSendError::NoSession));
+    }
+
+    /// The two records of "a Session is live" — the binding's `mode` and the
+    /// Agent's live Session — must agree; `begin` and `end` are their only
+    /// writers, and callers may address the Agent directly.
+    #[tokio::test]
+    async fn the_mode_and_the_agents_live_session_agree() {
+        let (ai_player, _mock) = ai_player_with_mock();
+        let has_mode = || ai_player.mode.lock().expect("mode lock poisoned").is_some();
+        let has_session = || ai_player.agent().messages().is_some();
+
+        assert!(!has_mode() && !has_session());
+        ai_player.begin(InputMode::Plain).await.unwrap();
+        assert!(has_mode() && has_session());
+        ai_player.end();
+        assert!(!has_mode() && !has_session());
     }
 
     #[tokio::test]
@@ -902,7 +932,7 @@ mod tests {
             // Deliberately not valid base64: persist fails, and must not block.
             image_data_url: Some("data:image/png;base64,not-valid!!!".to_string()),
         };
-        let (user_text, mut stream) = ai_player.send(&fresh_game(), req).await.unwrap();
+        let (user_text, mut stream) = ai_player.send_game_board(&fresh_game(), req).await.unwrap();
         // The image user turn is the screenshot alone, so the echo is empty;
         // the frontend renders its own captured copy in the player's bubble.
         assert_eq!(user_text, "");
@@ -925,7 +955,10 @@ mod tests {
     async fn image_mode_without_a_screenshot_is_refused() {
         let (ai_player, _mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Image).await.unwrap();
-        let Err(err) = ai_player.send(&fresh_game(), default_request()).await else {
+        let Err(err) = ai_player
+            .send_game_board(&fresh_game(), default_request())
+            .await
+        else {
             panic!("expected an error");
         };
         assert_eq!(err, SendError::MissingScreenshot);
@@ -994,7 +1027,7 @@ mod tests {
         // accepted (not `NoSession`).
         assert!(
             ai_player
-                .send(&fresh_game(), default_request())
+                .send_game_board(&fresh_game(), default_request())
                 .await
                 .is_ok()
         );
@@ -1019,7 +1052,7 @@ mod tests {
         });
         ai_player.begin(InputMode::Plain).await.unwrap();
         let (_user_text, mut stream) = ai_player
-            .send(&fresh_game(), default_request())
+            .send_game_board(&fresh_game(), default_request())
             .await
             .unwrap();
         // The AiPlayer does not refract: the provider's own kind, code and
@@ -1048,7 +1081,10 @@ mod tests {
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Playing);
         ai_player.begin(InputMode::Plain).await.unwrap();
-        let (_user_text, mut stream) = ai_player.send(&game, default_request()).await.unwrap();
+        let (_user_text, mut stream) = ai_player
+            .send_game_board(&game, default_request())
+            .await
+            .unwrap();
         while stream.next().await.is_some() {}
         let req = mock.last_request().expect("mock recorded a request");
         // The user turn is the plain board alone. The two hidden Mines (0,1)

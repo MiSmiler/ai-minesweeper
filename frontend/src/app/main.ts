@@ -2,16 +2,19 @@
 // the single page layout. There is no PlayMode and no mode switcher — one Game
 // is shown one way, with the AiPlayer driven by hand from the dashboard.
 
-import { createAiApi } from "../ai-player/api";
+import { createAgentApi } from "../agent/api";
+import { createAiPlayerApi } from "../ai-player/api";
 import { captureBoardImage } from "../ai-player/screenshot";
 import { mountLayout, type AppDeps } from "./layout";
 import "../style.css";
 
 const ROOT = document.getElementById("app")!;
 const deps: AppDeps = {
-  // The real AI transport: consumes the backend `/ai/send` SSE stream
-  // (issue #119).
-  aiApi: createAiApi(),
+  // The binding's half: `/ai/begin` and `/ai/send` (the board's Send, whose
+  // SSE stream it consumes through the Agent's reader).
+  aiPlayerApi: createAiPlayerApi(),
+  // The Agent's half: `/ai/messages` and `/ai/interrupt`.
+  agentApi: createAgentApi(),
   captureBoardImage,
 };
 const layout = mountLayout(ROOT, deps);

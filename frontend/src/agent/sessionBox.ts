@@ -9,14 +9,13 @@
 // scrollbar (issue #128): it stays pinned to the bottom only while the user
 // is not scrolling away, and releases the moment they scroll up.
 
-import type { AiPlayerState } from "./stateMachine";
+import type { AgentState } from "./machine";
 
-/** The slice of `AiPlayerState` the box renders. The AI Session's
- * `sessionState` drives the dashboard, not the box, so it is omitted. */
-export type SessionBoxState = Omit<AiPlayerState, "sessionState">;
-
+/** The whole `AgentState`, not a projection of it: the box draws
+ * `session.messages` and every field of `run`, and ignores the `session.status`
+ * it has no use for. */
 export interface SessionBox {
-  render(state: SessionBoxState): void;
+  render(state: AgentState): void;
 }
 
 /** Mounts the box into `container` and returns a renderer that updates it
@@ -103,10 +102,10 @@ export function createSessionBox(container: HTMLElement): SessionBox {
     lightbox,
   );
 
-  const render = (state: SessionBoxState): void => {
+  const render = (state: AgentState): void => {
     // Every `system` entry, not just the first: the message list decides what is
     // a system prompt, not its position in the list.
-    const systemText = state.messages
+    const systemText = state.session.messages
       .filter((m) => m.role === "system")
       .map((m) => m.content)
       .join("\n\n");
@@ -119,11 +118,12 @@ export function createSessionBox(container: HTMLElement): SessionBox {
     }
 
     // The player's boxed turn: show only when there is text or a screenshot.
-    const hasUser = state.user !== "" || state.userImageUrl !== undefined;
+    const hasUser =
+      state.run.user !== "" || state.run.userImageUrl !== undefined;
     if (hasUser) {
-      userText.textContent = state.user;
-      if (state.userImageUrl !== undefined) {
-        userImage.src = state.userImageUrl;
+      userText.textContent = state.run.user;
+      if (state.run.userImageUrl !== undefined) {
+        userImage.src = state.run.userImageUrl;
         userImage.hidden = false;
       } else {
         userImage.removeAttribute("src");
@@ -139,21 +139,21 @@ export function createSessionBox(container: HTMLElement): SessionBox {
       userBlock.style.display = "none";
       lightbox.style.display = "none";
     }
-    if (state.reasoning) {
-      reasoningBlock.textContent = state.reasoning;
+    if (state.run.reasoning) {
+      reasoningBlock.textContent = state.run.reasoning;
       collapse.style.display = "";
     } else {
       reasoningBlock.textContent = "";
       collapse.style.display = "none";
     }
-    if (state.content) {
-      contentBlock.textContent = state.content;
+    if (state.run.content) {
+      contentBlock.textContent = state.run.content;
       contentBlock.style.display = "";
     } else {
       contentBlock.textContent = "";
       contentBlock.style.display = "none";
     }
-    if (state.phase === "interrupted") {
+    if (state.run.phase === "interrupted") {
       interruptBlock.textContent = "已中断";
       interruptBlock.style.display = "";
     } else {
@@ -161,15 +161,15 @@ export function createSessionBox(container: HTMLElement): SessionBox {
       interruptBlock.style.display = "none";
     }
 
-    // A fresh run (issue #128): `start()` emits phase === "running" with both
-    // streams empty — the only render shape that means "a new analysis began" —
-    // so re-pin to the bottom to watch it stream. This relies on the
-    // stateMachine guarantee (stateMachine.ts start()); revisit it if start()
+    // A fresh run (issue #128): `beginSend()` emits phase === "running" with
+    // both streams empty — the only render shape that means "a new analysis
+    // began" — so re-pin to the bottom to watch it stream. This relies on the
+    // machine guarantee (machine.ts beginSend()); revisit it if beginSend()
     // ever stops emitting an empty running state.
     if (
-      state.phase === "running" &&
-      state.reasoning === "" &&
-      state.content === ""
+      state.run.phase === "running" &&
+      state.run.reasoning === "" &&
+      state.run.content === ""
     ) {
       pinned = true;
     }
@@ -180,7 +180,10 @@ export function createSessionBox(container: HTMLElement): SessionBox {
     if (pinned) container.scrollTop = container.scrollHeight;
   };
 
-  render({ phase: "idle", reasoning: "", content: "", user: "", messages: [] });
+  render({
+    session: { status: "none", messages: [] },
+    run: { phase: "idle", reasoning: "", content: "", user: "" },
+  });
 
   return { render };
 }

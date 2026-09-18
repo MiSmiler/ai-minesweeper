@@ -5,11 +5,11 @@ A context is a language boundary, not a directory: it can span both stacks (`gam
 | Context | Rust | TypeScript | Glossary |
 | --- | --- | --- | --- |
 | `game` | `crates/game` | `frontend/src/game` | `crates/game/CONTEXT.md` |
-| `agent` | `crates/agent` | — | `crates/agent/CONTEXT.md` |
+| `agent` | `crates/agent` | `frontend/src/agent` | `crates/agent/CONTEXT.md` |
 | `ai-player` | `crates/ai-player` | `frontend/src/ai-player` | `crates/ai-player/CONTEXT.md` |
 | app (root) | `src/` (binary, transport) | `frontend/src/app`, `frontend/src/infra` | this file |
 
-`game` and `agent` depend on nothing above them; `ai-player` depends on both; the app depends on all three. The app is the **composition root**, not a context: it fixes how a Game is launched, serves the transport, and mounts the page layout. Frontend slices never import each other — only `frontend/src/app` imports more than one.
+`game` and `agent` depend on nothing above them; `ai-player` depends on both; the app depends on all three. The frontend slices keep that direction: `frontend/src/ai-player` imports `frontend/src/agent` (the binding's Send opens the SSE stream the Agent reads), never the other way, and `frontend/src/game` imports neither. Only `frontend/src/app` imports more than one slice. The app is the **composition root**, not a context: it fixes how a Game is launched, serves the transport, and mounts the page layout.
 
 ## App-level language
 

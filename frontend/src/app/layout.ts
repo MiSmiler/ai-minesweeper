@@ -6,7 +6,7 @@
 //
 // `mountLayout` is the app's composition root for the page: it builds the DOM,
 // instantiates the game slice, the AI dashboard and the SessionBox, and wires
-// the `AiPlayerMachine` to them. `main.ts` calls it once and keeps only the
+// the `AgentMachine` to them. `main.ts` calls it once and keeps only the
 // `beforeunload` guard.
 //
 // The controls follow the AI Session (issue #133): Send is disabled while
@@ -23,26 +23,25 @@
 // so they sit in `.aux-bar` below the Board; the dashboard keeps
 // only the session button and the two Send-strength settings, on one row.
 
+import type { AgentApi, ProviderError } from "../agent/api";
+import { createAgentMachine, type SessionState } from "../agent/machine";
+import { createSessionBox } from "../agent/sessionBox";
 import type {
-  AiApi,
+  AiPlayerApi,
   InputMode,
-  ProviderError,
   SendRequest,
   ThinkingLevel,
 } from "../ai-player/api";
-import { createSessionBox } from "../ai-player/sessionBox";
-import { createBoardAxis, type BoardAxis } from "./boardAxis";
-import {
-  createAiPlayerMachine,
-  type SessionState,
-} from "../ai-player/stateMachine";
-import { createGameArea, type GameArea } from "../game/gameArea";
 import type { CaptureBoardImage } from "../ai-player/screenshot";
+import { createBoardAxis, type BoardAxis } from "./boardAxis";
+import { createGameArea, type GameArea } from "../game/gameArea";
 
 /** What the layout needs from outside, injected by `main.ts`. */
 export interface AppDeps {
-  /** The ai-player slice entry point (a stub under jsdom). */
-  aiApi: AiApi;
+  /** The binding's half: the InputMode and the Send (a stub under jsdom). */
+  aiPlayerApi: AiPlayerApi;
+  /** The Agent's half: the live Session's message list and its Interrupt. */
+  agentApi: AgentApi;
   /** Screenshots the board for the image InputMode; a stub under jsdom,
    * since the browser-only capture never runs there. */
   captureBoardImage: CaptureBoardImage;
@@ -114,10 +113,6 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   // The reasoning depth (issue #122): default low, session-persistent, and
   // independent of the input mode — changing it never invalidates a session.
   let currentLevel: ThinkingLevel = "low";
-  let running = false;
-  // Mirrors the machine's `sessionState` so the synchronous predicates
-  // (`beforeNewGame`) can read it without a subscription.
-  let sessionState: SessionState = "none";
   // True while `machine.begin()` is in flight. The session stays `none` until
   // it lands, so the session button would otherwise read "启动AI会话" and take
   // a second click. Local to the layout: `startSession` is the only caller.
@@ -139,12 +134,14 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
     // Send interrupts it first.
     beforeNewGame: () => {
       if (
-        sessionState === "used" &&
+        sessionStatus() === "used" &&
         !window.confirm("开始新游戏将结束当前 AI 会话，是否继续？")
       ) {
         return false;
       }
-      if (running) void machine.interrupt_by_user();
+      if (isRunning()) {
+        void deps.agentApi.interrupt();
+      }
       return true;
     },
     // Render the 0-based row/col labels for the live Board. The
@@ -246,7 +243,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   const boxEl = document.createElement("div");
   boxEl.className = "ai-session-box";
   // Hidden until a Session exists (ADR-0023): the box exists to show a
-  // Session, so `sessionState !== "none"` is the visibility rule.
+  // Session, so `session.status !== "none"` is the visibility rule.
   boxEl.style.display = "none";
   const boxTitle = document.createElement("h3");
   boxTitle.textContent = "AI 会话";
@@ -256,19 +253,24 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   aiColumn.appendChild(boxEl);
 
   const sessionBox = createSessionBox(streamEl);
-  const machine = createAiPlayerMachine({ api: deps.aiApi });
+  const machine = createAgentMachine();
+  // Read on demand, never mirrored: the click handlers and the game-area
+  // callbacks get no state argument, so these name the two questions they ask.
+  const sessionStatus = (): SessionState => machine.getState().session.status;
+  const isRunning = (): boolean => machine.getState().run.phase === "running";
 
-  function setRunning(next: boolean): void {
-    running = next;
-    sendBtn.textContent = next ? "中断" : "发送";
-    sendBtn.classList.toggle("running", next);
+  /** The Send button's two faces: interrupt while a run is in flight, send
+   * otherwise. */
+  function syncSendBtn(running: boolean): void {
+    sendBtn.textContent = running ? "中断" : "发送";
+    sendBtn.classList.toggle("running", running);
   }
 
   /** The session button's two faces: the text follows the live Session, the
    * disabled state follows the pending `begin()`. Single writer of both. */
   function syncSessionBtn(): void {
-    const live = sessionState !== "none";
-    sessionBtn.textContent = live ? "关闭AI会话" : "启动AI会话";
+    sessionBtn.textContent =
+      sessionStatus() === "none" ? "启动AI会话" : "关闭AI会话";
     sessionBtn.disabled = beginPending;
   }
 
@@ -276,25 +278,29 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
 
   const unsubscribe = machine.onState((state) => {
     sessionBox.render(state);
-    // A Session is live exactly while `sessionState !== "none"`; New Game
+    // A Session is live exactly while `session.status !== "none"`; New Game
     // (`machine.end()`) drops back to `none` and hides the box again.
-    boxEl.style.display = state.sessionState === "none" ? "none" : "";
-    sessionState = state.sessionState;
+    boxEl.style.display = state.session.status === "none" ? "none" : "";
     syncSessionBtn();
-    setRunning(state.phase === "running");
+    syncSendBtn(state.run.phase === "running");
     // The InputMode belongs to the Session: the player picks it at 启动AI会话 and
     // can change it only by closing the Session.
-    sendBtn.disabled = state.sessionState === "none";
-    modeSelect.disabled = state.sessionState !== "none";
+    sendBtn.disabled = state.session.status === "none";
+    modeSelect.disabled = state.session.status !== "none";
     // Only a provider failure alerts; a refusal (NoSession / Busy / the
     // InputMode lock) is reported by the disabled controls, not an alert.
-    if (state.phase === "failed" && state.failure?.kind === "provider") {
-      window.alert(providerAlertMessage(state.failure.error));
+    if (
+      state.run.phase === "failed" &&
+      state.run.failure?.kind === "provider"
+    ) {
+      window.alert(providerAlertMessage(state.run.failure.error));
     }
   });
 
   async function startSend(): Promise<void> {
-    if (running || sessionState === "none") return;
+    if (isRunning() || sessionStatus() === "none") {
+      return;
+    }
     // The Session's InputMode is `currentMode`: the select is locked for as
     // long as a Session is live, so it still holds the value `begin` was given.
     let imageDataUrl: string | undefined;
@@ -309,22 +315,29 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
         return;
       }
     }
-    const req: SendRequest = {
-      thinkingLevel: currentLevel,
-      imageDataUrl,
-    };
-    machine.send(req);
+    // The composition root builds the request; the machine only starts the run
+    // over the Session it holds.
+    machine.beginSend(imageDataUrl, (onEvent, onFailure) => {
+      const req: SendRequest = {
+        thinkingLevel: currentLevel,
+        imageDataUrl,
+      };
+      deps.aiPlayerApi.send(req, onEvent, onFailure);
+    });
   }
 
   /** The start face: only from `none`, since a live Session is closed rather
    * than replaced. The pending flag keeps a second click from beginning a
    * second Session while the first `begin()` is still in flight. */
   async function startSession(): Promise<void> {
-    if (beginPending || sessionState !== "none") return;
+    if (beginPending || sessionStatus() !== "none") return;
     beginPending = true;
     syncSessionBtn();
     try {
-      await machine.begin(currentMode);
+      await machine.begin({
+        begin: () => deps.aiPlayerApi.begin(currentMode),
+        read: () => deps.agentApi.messages(),
+      });
     } finally {
       beginPending = false;
       syncSessionBtn();
@@ -336,21 +349,28 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
    * is interrupted first. */
   async function closeSession(): Promise<void> {
     if (
-      sessionState === "used" &&
+      sessionStatus() === "used" &&
       !window.confirm("关闭AI会话将结束当前会话，是否继续？")
     ) {
       return;
     }
-    if (running) await machine.interrupt_by_user();
+    if (isRunning()) {
+      await deps.agentApi.interrupt();
+    }
     machine.end();
   }
 
+  // The Interrupt addresses the Agent, not the binding, so it skips the
+  // machine entirely.
   sendBtn.addEventListener("click", () => {
-    if (running) void machine.interrupt_by_user();
-    else void startSend();
+    if (isRunning()) {
+      void deps.agentApi.interrupt();
+    } else {
+      void startSend();
+    }
   });
   sessionBtn.addEventListener("click", () => {
-    if (sessionState === "none") void startSession();
+    if (sessionStatus() === "none") void startSession();
     else void closeSession();
   });
 
@@ -365,6 +385,6 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   return {
     dispose,
     /** True once the Session holds messages a refresh would clear. */
-    hasUsedSession: () => sessionState === "used",
+    hasUsedSession: () => sessionStatus() === "used",
   };
 }

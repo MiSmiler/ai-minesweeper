@@ -186,7 +186,13 @@ mod tests {
         let state = app_state();
         state.ai_player.begin(InputMode::Plain).await.unwrap();
         let game = state.game.lock().unwrap().clone();
-        assert!(state.ai_player.send(&game, send_request()).await.is_ok());
+        assert!(
+            state
+                .ai_player
+                .send_game_board(&game, send_request())
+                .await
+                .is_ok()
+        );
 
         let resp = post_action(
             State(state.clone()),
@@ -196,7 +202,7 @@ mod tests {
         assert!(resp.is_ok());
 
         // The Session is gone: a Send is refused with no live Session.
-        let err = match state.ai_player.send(&game, send_request()).await {
+        let err = match state.ai_player.send_game_board(&game, send_request()).await {
             Err(err) => err,
             Ok(_) => panic!("expected the session to be ended"),
         };

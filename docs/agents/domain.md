@@ -33,7 +33,7 @@ This repo is multi-context (`CONTEXT-MAP.md` at the root). Its contexts do not a
 │   ├── agent/    src/, CONTEXT.md
 │   └── ai-player/src/, prompts/, CONTEXT.md, docs/adr/
 ├── src/                               ← the app (root package): binary + transport
-└── frontend/src/                      ← game/, ai-player/, app/, infra/
+└── frontend/src/                      ← game/, agent/, ai-player/, app/, infra/
 ```
 
 ## Use the glossary's vocabulary

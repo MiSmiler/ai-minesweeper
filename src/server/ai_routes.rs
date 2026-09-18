@@ -10,9 +10,9 @@
 //!
 //! This module never reaches into `ai_player` internals and never writes to
 //! the `Game` — it only takes a player-visible board snapshot (cloned under a
-//! short lock) to hand to `AiPlayer::send`. The Session (its messages and its
-//! cancel token) is owned by the `Agent` behind the `AiPlayer`; the transport
-//! addresses the AiPlayer and carries no id.
+//! short lock) to hand to `AiPlayer::send_game_board`. The Session (its messages
+//! and its cancel token) is owned by the `Agent` behind the `AiPlayer`; the
+//! transport addresses the AiPlayer and carries no id.
 
 use std::sync::Arc;
 
@@ -114,7 +114,7 @@ async fn handle_send(State(state): State<Arc<AppState>>, Json(req): Json<SendReq
     // is built from the visible-only `BoardView`), so privacy is preserved.
     let game = state.game.lock().expect("game state poisoned").clone();
 
-    match state.ai_player.send(&game, req).await {
+    match state.ai_player.send_game_board(&game, req).await {
         Ok((user_text, stream)) => {
             // Emit the player's message first, then the agent's stream (issue
             // #124). `once` and `map(to_event)` share the same item type
@@ -132,7 +132,7 @@ async fn handle_send(State(state): State<Arc<AppState>>, Json(req): Json<SendReq
 /// stays open; the `{kind:"interrupted"}` event is emitted on that stream.
 /// Always 204 — a Send that is not in flight is not an error.
 async fn handle_interrupt(State(state): State<Arc<AppState>>) -> Response {
-    state.ai_player.interrupt();
+    state.ai_player.agent().interrupt();
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -146,7 +146,7 @@ async fn handle_messages(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
-/// Maps one `AiPlayer::send` stream item to an SSE event. `Ok(Done)` becomes the
+/// Maps one `AiPlayer::send_game_board` stream item to an SSE event. `Ok(Done)` becomes the
 /// `[DONE]` terminator; the two `Err`s become the explicit `interrupted` /
 /// `provider_error` events (a reply that never receives `[DONE]`).
 fn to_event(item: Result<StreamChunk, AgentSendError>) -> Result<Event, axum::Error> {
@@ -310,7 +310,7 @@ mod tests {
         let (state, _mock) = app_state();
         state.ai_player.begin(InputMode::Plain).await.unwrap();
         let game = state.game.lock().unwrap().clone();
-        let fut = state.ai_player.send(&game, plain_request());
+        let fut = state.ai_player.send_game_board(&game, plain_request());
         require_send(fut);
     }
 
@@ -454,7 +454,7 @@ mod tests {
         assert!(body.contains("\"kind\":\"user\""));
         assert!(body.contains("data: [DONE]"));
         // The reply ended, so the session's Send slot is free again.
-        assert!(!state.ai_player.interrupt());
+        assert!(!state.ai_player.agent().interrupt());
     }
 
     #[tokio::test]
@@ -495,7 +495,7 @@ mod tests {
         let resp = handle_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         // The Send never started, so there is nothing to interrupt.
-        assert!(!state.ai_player.interrupt());
+        assert!(!state.ai_player.agent().interrupt());
     }
 
     // --- POST /ai/interrupt ---
@@ -515,7 +515,7 @@ mod tests {
         let body = body_as_string(send_resp).await;
         assert!(body.contains("{\"kind\":\"interrupted\"}"));
         assert!(!body.contains("[DONE]"));
-        assert!(!state.ai_player.interrupt());
+        assert!(!state.ai_player.agent().interrupt());
     }
 
     #[tokio::test]
