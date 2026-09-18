@@ -39,10 +39,10 @@ fn transport_error(e: impl std::fmt::Display) -> ProviderError {
 /// string. Returns the extracted message, falling back to the raw text.
 async fn error_message(response: reqwest::Response) -> String {
     let text = response.text().await.unwrap_or_default();
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-        if let Some(message) = value.pointer("/error/message").and_then(|m| m.as_str()) {
-            return message.to_string();
-        }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text)
+        && let Some(message) = value.pointer("/error/message").and_then(|m| m.as_str())
+    {
+        return message.to_string();
     }
     text
 }
@@ -53,15 +53,15 @@ async fn error_message(response: reqwest::Response) -> String {
 fn parse_delta(data: &str) -> Option<StreamChunk> {
     let value: serde_json::Value = serde_json::from_str(data).ok()?;
     let delta = value.pointer("/choices/0/delta")?;
-    if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
-        if !content.is_empty() {
-            return Some(StreamChunk::ContentDelta(content.to_string()));
-        }
+    if let Some(content) = delta.get("content").and_then(|c| c.as_str())
+        && !content.is_empty()
+    {
+        return Some(StreamChunk::ContentDelta(content.to_string()));
     }
-    if let Some(reasoning) = delta.get("reasoning_content").and_then(|c| c.as_str()) {
-        if !reasoning.is_empty() {
-            return Some(StreamChunk::ReasoningDelta(reasoning.to_string()));
-        }
+    if let Some(reasoning) = delta.get("reasoning_content").and_then(|c| c.as_str())
+        && !reasoning.is_empty()
+    {
+        return Some(StreamChunk::ReasoningDelta(reasoning.to_string()));
     }
     None
 }
@@ -254,7 +254,7 @@ impl DeepSeek {
                 Ok(ids)
             })
             .await
-            .map(|models| models.clone())
+            .cloned()
     }
 
     /// Strictly validates that `model` exists in the provider's model list

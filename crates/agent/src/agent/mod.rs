@@ -28,19 +28,14 @@ pub use message::Message;
 /// Send — the model is fixed at construction, the depth is not — and it is
 /// also the `SendRequest.thinking_level` wire value. `Off` disables thinking
 /// mode; the rest set the effort. `low` is the default.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThinkingLevel {
     Off,
+    #[default]
     Low,
     High,
     Max,
-}
-
-impl Default for ThinkingLevel {
-    fn default() -> Self {
-        Self::Low
-    }
 }
 
 /// Maps the agent's reasoning depth onto the `ChatRequest` fields. `Off`

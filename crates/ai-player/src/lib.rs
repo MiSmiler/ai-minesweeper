@@ -575,11 +575,12 @@ mod tests {
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Playing);
         let view = BoardView::from_game(&game);
+        let cell = |row: usize, col: usize| &view.cells[row * view.cols + col];
         // The hidden Mine cells are visible as Hidden, not as Revealed Mine.
-        assert_eq!(view.cells[0 * 9 + 1].state, CellState::Hidden);
-        assert_eq!(view.cells[1 * 9 + 0].state, CellState::Hidden);
-        assert_eq!(view.cells[0 * 9 + 0].state, CellState::Revealed);
-        assert_eq!(view.cells[0 * 9 + 0].content, Some(CellContent::Number(2)));
+        assert_eq!(cell(0, 1).state, CellState::Hidden);
+        assert_eq!(cell(1, 0).state, CellState::Hidden);
+        assert_eq!(cell(0, 0).state, CellState::Revealed);
+        assert_eq!(cell(0, 0).content, Some(CellContent::Number(2)));
     }
 
     // --- InputMode::system_prompt ---
