@@ -11,6 +11,7 @@ node_modules/
 /.scratch/
 /.review_suggestion/
 /.pi/
+/.tickets/
 
 # Logs
 *.log
