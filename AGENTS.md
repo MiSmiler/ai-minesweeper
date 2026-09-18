@@ -22,6 +22,12 @@ Rounds of discussion converging is not the design being settled. Both halves —
 
 So when a design discussion has run and you see yourself edging toward the code, stop: the design is not settled until both halves are closed with the user, and no edit lands before that. Treat the pull toward editing as the signal that the design is *not yet* done — stay in the design rather than drifting toward an edit.
 
+### Tickets are temporary
+
+The tickets live in the **Tickets Repo** — `.tickets/`, a git repository of its own inside this working tree. A ticket change is a commit in that repo, never in this one. Nothing in this repo cites it — no comment, doc comment, test name, error message or ADR.
+
+**`.tickets/README.md` is the rulebook for the Tickets Repo — read it before touching anything there.**
+
 ### Before touching files: present first, then confirm
 
 Before you edit any file, present what you're about to do and **wait for the
