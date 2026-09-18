@@ -353,14 +353,17 @@ button:disabled:hover {
   width: max-content;
 }
 
-/* The session button, InputMode and ThinkingLevel share one row. */
+/* The session button, the Interrupt, the InputMode and the ThinkingLevel share
+   one row. */
 .ai-dashboard .dashboard-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.send-btn.running {
+/* The Interrupt is the destructive act — it cuts a Run off — so the mine red is
+   its own colour at all times, faded by `button:disabled` while nothing runs. */
+.interrupt-btn {
   background: var(--mine-bg);
   color: #fff;
 }

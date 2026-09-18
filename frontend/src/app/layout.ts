@@ -9,8 +9,9 @@
 // the `AgentMachine` to them. `main.ts` calls it once and keeps only the
 // `beforeunload` guard.
 //
-// The controls follow the AI Session (issue #133): Send is disabled while
-// there is no session, the InputMode select locks for as long as one is live
+// The controls follow the AI Session (issue #133): Send is enabled exactly
+// while a Session is live and no Run is in flight, the Interrupt exactly while
+// a Run is in flight, the InputMode select locks for as long as one is live
 // (the mode is the Session's), and the discard confirms fire exactly when the
 // session is `used`. The SessionBox itself is hidden until a Session exists.
 //
@@ -20,8 +21,8 @@
 // replaced in place.
 //
 // Send and the axis toggle are temporary manual-driver affordances (ADR-0019),
-// so they sit in `.aux-bar` below the Board; the dashboard keeps
-// only the session button and the two Send-strength settings, on one row.
+// so they sit in `.aux-bar` below the Board; the dashboard keeps the session
+// button, the Interrupt and the two Send-strength settings, on one row.
 
 import type { AgentApi } from "../agent/api";
 import type { ProviderError } from "../agent/run";
@@ -176,8 +177,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   dashRow.className = "dashboard-row";
   dashboard.appendChild(dashRow);
 
-  // Send / interrupt button (dual state, user story #34); mounted in the
-  // aux bar below the Board, not here.
+  // The Send (user story #34) rides in the aux bar below the Board, not here.
   const sendBtn = document.createElement("button");
   sendBtn.type = "button";
   sendBtn.className = "send-btn";
@@ -189,7 +189,14 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   sessionBtn.type = "button";
   sessionBtn.className = "session-btn";
 
-  dashRow.appendChild(sessionBtn);
+  // The Interrupt stops the live Run; the Agent's, not the binding's.
+  const interruptBtn = document.createElement("button");
+  interruptBtn.type = "button";
+  interruptBtn.className = "interrupt-btn";
+  interruptBtn.textContent = "中断";
+  interruptBtn.disabled = true; // nothing is running yet
+
+  dashRow.append(sessionBtn, interruptBtn);
 
   // Input-mode dropdown (3 modes, user story #20/#21).
   const modeSelect = document.createElement("select");
@@ -255,23 +262,21 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
 
   const sessionBox = createSessionBox(streamEl);
   const machine = createAgentMachine();
-  // Read on demand, never mirrored: the click handlers and the game-area
-  // callbacks get no state argument, so these name the two questions they ask.
+  // The questions the controls ask of the machine, each named once. They read
+  // on demand, never mirrored: the click handlers and the game-area callbacks
+  // get no state argument, so they cannot be handed a snapshot.
   const sessionStatus = (): SessionState => machine.getState().session.status;
+  const hasSession = (): boolean => sessionStatus() !== "none";
   const isRunning = (): boolean => machine.getState().run.phase === "running";
-
-  /** The Send button's two faces: interrupt while a run is in flight, send
-   * otherwise. */
-  function syncSendBtn(running: boolean): void {
-    sendBtn.textContent = running ? "中断" : "发送";
-    sendBtn.classList.toggle("running", running);
-  }
+  /** Whether a Send may start: over a live Session, with no Run in flight. The
+   * button's enabled state and `startSend`'s entry are this one rule, so a rule
+   * change cannot update one and miss the other. */
+  const canSend = (): boolean => hasSession() && !isRunning();
 
   /** The session button's two faces: the text follows the live Session, the
    * disabled state follows the pending `begin()`. Single writer of both. */
   function syncSessionBtn(): void {
-    sessionBtn.textContent =
-      sessionStatus() === "none" ? "启动AI会话" : "关闭AI会话";
+    sessionBtn.textContent = hasSession() ? "关闭AI会话" : "启动AI会话";
     sessionBtn.disabled = beginPending;
   }
 
@@ -279,15 +284,14 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
 
   const unsubscribe = machine.onState((state) => {
     sessionBox.render(state);
-    // A Session is live exactly while `session.status !== "none"`; New Game
-    // (`machine.end()`) drops back to `none` and hides the box again.
-    boxEl.style.display = state.session.status === "none" ? "none" : "";
+    // New Game (`machine.end()`) drops back to `none` and hides the box again.
+    boxEl.style.display = hasSession() ? "" : "none";
     syncSessionBtn();
-    syncSendBtn(state.run.phase === "running");
+    sendBtn.disabled = !canSend();
+    interruptBtn.disabled = !isRunning();
     // The InputMode belongs to the Session: the player picks it at 启动AI会话 and
     // can change it only by closing the Session.
-    sendBtn.disabled = state.session.status === "none";
-    modeSelect.disabled = state.session.status !== "none";
+    modeSelect.disabled = hasSession();
     // Only a provider failure alerts; a refusal (NoSession / Busy / the
     // InputMode lock) is reported by the disabled controls, not an alert.
     if (
@@ -299,9 +303,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   });
 
   async function startSend(): Promise<void> {
-    if (isRunning() || sessionStatus() === "none") {
-      return;
-    }
+    if (!canSend()) return;
     // The Session's InputMode is `currentMode`: the select is locked for as
     // long as a Session is live, so it still holds the value `begin` was given.
     let imageDataUrl: string | undefined;
@@ -331,7 +333,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
    * than replaced. The pending flag keeps a second click from beginning a
    * second Session while the first `begin()` is still in flight. */
   async function startSession(): Promise<void> {
-    if (beginPending || sessionStatus() !== "none") return;
+    if (beginPending || hasSession()) return;
     beginPending = true;
     syncSessionBtn();
     try {
@@ -361,18 +363,13 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
     machine.end();
   }
 
-  // The Interrupt addresses the Agent, not the binding, so it skips the
-  // machine entirely.
-  sendBtn.addEventListener("click", () => {
-    if (isRunning()) {
-      void deps.agentApi.interrupt();
-    } else {
-      void startSend();
-    }
-  });
+  // The Interrupt addresses the Agent, not the binding, so it skips the machine
+  // entirely.
+  interruptBtn.addEventListener("click", () => void deps.agentApi.interrupt());
+  sendBtn.addEventListener("click", () => void startSend());
   sessionBtn.addEventListener("click", () => {
-    if (sessionStatus() === "none") void startSession();
-    else void closeSession();
+    if (hasSession()) void closeSession();
+    else void startSession();
   });
 
   const dispose = (): void => {

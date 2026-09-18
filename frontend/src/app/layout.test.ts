@@ -110,12 +110,13 @@ describe("mountLayout layout", () => {
     expect(column.children[1]?.classList.contains("ai-session-box")).toBe(true);
   });
 
-  it("dashboard has the session button, input mode, level — no strategy", () => {
+  it("dashboard has the lifecycle, the Interrupt, the input mode and level — no strategy", () => {
     mockFetch();
     const root = mount();
     mountLayout(root, makeDeps());
     const dash = $(root, ".ai-dashboard");
     expect(dash.querySelector(".session-btn")).toBeTruthy();
+    expect(dash.querySelector(".interrupt-btn")).toBeTruthy();
     expect(dash.querySelector(".input-mode-select")).toBeTruthy();
     expect(dash.querySelector(".level-select")).toBeTruthy();
     // Send and the axis toggle moved to the aux bar (below the Board).
@@ -133,6 +134,8 @@ describe("mountLayout layout", () => {
     const bar = $(root, ".game-column .aux-bar");
     expect(bar.querySelector(".axis-checkbox")).toBeTruthy();
     expect(bar.querySelector(".send-btn")).toBeTruthy();
+    // The Interrupt belongs to the dashboard, not to the manual-driver bar.
+    expect(bar.querySelector(".interrupt-btn")).toBeNull();
     // Axis toggle left, Send right.
     expect(bar.children[0]?.classList.contains("axis-toggle")).toBe(true);
     expect(bar.children[1]?.classList.contains("send-btn")).toBe(true);
@@ -191,13 +194,15 @@ describe("mountLayout layout", () => {
 });
 
 describe("mountLayout session controls", () => {
-  it("disables Send with no session and leaves the InputMode select enabled", () => {
+  it("disables both buttons with no session, InputMode still open", () => {
     mockFetch();
     const root = mount();
     mountLayout(root, makeDeps());
     const send = $(root, ".send-btn") as HTMLButtonElement;
+    const interrupt = $(root, ".interrupt-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
     expect(send.disabled).toBe(true);
+    expect(interrupt.disabled).toBe(true);
     expect(mode.disabled).toBe(false);
   });
 
@@ -216,36 +221,43 @@ describe("mountLayout session controls", () => {
     expect($(root, ".ai-session-box").style.display).toBe("");
   });
 
-  it("a new session enables Send and locks the InputMode select", async () => {
+  it("a new session enables Send, holds the Interrupt, and locks the InputMode", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
     mountLayout(root, deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
+    const interrupt = $(root, ".interrupt-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
     expect(send.disabled).toBe(false);
+    // Nothing is running yet: only a Run in flight can be interrupted.
+    expect(interrupt.disabled).toBe(true);
     // The Session's InputMode is fixed from here on.
     expect(mode.disabled).toBe(true);
     expect(deps.aiPlayerApi.begin).toHaveBeenCalledWith("plain");
   });
 
-  it("the live Session locks the InputMode", async () => {
+  it("a Run in flight trades the two buttons' places", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
     mountLayout(root, deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
+    const interrupt = $(root, ".interrupt-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
     expect(mode.disabled).toBe(true);
 
-    send.click(); // running: still locked
-    expect(mode.disabled).toBe(true);
-    expect(send.textContent).toBe("中断");
+    send.click();
+    expect(mode.disabled).toBe(true); // running: still locked
+    expect(send.disabled).toBe(true);
+    expect(interrupt.disabled).toBe(false);
+
     onEvent(deps)({ kind: "sse_done" });
     expect(mode.disabled).toBe(true); // and after the reply
-    expect(send.textContent).toBe("发送");
+    expect(send.disabled).toBe(false);
+    expect(interrupt.disabled).toBe(true);
   });
 
   it("an interrupted Send keeps the InputMode locked", async () => {
@@ -299,19 +311,21 @@ describe("mountLayout send flow", () => {
     onEvent(deps)({ kind: "sse_done" });
   });
 
-  it("interrupt calls the Agent and the event reverts the button", async () => {
+  it("interrupt calls the Agent and the event hands the controls back to Send", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
     mountLayout(root, deps);
     await startSession(root);
     const send = $(root, ".send-btn") as HTMLButtonElement;
-    send.click();
-    send.click(); // send → interrupt
+    const interrupt = $(root, ".interrupt-btn") as HTMLButtonElement;
+    send.click(); // running: the Interrupt is the one that answers now
+    interrupt.click();
     expect(deps.agentApi.interrupt).toHaveBeenCalledTimes(1);
 
     onEvent(deps)({ kind: "interrupted" });
-    expect(send.textContent).toBe("发送");
+    expect(send.disabled).toBe(false);
+    expect(interrupt.disabled).toBe(true);
   });
 
   it("captures a screenshot for the image mode", async () => {
@@ -364,7 +378,7 @@ describe("mountLayout send flow", () => {
     expect(req.thinkingLevel).toBe("max");
   });
 
-  it("a provider failure alerts and reverts the button", async () => {
+  it("a provider failure alerts and re-enables Send", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
@@ -378,7 +392,7 @@ describe("mountLayout send flow", () => {
       error: { kind: "config", code: null, message: "no provider" },
     });
     expect(alertSpy).toHaveBeenCalled();
-    expect(send.textContent).toBe("发送");
+    expect(send.disabled).toBe(false);
   });
 
   it("a refused failure does not alert", async () => {
@@ -392,7 +406,7 @@ describe("mountLayout send flow", () => {
     send.click();
     onFailure(deps)({ kind: "refused", status: 409, message: "busy" });
     expect(alertSpy).not.toHaveBeenCalled();
-    expect(send.textContent).toBe("发送");
+    expect(send.disabled).toBe(false);
   });
 
   it("streams the user message into the box", async () => {
