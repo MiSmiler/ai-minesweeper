@@ -130,7 +130,7 @@ pub(crate) async fn post_action(
     if matches!(outcome, ActionOutcome::NewGame) {
         // A new Game replaces the board the AI Session was reasoning about, so
         // the Session ends with it (ADR-0021).
-        state.ai_player.end();
+        state.ai_player.end_session();
         log_new_game(&game, "player");
     }
     debug!(
@@ -184,7 +184,11 @@ mod tests {
     #[tokio::test]
     async fn a_new_game_action_ends_the_ai_session() {
         let state = app_state();
-        state.ai_player.begin(InputMode::Plain).await.unwrap();
+        state
+            .ai_player
+            .begin_session(InputMode::Plain)
+            .await
+            .unwrap();
         let game = state.game.lock().unwrap().clone();
         assert!(
             state

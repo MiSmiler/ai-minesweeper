@@ -27,7 +27,7 @@ function mockFetch(snapshot = makeGameSnapshot()): void {
 function makeDeps(): AppDeps {
   return {
     aiPlayerApi: {
-      begin: vi.fn(async () => {}),
+      beginSession: vi.fn(async () => {}),
       auxSend: vi.fn(),
     },
     agentApi: {
@@ -235,7 +235,7 @@ describe("mountLayout session controls", () => {
     expect(interrupt.disabled).toBe(true);
     // The Session's InputMode is fixed from here on.
     expect(mode.disabled).toBe(true);
-    expect(deps.aiPlayerApi.begin).toHaveBeenCalledWith("plain");
+    expect(deps.aiPlayerApi.beginSession).toHaveBeenCalledWith("plain");
   });
 
   it("a Run in flight trades the two buttons' places", async () => {
@@ -343,7 +343,7 @@ describe("mountLayout send flow", () => {
     send.click();
     await flush();
     expect(deps.captureBoardImage).toHaveBeenCalled();
-    expect(deps.aiPlayerApi.begin).toHaveBeenCalledWith("image");
+    expect(deps.aiPlayerApi.beginSession).toHaveBeenCalledWith("image");
     const req = vi.mocked(deps.aiPlayerApi.auxSend).mock.calls[0][0] as {
       imageDataUrl?: string;
     };
@@ -457,7 +457,7 @@ describe("mountLayout session lifecycle", () => {
     const root = mount();
     const deps = makeDeps();
     let settleBegin: () => void = () => {};
-    vi.mocked(deps.aiPlayerApi.begin).mockImplementation(
+    vi.mocked(deps.aiPlayerApi.beginSession).mockImplementation(
       () => new Promise<void>((resolve) => (settleBegin = resolve)),
     );
     mountLayout(root, deps);
@@ -466,7 +466,7 @@ describe("mountLayout session lifecycle", () => {
     session.click();
     expect(session.disabled).toBe(true);
     session.click(); // a second click while the first begin() is pending
-    expect(deps.aiPlayerApi.begin).toHaveBeenCalledTimes(1);
+    expect(deps.aiPlayerApi.beginSession).toHaveBeenCalledTimes(1);
     expect(session.textContent).toBe("启动AI会话"); // still `none`
 
     settleBegin();
@@ -479,7 +479,7 @@ describe("mountLayout session lifecycle", () => {
     const root = mount();
     const deps = makeDeps();
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-    vi.mocked(deps.aiPlayerApi.begin).mockRejectedValueOnce({
+    vi.mocked(deps.aiPlayerApi.beginSession).mockRejectedValueOnce({
       kind: "config",
       code: null,
       message: "no provider",
@@ -509,7 +509,7 @@ describe("mountLayout session lifecycle", () => {
 
     // A closed session is gone for good: starting again is a fresh begin().
     await startSession(root);
-    expect(deps.aiPlayerApi.begin).toHaveBeenCalledTimes(2);
+    expect(deps.aiPlayerApi.beginSession).toHaveBeenCalledTimes(2);
   });
 
   it("declining to close keeps the current session", async () => {
@@ -699,7 +699,7 @@ describe("mountLayout SessionBox visibility", () => {
     const root = mount();
     const deps = makeDeps();
     vi.spyOn(window, "alert").mockImplementation(() => {});
-    vi.mocked(deps.aiPlayerApi.begin).mockRejectedValueOnce({
+    vi.mocked(deps.aiPlayerApi.beginSession).mockRejectedValueOnce({
       kind: "config",
       code: null,
       message: "no provider",

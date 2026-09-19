@@ -3,7 +3,7 @@
 // under, and the aux send that appends the current board to it. The other
 // routes address the Agent, not the binding (`agent/api.ts`).
 //
-// `begin` POSTs `/ai/begin`; `auxSend` POSTs `/ai/aux-send` with the per-call
+// `beginSession` POSTs `/ai/begin-session`; `auxSend` POSTs `/ai/aux-send` with the per-call
 // settings and hands the response body to the Agent's `consumeSse`
 // (`agent/run.ts`), because the stream an aux send produces is that Agent's
 // Run. The binding contributes the URL, the request body and the board
@@ -37,12 +37,12 @@ export interface AuxSendRequest {
 
 /** The ai-player slice entry point, injected via `AppDeps`. The real
  * implementation (`createAiPlayerApi`) talks to the backend's binding routes:
- * `begin` POSTs `/ai/begin`, `auxSend` POSTs `/ai/aux-send` (issue #131, #133). */
+ * `beginSession` POSTs `/ai/begin-session`, `auxSend` POSTs `/ai/aux-send` (issue #131, #133). */
 export interface AiPlayerApi {
   /** Loads the AI runtime, then begins an AI Session under `mode` — `mode`'s
    * system prompt is the Session's, and `mode` stays this Session's for its
    * whole life. A load failure rejects with a `ProviderError`. */
-  begin(mode: InputMode): Promise<void>;
+  beginSession(mode: InputMode): Promise<void>;
   /** Appends the current board. A refusal or a provider failure before the
    * stream starts arrives on `onFailure`; a mid-stream failure arrives as a
    * `RunEvent`. */
@@ -56,21 +56,21 @@ export interface AiPlayerApi {
 /** Builds the real `AiPlayerApi` that talks to the backend's binding routes. */
 export function createAiPlayerApi(): AiPlayerApi {
   return {
-    async begin(mode) {
+    async beginSession(mode) {
       let res: Response;
       try {
-        res = await fetch("/ai/begin", {
+        res = await fetch("/ai/begin-session", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ input_mode: mode }),
         });
       } catch (err) {
-        log.error("POST /ai/begin failed", err);
+        log.error("POST /ai/begin-session failed", err);
         throw asProviderError(err);
       }
       if (!res.ok) {
         const providerError = await readProviderError(res);
-        log.error(`POST /ai/begin failed: ${res.status}`);
+        log.error(`POST /ai/begin-session failed: ${res.status}`);
         throw providerError;
       }
     },

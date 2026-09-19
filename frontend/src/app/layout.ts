@@ -339,7 +339,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
     syncSessionBtn();
     try {
       await machine.begin({
-        begin: () => deps.aiPlayerApi.begin(currentMode),
+        begin: () => deps.aiPlayerApi.beginSession(currentMode),
         read: () => deps.agentApi.messages(),
       });
     } finally {

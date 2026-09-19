@@ -1,7 +1,7 @@
 //! SSE transport for the AiPlayer's `/ai/...` routes (issue #117, ADR-0013).
 //!
 //! A thin transport layer over the `ai_player::AiPlayer` seam: it begins an AI
-//! Session under an InputMode (`POST /ai/begin`), appends one board to it and
+//! Session under an InputMode (`POST /ai/begin-session`), appends one board to it and
 //! forwards the reply as an SSE stream terminated by `[DONE]`
 //! (`POST /ai/aux-send`), and cancels the in-flight Run
 //! (`POST /ai/interrupt`). The live Session's message list is read back through
@@ -13,6 +13,12 @@
 //! short lock) to hand to `AiPlayer::aux_send`. The Session (its messages
 //! and its cancel token) is owned by the `Agent` behind the `AiPlayer`; the
 //! transport addresses the AiPlayer and carries no id.
+//!
+//! Every path mirrors the method its handler calls, kebab-cased:
+//! `AiPlayer::begin_session` → `/ai/begin-session`, `AiPlayer::aux_send` →
+//! `/ai/aux-send`, `Agent::interrupt` → `/ai/interrupt`, `Agent::messages` →
+//! `/ai/messages`. A read is a `GET` of the thing read; an act keeps the act's
+//! own name.
 
 use std::sync::Arc;
 
@@ -76,31 +82,31 @@ struct ErrorDto {
 /// `server::routes` merges this into the game API router.
 pub(crate) fn ai_routes(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/ai/begin", post(handle_begin))
+        .route("/ai/begin-session", post(handle_begin_session))
         .route("/ai/aux-send", post(handle_aux_send))
         .route("/ai/interrupt", post(handle_interrupt))
         .route("/ai/messages", get(handle_messages))
         .with_state(state)
 }
 
-/// The `POST /ai/begin` body: the InputMode the Session is created under. Its
+/// The `POST /ai/begin-session` body: the InputMode the Session is created under. Its
 /// system prompt is `mode`'s, and it stays this Session's for its whole life.
 #[derive(Debug, Deserialize)]
-struct BeginRequest {
+struct BeginSessionRequest {
     input_mode: InputMode,
 }
 
-/// `POST /ai/begin`: loads the AI runtime, then replaces the live AI Session
+/// `POST /ai/begin-session`: loads the AI runtime, then replaces the live AI Session
 /// with one created under the body's `input_mode` (the old session's Send is
 /// cancelled). The UI holds the discard confirm; the backend replaces
 /// unconditionally. A Load failure (no provider / bad key / unreachable model)
 /// maps to the same `ProviderError` body as a Send failure, so the frontend
 /// alerts it before any Send.
-async fn handle_begin(
+async fn handle_begin_session(
     State(state): State<Arc<AppState>>,
-    Json(req): Json<BeginRequest>,
+    Json(req): Json<BeginSessionRequest>,
 ) -> Response {
-    match state.ai_player.begin(req.input_mode).await {
+    match state.ai_player.begin_session(req.input_mode).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(pe) => provider_error_response(pe),
     }
@@ -284,9 +290,9 @@ mod tests {
         }
     }
 
-    /// The `POST /ai/begin` body for `mode`.
-    fn begin_request(mode: InputMode) -> Json<BeginRequest> {
-        Json(BeginRequest { input_mode: mode })
+    /// The `POST /ai/begin-session` body for `mode`.
+    fn begin_session_request(mode: InputMode) -> Json<BeginSessionRequest> {
+        Json(BeginSessionRequest { input_mode: mode })
     }
 
     async fn body_as_string(resp: Response) -> String {
@@ -297,7 +303,11 @@ mod tests {
     #[tokio::test]
     async fn aux_send_future_is_send() {
         let (state, _mock) = app_state();
-        state.ai_player.begin(InputMode::Plain).await.unwrap();
+        state
+            .ai_player
+            .begin_session(InputMode::Plain)
+            .await
+            .unwrap();
         let game = state.game.lock().unwrap().clone();
         let fut = state.ai_player.aux_send(&game, plain_request());
         require_send(fut);
@@ -354,12 +364,16 @@ mod tests {
         assert_eq!(value, serde_json::json!({"kind": "user", "text": "hi"}));
     }
 
-    // --- POST /ai/begin ---
+    // --- POST /ai/begin-session ---
 
     #[tokio::test]
-    async fn begin_answers_204_with_no_session_id() {
+    async fn begin_session_answers_204_with_no_session_id() {
         let (state, _mock) = app_state();
-        let resp = handle_begin(State(state.clone()), begin_request(InputMode::Plain)).await;
+        let resp = handle_begin_session(
+            State(state.clone()),
+            begin_session_request(InputMode::Plain),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
         let body = body_as_string(resp).await;
         assert!(body.is_empty());
@@ -367,7 +381,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn begin_without_a_provider_is_503_config() {
+    async fn begin_session_without_a_provider_is_503_config() {
         let agent = Agent::new(ProviderSet::new());
         let ai_player = AiPlayer::new(Arc::new(agent));
         let state = Arc::new(AppState {
@@ -378,7 +392,11 @@ mod tests {
             )))),
             ai_player,
         });
-        let resp = handle_begin(State(state.clone()), begin_request(InputMode::Plain)).await;
+        let resp = handle_begin_session(
+            State(state.clone()),
+            begin_session_request(InputMode::Plain),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body = body_as_string(resp).await;
         assert!(body.contains("\"kind\":\"config\""));
@@ -429,7 +447,11 @@ mod tests {
     #[tokio::test]
     async fn send_streams_reasoning_content_and_done() {
         let (state, _mock) = app_state();
-        state.ai_player.begin(InputMode::Plain).await.unwrap();
+        state
+            .ai_player
+            .begin_session(InputMode::Plain)
+            .await
+            .unwrap();
         let resp = handle_aux_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_as_string(resp).await;
@@ -453,7 +475,11 @@ mod tests {
             code: Some(429),
             message: "rate limited".into(),
         })));
-        state.ai_player.begin(InputMode::Plain).await.unwrap();
+        state
+            .ai_player
+            .begin_session(InputMode::Plain)
+            .await
+            .unwrap();
         let resp = handle_aux_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_as_string(resp).await;
@@ -468,7 +494,11 @@ mod tests {
     #[tokio::test]
     async fn a_second_send_while_in_flight_is_409() {
         let (state, _mock) = app_state();
-        state.ai_player.begin(InputMode::Plain).await.unwrap();
+        state
+            .ai_player
+            .begin_session(InputMode::Plain)
+            .await
+            .unwrap();
         let first = handle_aux_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(first.status(), StatusCode::OK);
         // `first`'s body is still unread, so its Send is still in flight.
@@ -480,7 +510,11 @@ mod tests {
     #[tokio::test]
     async fn image_mode_without_a_data_url_is_400() {
         let (state, _mock) = app_state();
-        state.ai_player.begin(InputMode::Image).await.unwrap();
+        state
+            .ai_player
+            .begin_session(InputMode::Image)
+            .await
+            .unwrap();
         let resp = handle_aux_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         // The Send never started, so there is nothing to interrupt.
@@ -492,7 +526,11 @@ mod tests {
     #[tokio::test]
     async fn interrupt_cancels_and_drives_the_sse_event() {
         let (state, _mock) = app_state();
-        state.ai_player.begin(InputMode::Plain).await.unwrap();
+        state
+            .ai_player
+            .begin_session(InputMode::Plain)
+            .await
+            .unwrap();
         let send_resp = handle_aux_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(send_resp.status(), StatusCode::OK);
 
@@ -528,7 +566,11 @@ mod tests {
     #[tokio::test]
     async fn messages_carries_the_session_list_in_an_envelope() {
         let (state, _mock) = app_state();
-        state.ai_player.begin(InputMode::Plain).await.unwrap();
+        state
+            .ai_player
+            .begin_session(InputMode::Plain)
+            .await
+            .unwrap();
 
         let resp = handle_messages(State(state.clone())).await;
 

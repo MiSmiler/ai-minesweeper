@@ -42,7 +42,7 @@ use game::{CellContent, CellState, CellView, Difficulty, Game, GameState, Positi
 ///
 /// Wire serialization is kebab-case (`#[serde(rename_all = "kebab-case")]`),
 /// aligned with the frontend `ai/api.ts` literals: `Plain` → `plain`,
-/// `Emoji` → `emoji`, `Image` → `image`. It is the `POST /ai/begin`
+/// `Emoji` → `emoji`, `Image` → `image`. It is the `POST /ai/begin-session`
 /// request-body field (sent by the frontend), so it carries `Deserialize`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -182,7 +182,8 @@ const PROVIDER: &str = "deepseek";
 #[derive(Clone)]
 pub struct AiPlayer {
     agent: Arc<Agent>,
-    /// The live Session's InputMode, chosen by `begin` and cleared by `end`;
+    /// The live Session's InputMode, chosen by `begin_session` and cleared by
+    /// `end_session`;
     /// `None` exactly when no Session is live.
     mode: Arc<StdMutex<Option<InputMode>>>,
 }
@@ -214,7 +215,7 @@ impl AiPlayer {
     /// Begins a fresh AI Session under `mode`: `mode`'s system prompt opens the
     /// Session's history, and `mode` stays this Session's for its whole life. A
     /// Load failure leaves the live Session and the mode untouched.
-    pub async fn begin(&self, mode: InputMode) -> Result<(), ProviderError> {
+    pub async fn begin_session(&self, mode: InputMode) -> Result<(), ProviderError> {
         self.agent.create_session(mode.system_prompt()).await?;
         *self.mode.lock().expect("mode lock poisoned") = Some(mode);
         Ok(())
@@ -222,7 +223,7 @@ impl AiPlayer {
 
     /// Ends the live AI Session: cancels its in-flight Run, forgets it, and
     /// frees the InputMode for the next one. A no-op when there is no Session.
-    pub fn end(&self) {
+    pub fn end_session(&self) {
         self.agent.end_session();
         *self.mode.lock().expect("mode lock poisoned") = None;
     }
@@ -239,7 +240,8 @@ impl AiPlayer {
     /// Appends the current board to the live Session and starts the Send.
     ///
     /// The user message renders the board in the live Session's [`InputMode`],
-    /// fixed when `begin` created it. The tuple element is the verbatim player
+    /// fixed when `begin_session` created it. The tuple element is the verbatim
+    /// player
     /// message (the `role: user` turn) echoed back so the frontend can render
     /// the player's half of the exchange (issue #124). The returned stream is
     /// the Run: the binding never reads it, it only relays it. A refusal
@@ -690,7 +692,7 @@ mod tests {
     }
 
     /// A Send under the default thinking level. The InputMode is not part of
-    /// the request: `begin` chose it when it created the Session.
+    /// the request: `begin_session` chose it when it created the Session.
     fn default_request() -> AuxSendRequest {
         AuxSendRequest {
             thinking_level: ThinkingLevel::Low,
@@ -710,7 +712,7 @@ mod tests {
     #[tokio::test]
     async fn send_streams_reasoning_content_and_done() {
         let (ai_player, mock) = ai_player_with_mock();
-        ai_player.begin(InputMode::Plain).await.unwrap();
+        ai_player.begin_session(InputMode::Plain).await.unwrap();
         let (user_text, mut stream) = ai_player
             .aux_send(&fresh_game(), default_request())
             .await
@@ -747,7 +749,7 @@ mod tests {
     #[tokio::test]
     async fn send_threads_off_into_the_request() {
         let (ai_player, mock) = ai_player_with_mock();
-        ai_player.begin(InputMode::Plain).await.unwrap();
+        ai_player.begin_session(InputMode::Plain).await.unwrap();
         let req = AuxSendRequest {
             thinking_level: ThinkingLevel::Off,
             image_data_url: None,
@@ -767,7 +769,7 @@ mod tests {
     #[tokio::test]
     async fn the_session_mode_decides_the_system_prompt() {
         let (ai_player, mock) = ai_player_with_mock();
-        ai_player.begin(InputMode::Emoji).await.unwrap();
+        ai_player.begin_session(InputMode::Emoji).await.unwrap();
         let (_user_text, mut stream) = ai_player
             .aux_send(&fresh_game(), default_request())
             .await
@@ -786,7 +788,7 @@ mod tests {
     #[tokio::test]
     async fn a_second_send_carries_the_first_exchange() {
         let (ai_player, mock) = ai_player_with_mock();
-        ai_player.begin(InputMode::Plain).await.unwrap();
+        ai_player.begin_session(InputMode::Plain).await.unwrap();
         let game = fresh_game();
         for _ in 0..2 {
             let (_user_text, mut stream) =
@@ -812,7 +814,7 @@ mod tests {
     #[tokio::test]
     async fn an_interrupted_send_leaves_its_user_message_in_the_history() {
         let (ai_player, mock) = ai_player_with_mock();
-        ai_player.begin(InputMode::Plain).await.unwrap();
+        ai_player.begin_session(InputMode::Plain).await.unwrap();
         let game = fresh_game();
         {
             let (_user_text, mut stream) =
@@ -848,7 +850,7 @@ mod tests {
     #[tokio::test]
     async fn send_while_a_send_is_in_flight_is_busy() {
         let (ai_player, _mock) = ai_player_with_mock();
-        ai_player.begin(InputMode::Plain).await.unwrap();
+        ai_player.begin_session(InputMode::Plain).await.unwrap();
         let game = fresh_game();
         let (_user_text, stream) = ai_player.aux_send(&game, default_request()).await.unwrap();
         let Err(err) = ai_player.aux_send(&game, default_request()).await else {
@@ -861,27 +863,27 @@ mod tests {
     #[tokio::test]
     async fn interrupt_without_an_in_flight_send_is_false() {
         let (ai_player, _mock) = ai_player_with_mock();
-        ai_player.begin(InputMode::Plain).await.unwrap();
+        ai_player.begin_session(InputMode::Plain).await.unwrap();
         assert!(!ai_player.agent().interrupt());
     }
 
     #[tokio::test]
-    async fn begin_cancels_the_previous_send() {
+    async fn begin_session_cancels_the_previous_send() {
         let (ai_player, _mock) = ai_player_with_mock();
-        ai_player.begin(InputMode::Plain).await.unwrap();
+        ai_player.begin_session(InputMode::Plain).await.unwrap();
         let game = fresh_game();
         let (_user_text, mut stream) = ai_player.aux_send(&game, default_request()).await.unwrap();
-        ai_player.begin(InputMode::Plain).await.unwrap();
+        ai_player.begin_session(InputMode::Plain).await.unwrap();
         // The displaced Send reports the caller's interrupt on its next poll...
         assert_eq!(stream.next().await, Some(Ok(RunEvent::Interrupted)));
         assert_eq!(stream.next().await, None);
     }
 
     #[tokio::test]
-    async fn end_forgets_the_live_session() {
+    async fn end_session_forgets_the_live_session() {
         let (ai_player, _mock) = ai_player_with_mock();
-        ai_player.begin(InputMode::Plain).await.unwrap();
-        ai_player.end();
+        ai_player.begin_session(InputMode::Plain).await.unwrap();
+        ai_player.end_session();
         let Err(err) = ai_player.aux_send(&fresh_game(), default_request()).await else {
             panic!("expected an error");
         };
@@ -889,7 +891,8 @@ mod tests {
     }
 
     /// The two records of "a Session is live" — the binding's `mode` and the
-    /// Agent's live Session — must agree; `begin` and `end` are their only
+    /// Agent's live Session — must agree; `begin_session` and `end_session` are
+    /// their only
     /// writers, and callers may address the Agent directly.
     #[tokio::test]
     async fn the_mode_and_the_agents_live_session_agree() {
@@ -898,16 +901,16 @@ mod tests {
         let has_session = || ai_player.agent().messages().is_some();
 
         assert!(!has_mode() && !has_session());
-        ai_player.begin(InputMode::Plain).await.unwrap();
+        ai_player.begin_session(InputMode::Plain).await.unwrap();
         assert!(has_mode() && has_session());
-        ai_player.end();
+        ai_player.end_session();
         assert!(!has_mode() && !has_session());
     }
 
     #[tokio::test]
     async fn image_mode_sends_the_screenshot_turn() {
         let (ai_player, mock) = ai_player_with_mock();
-        ai_player.begin(InputMode::Image).await.unwrap();
+        ai_player.begin_session(InputMode::Image).await.unwrap();
         let req = AuxSendRequest {
             thinking_level: ThinkingLevel::Low,
             // Deliberately not valid base64: persist fails, and must not block.
@@ -935,7 +938,7 @@ mod tests {
     #[tokio::test]
     async fn image_mode_without_a_screenshot_is_refused() {
         let (ai_player, _mock) = ai_player_with_mock();
-        ai_player.begin(InputMode::Image).await.unwrap();
+        ai_player.begin_session(InputMode::Image).await.unwrap();
         let Err(err) = ai_player.aux_send(&fresh_game(), default_request()).await else {
             panic!("expected an error");
         };
@@ -943,10 +946,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn begin_without_a_provider_is_a_config_error() {
+    async fn begin_session_without_a_provider_is_a_config_error() {
         let agent = Agent::new(ProviderSet::new());
         let ai_player = AiPlayer::new(Arc::new(agent));
-        let err = ai_player.begin(InputMode::Plain).await.unwrap_err();
+        let err = ai_player.begin_session(InputMode::Plain).await.unwrap_err();
         assert_eq!(err.kind, ProviderErrorKind::Config);
     }
 
@@ -998,8 +1001,8 @@ mod tests {
         agent.set_model("m".to_string(), Some("flaky"));
         let ai_player = AiPlayer::new(Arc::new(agent));
 
-        ai_player.begin(InputMode::Plain).await.unwrap();
-        let err = ai_player.begin(InputMode::Plain).await.unwrap_err();
+        ai_player.begin_session(InputMode::Plain).await.unwrap();
+        let err = ai_player.begin_session(InputMode::Plain).await.unwrap_err();
         assert_eq!(err.kind, ProviderErrorKind::Config);
         // The failed load did not replace the live session: a Send is still
         // accepted (not `NoSession`).
@@ -1028,7 +1031,7 @@ mod tests {
             code: Some(429),
             message: "rate limited".into(),
         });
-        ai_player.begin(InputMode::Plain).await.unwrap();
+        ai_player.begin_session(InputMode::Plain).await.unwrap();
         let (_user_text, mut stream) = ai_player
             .aux_send(&fresh_game(), default_request())
             .await
@@ -1058,7 +1061,7 @@ mod tests {
         );
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Playing);
-        ai_player.begin(InputMode::Plain).await.unwrap();
+        ai_player.begin_session(InputMode::Plain).await.unwrap();
         let (_user_text, mut stream) = ai_player.aux_send(&game, default_request()).await.unwrap();
         while stream.next().await.is_some() {}
         let req = mock.last_request().expect("mock recorded a request");

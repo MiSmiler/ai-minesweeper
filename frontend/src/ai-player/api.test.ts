@@ -1,5 +1,5 @@
-// Tests for the binding's frontend half (issue #119, #133): `begin` POSTs
-// `/ai/begin`, and `auxSend` POSTs `/ai/aux-send` and hands the response body
+// Tests for the binding's frontend half (issue #119, #133): `beginSession` POSTs
+// `/ai/begin-session`, and `auxSend` POSTs `/ai/aux-send` and hands the response body
 // to the Agent's Run reader (`agent/run.test.ts`), with a non-2xx handed to
 // `onFailure`. The routes that address the Agent are `agent/api.test.ts`.
 
@@ -232,16 +232,16 @@ describe("createAiPlayerApi.auxSend (request)", () => {
   });
 });
 
-describe("createAiPlayerApi.begin", () => {
-  it("POSTs /ai/begin and resolves with no session id", async () => {
+describe("createAiPlayerApi.beginSession", () => {
+  it("POSTs /ai/begin-session and resolves with no session id", async () => {
     const api = createAiPlayerApi();
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({ ok: true, status: 204 } as Response),
     );
 
-    await expect(api.begin("plain")).resolves.toBeUndefined();
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith("/ai/begin", {
+    await expect(api.beginSession("plain")).resolves.toBeUndefined();
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith("/ai/begin-session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ input_mode: "plain" }),
@@ -260,7 +260,7 @@ describe("createAiPlayerApi.begin", () => {
         }),
       ),
     );
-    await expect(api.begin("plain")).rejects.toEqual({
+    await expect(api.beginSession("plain")).rejects.toEqual({
       kind: "config",
       code: null,
       message: "no provider",
@@ -270,7 +270,7 @@ describe("createAiPlayerApi.begin", () => {
   it("shapes a network failure as an upstream ProviderError", async () => {
     const api = createAiPlayerApi();
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    await expect(api.begin("plain")).rejects.toEqual({
+    await expect(api.beginSession("plain")).rejects.toEqual({
       kind: "upstream",
       code: null,
       message: "offline",
