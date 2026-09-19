@@ -118,7 +118,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   let currentLevel: ThinkingLevel = "low";
   // True while `machine.begin()` is in flight. The session stays `none` until
   // it lands, so the session button would otherwise read "启动AI会话" and take
-  // a second click. Local to the layout: `startSession` is the only caller.
+  // a second click. Local to the layout: `beginSession` is the only caller.
   let beginPending = false;
   // The axis overlay needs `boardEl`, so it is created after the game body;
   // `onRender` may fire before the assignment below completes, but it only
@@ -333,7 +333,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   /** The start face: only from `none`, since a live Session is closed rather
    * than replaced. The pending flag keeps a second click from beginning a
    * second Session while the first `begin()` is still in flight. */
-  async function startSession(): Promise<void> {
+  async function beginSession(): Promise<void> {
     if (beginPending || hasSession()) return;
     beginPending = true;
     syncSessionBtn();
@@ -349,18 +349,16 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   }
 
   /** The close face: ending a used Session discards its history, so ask first
-   * (the same predicate as the InputMode lock, issue #133); an in-flight Run
-   * is interrupted first. */
-  async function closeSession(): Promise<void> {
+   * (the same predicate as the InputMode lock, issue #133). The backend's
+   * end-session cancels the in-flight Run, so no separate Interrupt goes out. */
+  async function endSession(): Promise<void> {
     if (
       sessionStatus() === "used" &&
       !window.confirm("关闭AI会话将结束当前会话，是否继续？")
     ) {
       return;
     }
-    if (isRunning()) {
-      await deps.agentApi.interrupt();
-    }
+    await deps.aiPlayerApi.endSession();
     machine.end();
   }
 
@@ -369,8 +367,8 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   interruptBtn.addEventListener("click", () => void deps.agentApi.interrupt());
   auxSendBtn.addEventListener("click", () => void startAuxSend());
   sessionBtn.addEventListener("click", () => {
-    if (hasSession()) void closeSession();
-    else void startSession();
+    if (hasSession()) void endSession();
+    else void beginSession();
   });
 
   const dispose = (): void => {

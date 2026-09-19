@@ -28,6 +28,7 @@ function makeDeps(): AppDeps {
   return {
     aiPlayerApi: {
       beginSession: vi.fn(async () => {}),
+      endSession: vi.fn().mockResolvedValue(undefined),
       auxSend: vi.fn(),
     },
     agentApi: {
@@ -57,13 +58,14 @@ function $(root: HTMLElement, sel: string): HTMLElement {
 
 /** Clicks the session button's start face and waits for the backend round
  * trip. The button only starts a Session while none is live. */
-async function startSession(root: HTMLElement): Promise<void> {
+async function beginSession(root: HTMLElement): Promise<void> {
   root.querySelector<HTMLButtonElement>(".session-btn")!.click();
   await flush();
 }
 
-/** Clicks the session button's close face and waits for the interruption. */
-async function closeSession(root: HTMLElement): Promise<void> {
+/** Clicks the session button's close face and waits for the end-session round
+ * trip. */
+async function endSession(root: HTMLElement): Promise<void> {
   root.querySelector<HTMLButtonElement>(".session-btn")!.click();
   await flush();
 }
@@ -73,7 +75,7 @@ async function seedUsedSession(
   root: HTMLElement,
   deps: AppDeps,
 ): Promise<void> {
-  await startSession(root);
+  await beginSession(root);
   root.querySelector<HTMLButtonElement>(".aux-send-btn")!.click();
   onEvent(deps)({ kind: "content", text: "(2,3)" });
   onEvent(deps)({ kind: "sse_done" });
@@ -215,7 +217,7 @@ describe("mountLayout session controls", () => {
     ]);
     mountLayout(root, deps);
 
-    await startSession(root);
+    await beginSession(root);
 
     expect($(root, ".session-system").textContent).toBe("be helpful");
     expect($(root, ".ai-session-box").style.display).toBe("");
@@ -226,7 +228,7 @@ describe("mountLayout session controls", () => {
     const root = mount();
     const deps = makeDeps();
     mountLayout(root, deps);
-    await startSession(root);
+    await beginSession(root);
     const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     const interrupt = $(root, ".interrupt-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
@@ -243,7 +245,7 @@ describe("mountLayout session controls", () => {
     const root = mount();
     const deps = makeDeps();
     mountLayout(root, deps);
-    await startSession(root);
+    await beginSession(root);
     const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     const interrupt = $(root, ".interrupt-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
@@ -265,7 +267,7 @@ describe("mountLayout session controls", () => {
     const root = mount();
     const deps = makeDeps();
     mountLayout(root, deps);
-    await startSession(root);
+    await beginSession(root);
     const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
 
@@ -291,7 +293,7 @@ describe("mountLayout send flow", () => {
     const root = mount();
     const deps = makeDeps();
     mountLayout(root, deps);
-    await startSession(root);
+    await beginSession(root);
     const send = $(root, ".aux-send-btn") as HTMLButtonElement;
 
     send.click();
@@ -316,7 +318,7 @@ describe("mountLayout send flow", () => {
     const root = mount();
     const deps = makeDeps();
     mountLayout(root, deps);
-    await startSession(root);
+    await beginSession(root);
     const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     const interrupt = $(root, ".interrupt-btn") as HTMLButtonElement;
     send.click(); // running: the Interrupt is the one that answers now
@@ -337,7 +339,7 @@ describe("mountLayout send flow", () => {
     const select = root.querySelector<HTMLSelectElement>(".input-mode-select")!;
     select.value = "image";
     select.dispatchEvent(new Event("change"));
-    await startSession(root);
+    await beginSession(root);
 
     const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     send.click();
@@ -355,7 +357,7 @@ describe("mountLayout send flow", () => {
     const root = mount();
     const deps = makeDeps();
     mountLayout(root, deps);
-    await startSession(root);
+    await beginSession(root);
     const send = $(root, ".aux-send-btn") as HTMLButtonElement;
 
     send.click();
@@ -384,7 +386,7 @@ describe("mountLayout send flow", () => {
     const deps = makeDeps();
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     mountLayout(root, deps);
-    await startSession(root);
+    await beginSession(root);
     const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     send.click();
     onFailure(deps)({
@@ -401,7 +403,7 @@ describe("mountLayout send flow", () => {
     const deps = makeDeps();
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     mountLayout(root, deps);
-    await startSession(root);
+    await beginSession(root);
     const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     send.click();
     onFailure(deps)({ kind: "refused", status: 409, message: "busy" });
@@ -414,7 +416,7 @@ describe("mountLayout send flow", () => {
     const root = mount();
     const deps = makeDeps();
     mountLayout(root, deps);
-    await startSession(root);
+    await beginSession(root);
     ($(root, ".aux-send-btn") as HTMLButtonElement).click();
     onEvent(deps)({ kind: "user", text: "........." });
     expect($(root, ".session-user-text").textContent).toBe(".........");
@@ -428,7 +430,7 @@ describe("mountLayout send flow", () => {
     const select = root.querySelector<HTMLSelectElement>(".input-mode-select")!;
     select.value = "image";
     select.dispatchEvent(new Event("change"));
-    await startSession(root);
+    await beginSession(root);
     ($(root, ".aux-send-btn") as HTMLButtonElement).click();
     await flush(); // let captureBoardImage resolve; send seeds userImageUrl
     const img = root.querySelector(".session-user-image") as HTMLImageElement;
@@ -445,10 +447,10 @@ describe("mountLayout session lifecycle", () => {
     const session = $(root, ".session-btn") as HTMLButtonElement;
     expect(session.textContent).toBe("启动AI会话");
 
-    await startSession(root);
+    await beginSession(root);
     expect(session.textContent).toBe("关闭AI会话");
 
-    await closeSession(root);
+    await endSession(root);
     expect(session.textContent).toBe("启动AI会话");
   });
 
@@ -485,7 +487,7 @@ describe("mountLayout session lifecycle", () => {
       message: "no provider",
     });
     mountLayout(root, deps);
-    await startSession(root);
+    await beginSession(root);
     expect(alertSpy).toHaveBeenCalled();
     expect(($(root, ".aux-send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
@@ -498,7 +500,7 @@ describe("mountLayout session lifecycle", () => {
     mountLayout(root, deps);
     await seedUsedSession(root, deps);
 
-    await closeSession(root);
+    await endSession(root);
     expect(confirmSpy).toHaveBeenCalled();
     // The Session is gone: the box hides, Send disables, the lock reopens.
     expect($(root, ".ai-session-box").style.display).toBe("none");
@@ -508,7 +510,7 @@ describe("mountLayout session lifecycle", () => {
     ).toBe(false);
 
     // A closed session is gone for good: starting again is a fresh begin().
-    await startSession(root);
+    await beginSession(root);
     expect(deps.aiPlayerApi.beginSession).toHaveBeenCalledTimes(2);
   });
 
@@ -520,9 +522,10 @@ describe("mountLayout session lifecycle", () => {
     mountLayout(root, deps);
     await seedUsedSession(root, deps);
 
-    await closeSession(root);
+    await endSession(root);
     // The used session survives: the box stays and the InputMode locked.
     expect($(root, ".ai-session-box").style.display).toBe("");
+    expect(deps.aiPlayerApi.endSession).not.toHaveBeenCalled();
     expect(
       (root.querySelector(".input-mode-select") as HTMLSelectElement).disabled,
     ).toBe(true);
@@ -534,26 +537,29 @@ describe("mountLayout session lifecycle", () => {
     const deps = makeDeps();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     mountLayout(root, deps);
-    await startSession(root);
+    await beginSession(root);
     confirmSpy.mockClear();
 
-    await closeSession(root);
+    await endSession(root);
     expect(confirmSpy).not.toHaveBeenCalled();
     expect($(root, ".ai-session-box").style.display).toBe("none");
   });
 
-  it("closing interrupts an in-flight Run first", async () => {
+  it("closing ends the Session on the backend, with no separate Interrupt", async () => {
     mockFetch();
     const root = mount();
     const deps = makeDeps();
     // A Send makes the Session `used`, so closing it asks first.
     vi.spyOn(window, "confirm").mockReturnValue(true);
     mountLayout(root, deps);
-    await startSession(root);
+    await beginSession(root);
     ($(root, ".aux-send-btn") as HTMLButtonElement).click(); // running
 
-    await closeSession(root);
-    expect(deps.agentApi.interrupt).toHaveBeenCalledTimes(1);
+    await endSession(root);
+
+    expect(deps.aiPlayerApi.endSession).toHaveBeenCalledTimes(1);
+    // The backend's end-session cancels the in-flight Run itself.
+    expect(deps.agentApi.interrupt).not.toHaveBeenCalled();
     expect(($(root, ".aux-send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -617,7 +623,7 @@ describe("mountLayout session lifecycle", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     mountLayout(root, deps);
     await flush();
-    await startSession(root);
+    await beginSession(root);
     ($(root, ".aux-send-btn") as HTMLButtonElement).click(); // running, already used
 
     const smiley = root.querySelector<HTMLButtonElement>(".smiley")!;
@@ -636,7 +642,7 @@ describe("mountLayout session lifecycle", () => {
     expect(layout.hasUsedSession()).toBe(false);
 
     // A created but unused session does not guard either.
-    await startSession(root);
+    await beginSession(root);
     expect(layout.hasUsedSession()).toBe(false);
 
     // A Send makes it used before any reply lands.
@@ -648,7 +654,7 @@ describe("mountLayout session lifecycle", () => {
 
     // Closing drops what the guard was protecting.
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    await closeSession(root);
+    await endSession(root);
     expect(layout.hasUsedSession()).toBe(false);
   });
 
@@ -690,7 +696,7 @@ describe("mountLayout SessionBox visibility", () => {
     mockFetch();
     const root = mount();
     mountLayout(root, makeDeps());
-    await startSession(root);
+    await beginSession(root);
     expect($(root, ".ai-session-box").style.display).toBe("");
   });
 
@@ -705,7 +711,7 @@ describe("mountLayout SessionBox visibility", () => {
       message: "no provider",
     });
     mountLayout(root, deps);
-    await startSession(root);
+    await beginSession(root);
     expect($(root, ".ai-session-box").style.display).toBe("none");
   });
 

@@ -3,10 +3,11 @@
 //! A thin transport layer over the `ai_player::AiPlayer` seam: it begins an AI
 //! Session under an InputMode (`POST /ai/begin-session`), appends one board to it and
 //! forwards the reply as an SSE stream terminated by `[DONE]`
-//! (`POST /ai/aux-send`), and cancels the in-flight Run
-//! (`POST /ai/interrupt`). The live Session's message list is read back through
-//! the `Agent` the binding holds (`GET /ai/messages`): the list is the Session's
-//! — the binding keeps no copy of it — so that route addresses the Agent.
+//! (`POST /ai/aux-send`), cancels the in-flight Run (`POST /ai/interrupt`) and
+//! ends the live Session (`POST /ai/end-session`). The live Session's message
+//! list is read back through the `Agent` the binding holds (`GET /ai/messages`):
+//! the list is the Session's — the binding keeps no copy of it — so that route
+//! addresses the Agent.
 //!
 //! This module never reaches into `ai_player` internals and never writes to
 //! the `Game` — it only takes a player-visible board snapshot (cloned under a
@@ -16,9 +17,9 @@
 //!
 //! Every path mirrors the method its handler calls, kebab-cased:
 //! `AiPlayer::begin_session` → `/ai/begin-session`, `AiPlayer::aux_send` →
-//! `/ai/aux-send`, `Agent::interrupt` → `/ai/interrupt`, `Agent::messages` →
-//! `/ai/messages`. A read is a `GET` of the thing read; an act keeps the act's
-//! own name.
+//! `/ai/aux-send`, `AiPlayer::end_session` → `/ai/end-session`,
+//! `Agent::interrupt` → `/ai/interrupt`, `Agent::messages` → `/ai/messages`. A
+//! read is a `GET` of the thing read; an act keeps the act's own name.
 
 use std::sync::Arc;
 
@@ -85,6 +86,7 @@ pub(crate) fn ai_routes(state: Arc<AppState>) -> Router {
         .route("/ai/begin-session", post(handle_begin_session))
         .route("/ai/aux-send", post(handle_aux_send))
         .route("/ai/interrupt", post(handle_interrupt))
+        .route("/ai/end-session", post(handle_end_session))
         .route("/ai/messages", get(handle_messages))
         .with_state(state)
 }
@@ -144,6 +146,15 @@ async fn handle_aux_send(
 /// Always 204 — a Send that is not in flight is not an error.
 async fn handle_interrupt(State(state): State<Arc<AppState>>) -> Response {
     state.ai_player.agent().interrupt();
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// `POST /ai/end-session`: ends the live AI Session — its in-flight Run is
+/// cancelled and the Session forgotten, so the message list no longer reads and
+/// an aux send refuses. Always 204 — a Session that is not live is not an
+/// error.
+async fn handle_end_session(State(state): State<Arc<AppState>>) -> Response {
+    state.ai_player.end_session();
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -550,6 +561,51 @@ mod tests {
         let (state, _mock) = app_state();
         let resp = handle_interrupt(State(state.clone())).await;
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    // --- POST /ai/end-session ---
+
+    #[tokio::test]
+    async fn end_session_answers_204_and_the_session_is_gone() {
+        let (state, _mock) = app_state();
+        state
+            .ai_player
+            .begin_session(InputMode::Plain)
+            .await
+            .unwrap();
+
+        let resp = handle_end_session(State(state.clone())).await;
+
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        assert!(state.ai_player.agent().messages().is_none());
+    }
+
+    #[tokio::test]
+    async fn end_session_without_a_live_session_is_204() {
+        let (state, _mock) = app_state();
+        let resp = handle_end_session(State(state.clone())).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn end_session_drives_the_interrupt_on_the_open_sse() {
+        let (state, _mock) = app_state();
+        state
+            .ai_player
+            .begin_session(InputMode::Plain)
+            .await
+            .unwrap();
+        let send_resp = handle_aux_send(State(state.clone()), Json(plain_request())).await;
+        assert_eq!(send_resp.status(), StatusCode::OK);
+
+        let resp = handle_end_session(State(state.clone())).await;
+
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        // Ending cancels the in-flight Run itself, which is why the frontend
+        // sends no separate Interrupt when it closes a Session.
+        let body = body_as_string(send_resp).await;
+        assert!(body.contains("{\"kind\":\"interrupted\"}"));
+        assert!(!body.contains("[DONE]"));
     }
 
     // --- GET /ai/messages ---

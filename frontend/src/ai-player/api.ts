@@ -1,13 +1,13 @@
-// The ai-player binding's frontend half (issue #114, #131, #133): the two
+// The ai-player binding's frontend half (issue #114, #131, #133): the three
 // things the binding owns in the browser — the InputMode a Session is created
-// under, and the aux send that appends the current board to it. The other
-// routes address the Agent, not the binding (`agent/api.ts`).
+// under, the aux send that appends the current board to it, and ending the
+// Session. The other routes address the Agent, not the binding (`agent/api.ts`).
 //
-// `beginSession` POSTs `/ai/begin-session`; `auxSend` POSTs `/ai/aux-send` with the per-call
-// settings and hands the response body to the Agent's `consumeSse`
-// (`agent/run.ts`), because the stream an aux send produces is that Agent's
-// Run. The binding contributes the URL, the request body and the board
-// rendering — never the events.
+// `beginSession` POSTs `/ai/begin-session`; `endSession` POSTs `/ai/end-session`;
+// `auxSend` POSTs `/ai/aux-send` with the per-call settings and hands the
+// response body to the Agent's `consumeSse` (`agent/run.ts`), because the stream
+// an aux send produces is that Agent's Run. The binding contributes the URL, the
+// request body and the board rendering — never the events.
 //
 // `auxSend` does not `abort` the SSE on interrupt: the backend emits the
 // `interrupt` event on the open stream (issue #97, #119).
@@ -37,12 +37,17 @@ export interface AuxSendRequest {
 
 /** The ai-player slice entry point, injected via `AppDeps`. The real
  * implementation (`createAiPlayerApi`) talks to the backend's binding routes:
- * `beginSession` POSTs `/ai/begin-session`, `auxSend` POSTs `/ai/aux-send` (issue #131, #133). */
+ * `beginSession` POSTs `/ai/begin-session`, `endSession` POSTs `/ai/end-session`,
+ * `auxSend` POSTs `/ai/aux-send` (issue #131, #133). */
 export interface AiPlayerApi {
   /** Loads the AI runtime, then begins an AI Session under `mode` — `mode`'s
    * system prompt is the Session's, and `mode` stays this Session's for its
    * whole life. A load failure rejects with a `ProviderError`. */
   beginSession(mode: InputMode): Promise<void>;
+  /** Ends the live Session: the backend cancels its in-flight Run and forgets
+   * it. A failure is logged, never alerted — the next `beginSession` replaces
+   * the Session anyway, and there is nothing the player could do about it. */
+  endSession(): Promise<void>;
   /** Appends the current board. A refusal or a provider failure before the
    * stream starts arrives on `onFailure`; a mid-stream failure arrives as a
    * `RunEvent`. */
@@ -72,6 +77,16 @@ export function createAiPlayerApi(): AiPlayerApi {
         const providerError = await readProviderError(res);
         log.error(`POST /ai/begin-session failed: ${res.status}`);
         throw providerError;
+      }
+    },
+    async endSession() {
+      try {
+        const res = await fetch("/ai/end-session", { method: "POST" });
+        if (!res.ok) {
+          log.error(`POST /ai/end-session failed: ${res.status}`);
+        }
+      } catch (err) {
+        log.error("POST /ai/end-session failed", err);
       }
     },
     auxSend(req, onEvent, onFailure) {

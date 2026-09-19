@@ -1,7 +1,8 @@
 // Tests for the binding's frontend half (issue #119, #133): `beginSession` POSTs
-// `/ai/begin-session`, and `auxSend` POSTs `/ai/aux-send` and hands the response body
-// to the Agent's Run reader (`agent/run.test.ts`), with a non-2xx handed to
-// `onFailure`. The routes that address the Agent are `agent/api.test.ts`.
+// `/ai/begin-session`, `endSession` POSTs `/ai/end-session`, and `auxSend` POSTs
+// `/ai/aux-send` and hands the response body to the Agent's Run reader
+// (`agent/run.test.ts`), with a non-2xx handed to `onFailure`. The routes that
+// address the Agent are `agent/api.test.ts`.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderError, RunEvent, RunFailure } from "../agent/run";
@@ -275,5 +276,35 @@ describe("createAiPlayerApi.beginSession", () => {
       code: null,
       message: "offline",
     });
+  });
+});
+
+describe("createAiPlayerApi.endSession", () => {
+  it("POSTs /ai/end-session", async () => {
+    const api = createAiPlayerApi();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 204 } as Response),
+    );
+
+    await expect(api.endSession()).resolves.toBeUndefined();
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith("/ai/end-session", {
+      method: "POST",
+    });
+  });
+
+  // The backend's end_session has no failing branch, so the only failure left is
+  // the transport: the caller closes the UI either way.
+  it.each([
+    ["a rejected fetch", vi.fn().mockRejectedValue(new Error("offline"))],
+    [
+      "a non-OK response",
+      vi.fn().mockResolvedValue({ ok: false, status: 502 } as Response),
+    ],
+  ])("resolves on %s", async (_name, fetchMock) => {
+    const api = createAiPlayerApi();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.endSession()).resolves.toBeUndefined();
   });
 });
