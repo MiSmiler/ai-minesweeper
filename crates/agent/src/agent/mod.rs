@@ -87,15 +87,18 @@ pub trait Tool: Send + Sync {
 struct Session {
     seq: u64,
     messages: Vec<Message>,
-    in_flight: Option<CancellationToken>,
+    /// The cancel handle for the exchange in flight against this Session:
+    /// `Some` from a Send's admission (before its messages land) until its
+    /// Run's stream ends. [`Agent::interrupt`] fires it.
+    cancel_token: Option<CancellationToken>,
 }
 
 /// Cancels a Session's Run in flight, if any. The Session is consumed: it is
 /// either the one being replaced by [`Agent::create_session`] or the one being
 /// ended by [`Agent::end_session`].
 fn cancel_in_flight(session: Option<Session>) {
-    if let Some(cancel) = session.and_then(|session| session.in_flight) {
-        cancel.cancel();
+    if let Some(cancel_token) = session.and_then(|session| session.cancel_token) {
+        cancel_token.cancel();
     }
 }
 
@@ -208,7 +211,7 @@ impl ProviderSet {
 /// Send — whose Session was replaced by `create_session` or ended by
 /// `end_session` — must touch neither.
 struct SendGuard {
-    live: Arc<StdMutex<Option<Session>>>,
+    live_session: Arc<StdMutex<Option<Session>>>,
     seq: u64,
 }
 
@@ -216,8 +219,8 @@ impl SendGuard {
     /// Runs `f` against the live Session, but only while it is still the one
     /// this Send captured (`seq` matches).
     fn with_current_session(&self, f: impl FnOnce(&mut Session)) {
-        let mut live = self.live.lock().expect("session poisoned");
-        if let Some(session) = live.as_mut()
+        let mut live_session = self.live_session.lock().expect("session poisoned");
+        if let Some(session) = live_session.as_mut()
             && session.seq == self.seq
         {
             f(session);
@@ -232,7 +235,7 @@ impl SendGuard {
 
 impl Drop for SendGuard {
     fn drop(&mut self) {
-        self.with_current_session(|session| session.in_flight = None);
+        self.with_current_session(|session| session.cancel_token = None);
     }
 }
 
@@ -248,7 +251,7 @@ pub struct Agent {
     /// At most one Session is live; `None` until [`Agent::create_session`] and
     /// again after [`Agent::end_session`]. The `Arc` lets a Send's guard own a
     /// handle to the slot without borrowing the Agent.
-    live: Arc<StdMutex<Option<Session>>>,
+    live_session: Arc<StdMutex<Option<Session>>>,
     /// The counter behind each Session's `seq`.
     next_seq: AtomicU64,
 }
@@ -262,7 +265,7 @@ impl Agent {
             current_provider: String::new(),
             current_model: String::new(),
             tools: Vec::new(),
-            live: Arc::new(StdMutex::new(None)),
+            live_session: Arc::new(StdMutex::new(None)),
             next_seq: AtomicU64::new(0),
         }
     }
@@ -303,14 +306,14 @@ impl Agent {
     pub async fn create_session(&self, system_prompt: String) -> Result<(), ProviderError> {
         self.load().await?;
         let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
-        let mut live = self.live.lock().expect("session poisoned");
-        cancel_in_flight(live.take());
-        *live = Some(Session {
+        let mut live_session = self.live_session.lock().expect("session poisoned");
+        cancel_in_flight(live_session.take());
+        *live_session = Some(Session {
             seq,
             messages: vec![Message::System {
                 content: system_prompt,
             }],
-            in_flight: None,
+            cancel_token: None,
         });
         Ok(())
     }
@@ -318,17 +321,20 @@ impl Agent {
     /// Ends the live Session: cancels its in-flight Run and forgets it. A
     /// no-op when there is no Session.
     pub fn end_session(&self) {
-        cancel_in_flight(self.live.lock().expect("session poisoned").take());
+        cancel_in_flight(self.live_session.lock().expect("session poisoned").take());
     }
 
     /// Cancels the Run in flight, if any; `false` when none is in flight (or
     /// there is no live Session). The stream frees the slot itself, so the
     /// Send is free as soon as the cancelled task notices.
     pub fn interrupt(&self) -> bool {
-        let live = self.live.lock().expect("session poisoned");
-        match live.as_ref().and_then(|session| session.in_flight.as_ref()) {
-            Some(cancel) => {
-                cancel.cancel();
+        let live_session = self.live_session.lock().expect("session poisoned");
+        match live_session
+            .as_ref()
+            .and_then(|session| session.cancel_token.as_ref())
+        {
+            Some(cancel_token) => {
+                cancel_token.cancel();
                 true
             }
             None => false,
@@ -339,7 +345,7 @@ impl Agent {
     /// live. This is the log itself, not the projection the Provider is sent
     /// (ADR-0026): it may hold entries the model never reads.
     pub fn messages(&self) -> Option<Vec<Message>> {
-        self.live
+        self.live_session
             .lock()
             .expect("session poisoned")
             .as_ref()
@@ -361,21 +367,21 @@ impl Agent {
         // Admission under one lock: a Send needs a live Session and must be
         // the only one in flight. Registering the cancel token here means a
         // concurrent `interrupt` / `create_session` / `end_session` finds it.
-        let (history, seq, cancel) = {
-            let mut live = self.live.lock().expect("session poisoned");
-            let session = live.as_mut().ok_or(SendError::NoSession)?;
-            if session.in_flight.is_some() {
+        let (history, seq, cancel_token) = {
+            let mut live_session = self.live_session.lock().expect("session poisoned");
+            let session = live_session.as_mut().ok_or(SendError::NoSession)?;
+            if session.cancel_token.is_some() {
                 return Err(SendError::Busy);
             }
-            let cancel = CancellationToken::new();
-            session.in_flight = Some(cancel.clone());
-            (session.messages.clone(), session.seq, cancel)
+            let cancel_token = CancellationToken::new();
+            session.cancel_token = Some(cancel_token.clone());
+            (session.messages.clone(), session.seq, cancel_token)
         };
 
         // From here the guard owns the slot: an early return (no provider, a
-        // failed exchange) drops it, which frees `in_flight`.
+        // failed exchange) drops it, which frees `cancel_token`.
         let guard = SendGuard {
-            live: Arc::clone(&self.live),
+            live_session: Arc::clone(&self.live_session),
             seq,
         };
         let provider = self
@@ -408,7 +414,7 @@ impl Agent {
         // left as is: an interruption with no caller message behind it and no
         // reply it cut is not a fact worth recording.
         let inner = provider
-            .stream_chat(req, cancel.clone())
+            .stream_chat(req, cancel_token.clone())
             .await
             .map_err(SendError::Provider)?;
 
@@ -418,19 +424,18 @@ impl Agent {
         guard.append(messages);
 
         // The wrapper maps every `ProviderError` to [`RunError::Provider`] (the
-        // cause intact) and reports a fired `cancel` as
+        // cause intact) and reports a fired `cancel_token` as
         // [`RunEvent::Interrupted`].
-        let canceller = cancel;
         let mut inner = inner;
         let mut content = String::new();
         let mut reasoning: Option<String> = None;
-        let mut reported_cancel = false;
+        let mut reported_interrupt = false;
         Ok(stream::poll_fn(move |cx| {
-            if canceller.is_cancelled() {
-                if reported_cancel {
+            if cancel_token.is_cancelled() {
+                if reported_interrupt {
                     return Poll::Ready(None);
                 }
-                reported_cancel = true;
+                reported_interrupt = true;
                 // The caller's act is a fact about the log, so it lands as a
                 // marker of its own. Whatever had already streamed is dropped:
                 // an interrupted reply is not a Reply.
@@ -867,7 +872,7 @@ mod tests {
             async fn stream_chat(
                 &self,
                 _req: ChatRequest,
-                _cancel: CancellationToken,
+                _cancel_token: CancellationToken,
             ) -> Result<ProviderStream, ProviderError> {
                 let error = self.0.clone();
                 Ok(Box::pin(stream::iter(vec![Err(error)])))
@@ -960,8 +965,8 @@ mod tests {
     }
 
     /// A provider whose stream yields one reasoning delta and then stays open
-    /// until its `cancel` fires — the way a real transport's body parks until
-    /// the cancellation it observes ends it.
+    /// until its `cancel_token` fires — the way a real transport's body parks
+    /// until the cancellation it observes ends it.
     struct HangingProvider;
 
     #[async_trait]
@@ -969,13 +974,13 @@ mod tests {
         async fn stream_chat(
             &self,
             _req: ChatRequest,
-            cancel: CancellationToken,
+            cancel_token: CancellationToken,
         ) -> Result<ProviderStream, ProviderError> {
             let delta = stream::once(async {
                 Ok::<_, ProviderError>(StreamChunk::ReasoningDelta("Mock reasoning.".into()))
             });
             let until_cancelled = stream::once(async move {
-                cancel.cancelled().await;
+                cancel_token.cancelled().await;
                 Ok::<_, ProviderError>(StreamChunk::Done)
             });
             Ok(Box::pin(delta.chain(until_cancelled)))

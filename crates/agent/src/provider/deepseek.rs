@@ -75,7 +75,7 @@ struct SseState {
     buffer: Vec<u8>,
     pending: VecDeque<Result<StreamChunk, ProviderError>>,
     done: bool,
-    cancel: CancellationToken,
+    cancel_token: CancellationToken,
 }
 
 impl SseState {
@@ -84,7 +84,7 @@ impl SseState {
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<StreamChunk, ProviderError>>> {
         loop {
-            if self.cancel.is_cancelled() {
+            if self.cancel_token.is_cancelled() {
                 self.done = true;
                 return Poll::Ready(None);
             }
@@ -153,17 +153,17 @@ impl SseState {
 }
 
 /// Wraps an upstream byte stream into a decoded [`ProviderStream`], honoring
-/// `cancel` (termination) and the `[DONE]` terminator.
+/// `cancel_token` (termination) and the `[DONE]` terminator.
 fn sse_stream(
     bytes: BoxStream<'static, Result<bytes::Bytes, reqwest::Error>>,
-    cancel: CancellationToken,
+    cancel_token: CancellationToken,
 ) -> ProviderStream {
     let mut state = SseState {
         bytes,
         buffer: Vec::new(),
         pending: VecDeque::new(),
         done: false,
-        cancel,
+        cancel_token,
     };
     Box::pin(stream::poll_fn(move |cx| state.poll_next(cx)))
 }
@@ -303,7 +303,7 @@ impl Provider for DeepSeek {
     async fn stream_chat(
         &self,
         req: ChatRequest,
-        cancel: CancellationToken,
+        cancel_token: CancellationToken,
     ) -> Result<ProviderStream, ProviderError> {
         // Gate on the model: an unknown model is a Config failure before any
         // chat cost. The list is fetched lazily on first use.
@@ -347,7 +347,7 @@ impl Provider for DeepSeek {
             ));
         }
 
-        Ok(sse_stream(Box::pin(response.bytes_stream()), cancel))
+        Ok(sse_stream(Box::pin(response.bytes_stream()), cancel_token))
     }
 }
 

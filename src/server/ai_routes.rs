@@ -272,7 +272,7 @@ mod tests {
         async fn stream_chat(
             &self,
             _req: ChatRequest,
-            _cancel: tokio_util::sync::CancellationToken,
+            _cancel_token: tokio_util::sync::CancellationToken,
         ) -> Result<ProviderStream, ProviderError> {
             let error = self.0.clone();
             Ok(Box::pin(futures::stream::iter(vec![Err(error)])))

@@ -75,12 +75,12 @@ pub type ProviderStream = Pin<Box<dyn Stream<Item = Result<StreamChunk, Provider
 #[async_trait]
 pub trait Provider: Send + Sync {
     /// Starts a streaming chat, returning the [`ProviderStream`]. `req.model`
-    /// is filled by the caller (the `Agent`'s `current_model`). `cancel`
+    /// is filled by the caller (the `Agent`'s `current_model`). `cancel_token`
     /// lets the provider abort its upstream work when cancelled.
     async fn stream_chat(
         &self,
         req: ChatRequest,
-        cancel: CancellationToken,
+        cancel_token: CancellationToken,
     ) -> Result<ProviderStream, ProviderError>;
 
     /// Loads the provider for `model` — the provider half of `Load`: resolves

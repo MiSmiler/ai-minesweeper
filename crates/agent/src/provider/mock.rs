@@ -50,7 +50,7 @@ impl Provider for MockProvider {
     async fn stream_chat(
         &self,
         req: ChatRequest,
-        cancel: CancellationToken,
+        cancel_token: CancellationToken,
     ) -> Result<ProviderStream, ProviderError> {
         *self.captured.lock().unwrap() = Some(req.clone());
         let echo = last_user_text(&req);
@@ -62,7 +62,7 @@ impl Provider for MockProvider {
             Ok(StreamChunk::ContentDelta(echo)),
             Ok(StreamChunk::Done),
         ];
-        let _ = cancel;
+        let _ = cancel_token;
         Ok(Box::pin(stream::iter(chunks)))
     }
 }

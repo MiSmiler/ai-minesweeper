@@ -526,7 +526,7 @@ mod tests {
         async fn stream_chat(
             &self,
             _req: ChatRequest,
-            _cancel: CancellationToken,
+            _cancel_token: CancellationToken,
         ) -> Result<ProviderStream, ProviderError> {
             let error = self.error.clone();
             Ok(Box::pin(stream::iter(vec![Err(error)])))
@@ -965,9 +965,9 @@ mod tests {
         async fn stream_chat(
             &self,
             req: ChatRequest,
-            cancel: CancellationToken,
+            cancel_token: CancellationToken,
         ) -> Result<ProviderStream, ProviderError> {
-            self.mock.stream_chat(req, cancel).await
+            self.mock.stream_chat(req, cancel_token).await
         }
 
         async fn load(&self, _model: &str) -> Result<(), ProviderError> {
