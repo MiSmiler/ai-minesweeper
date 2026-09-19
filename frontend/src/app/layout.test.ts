@@ -28,7 +28,7 @@ function makeDeps(): AppDeps {
   return {
     aiPlayerApi: {
       begin: vi.fn(async () => {}),
-      send: vi.fn(),
+      auxSend: vi.fn(),
     },
     agentApi: {
       messages: vi.fn().mockResolvedValue([]),
@@ -39,11 +39,11 @@ function makeDeps(): AppDeps {
 }
 
 /** The `onEvent` / `onFailure` callbacks the composition hands to the Nth Send
- * (the 2nd and 3rd arguments of `AiPlayerApi.send`). */
+ * (the 2nd and 3rd arguments of `AiPlayerApi.auxSend`). */
 const onEvent = (deps: AppDeps, n = 0) =>
-  vi.mocked(deps.aiPlayerApi.send).mock.calls[n][1];
+  vi.mocked(deps.aiPlayerApi.auxSend).mock.calls[n][1];
 const onFailure = (deps: AppDeps, n = 0) =>
-  vi.mocked(deps.aiPlayerApi.send).mock.calls[n][2];
+  vi.mocked(deps.aiPlayerApi.auxSend).mock.calls[n][2];
 
 function mount(): HTMLElement {
   const root = document.createElement("div");
@@ -74,7 +74,7 @@ async function seedUsedSession(
   deps: AppDeps,
 ): Promise<void> {
   await startSession(root);
-  root.querySelector<HTMLButtonElement>(".send-btn")!.click();
+  root.querySelector<HTMLButtonElement>(".aux-send-btn")!.click();
   onEvent(deps)({ kind: "content", text: "(2,3)" });
   onEvent(deps)({ kind: "sse_done" });
   await flush();
@@ -120,7 +120,7 @@ describe("mountLayout layout", () => {
     expect(dash.querySelector(".input-mode-select")).toBeTruthy();
     expect(dash.querySelector(".level-select")).toBeTruthy();
     // Send and the axis toggle moved to the aux bar (below the Board).
-    expect(dash.querySelector(".send-btn")).toBeNull();
+    expect(dash.querySelector(".aux-send-btn")).toBeNull();
     expect(dash.querySelector(".axis-checkbox")).toBeNull();
     // The SessionStrategy dropdown is gone (issue #125).
     expect(dash.querySelector(".strategy-select")).toBeNull();
@@ -133,12 +133,12 @@ describe("mountLayout layout", () => {
     mountLayout(root, makeDeps());
     const bar = $(root, ".game-column .aux-bar");
     expect(bar.querySelector(".axis-checkbox")).toBeTruthy();
-    expect(bar.querySelector(".send-btn")).toBeTruthy();
+    expect(bar.querySelector(".aux-send-btn")).toBeTruthy();
     // The Interrupt belongs to the dashboard, not to the manual-driver bar.
     expect(bar.querySelector(".interrupt-btn")).toBeNull();
     // Axis toggle left, Send right.
     expect(bar.children[0]?.classList.contains("axis-toggle")).toBe(true);
-    expect(bar.children[1]?.classList.contains("send-btn")).toBe(true);
+    expect(bar.children[1]?.classList.contains("aux-send-btn")).toBe(true);
   });
 
   it("input mode select offers all three modes", () => {
@@ -198,7 +198,7 @@ describe("mountLayout session controls", () => {
     mockFetch();
     const root = mount();
     mountLayout(root, makeDeps());
-    const send = $(root, ".send-btn") as HTMLButtonElement;
+    const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     const interrupt = $(root, ".interrupt-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
     expect(send.disabled).toBe(true);
@@ -227,7 +227,7 @@ describe("mountLayout session controls", () => {
     const deps = makeDeps();
     mountLayout(root, deps);
     await startSession(root);
-    const send = $(root, ".send-btn") as HTMLButtonElement;
+    const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     const interrupt = $(root, ".interrupt-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
     expect(send.disabled).toBe(false);
@@ -244,7 +244,7 @@ describe("mountLayout session controls", () => {
     const deps = makeDeps();
     mountLayout(root, deps);
     await startSession(root);
-    const send = $(root, ".send-btn") as HTMLButtonElement;
+    const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     const interrupt = $(root, ".interrupt-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
     expect(mode.disabled).toBe(true);
@@ -266,7 +266,7 @@ describe("mountLayout session controls", () => {
     const deps = makeDeps();
     mountLayout(root, deps);
     await startSession(root);
-    const send = $(root, ".send-btn") as HTMLButtonElement;
+    const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     const mode = $(root, ".input-mode-select") as HTMLSelectElement;
 
     send.click();
@@ -280,8 +280,8 @@ describe("mountLayout session controls", () => {
     const root = mount();
     const deps = makeDeps();
     mountLayout(root, deps);
-    ($(root, ".send-btn") as HTMLButtonElement).click();
-    expect(deps.aiPlayerApi.send).not.toHaveBeenCalled();
+    ($(root, ".aux-send-btn") as HTMLButtonElement).click();
+    expect(deps.aiPlayerApi.auxSend).not.toHaveBeenCalled();
   });
 });
 
@@ -292,13 +292,13 @@ describe("mountLayout send flow", () => {
     const deps = makeDeps();
     mountLayout(root, deps);
     await startSession(root);
-    const send = $(root, ".send-btn") as HTMLButtonElement;
+    const send = $(root, ".aux-send-btn") as HTMLButtonElement;
 
     send.click();
-    expect(deps.aiPlayerApi.send).toHaveBeenCalledTimes(1);
+    expect(deps.aiPlayerApi.auxSend).toHaveBeenCalledTimes(1);
     // The composition root builds the request: the level, and no screenshot
     // outside the image mode.
-    expect(vi.mocked(deps.aiPlayerApi.send).mock.calls[0][0]).toEqual({
+    expect(vi.mocked(deps.aiPlayerApi.auxSend).mock.calls[0][0]).toEqual({
       thinkingLevel: "low",
       imageDataUrl: undefined,
     });
@@ -317,7 +317,7 @@ describe("mountLayout send flow", () => {
     const deps = makeDeps();
     mountLayout(root, deps);
     await startSession(root);
-    const send = $(root, ".send-btn") as HTMLButtonElement;
+    const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     const interrupt = $(root, ".interrupt-btn") as HTMLButtonElement;
     send.click(); // running: the Interrupt is the one that answers now
     interrupt.click();
@@ -339,12 +339,12 @@ describe("mountLayout send flow", () => {
     select.dispatchEvent(new Event("change"));
     await startSession(root);
 
-    const send = $(root, ".send-btn") as HTMLButtonElement;
+    const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     send.click();
     await flush();
     expect(deps.captureBoardImage).toHaveBeenCalled();
     expect(deps.aiPlayerApi.begin).toHaveBeenCalledWith("image");
-    const req = vi.mocked(deps.aiPlayerApi.send).mock.calls[0][0] as {
+    const req = vi.mocked(deps.aiPlayerApi.auxSend).mock.calls[0][0] as {
       imageDataUrl?: string;
     };
     expect(req.imageDataUrl).toBeTruthy();
@@ -356,10 +356,10 @@ describe("mountLayout send flow", () => {
     const deps = makeDeps();
     mountLayout(root, deps);
     await startSession(root);
-    const send = $(root, ".send-btn") as HTMLButtonElement;
+    const send = $(root, ".aux-send-btn") as HTMLButtonElement;
 
     send.click();
-    let req = vi.mocked(deps.aiPlayerApi.send).mock.calls[0][0] as {
+    let req = vi.mocked(deps.aiPlayerApi.auxSend).mock.calls[0][0] as {
       thinkingLevel: string;
     };
     expect(req.thinkingLevel).toBe("low");
@@ -372,7 +372,7 @@ describe("mountLayout send flow", () => {
 
     // The next Send carries the new level.
     send.click();
-    req = vi.mocked(deps.aiPlayerApi.send).mock.calls[1][0] as {
+    req = vi.mocked(deps.aiPlayerApi.auxSend).mock.calls[1][0] as {
       thinkingLevel: string;
     };
     expect(req.thinkingLevel).toBe("max");
@@ -385,7 +385,7 @@ describe("mountLayout send flow", () => {
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     mountLayout(root, deps);
     await startSession(root);
-    const send = $(root, ".send-btn") as HTMLButtonElement;
+    const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     send.click();
     onFailure(deps)({
       kind: "provider",
@@ -402,7 +402,7 @@ describe("mountLayout send flow", () => {
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     mountLayout(root, deps);
     await startSession(root);
-    const send = $(root, ".send-btn") as HTMLButtonElement;
+    const send = $(root, ".aux-send-btn") as HTMLButtonElement;
     send.click();
     onFailure(deps)({ kind: "refused", status: 409, message: "busy" });
     expect(alertSpy).not.toHaveBeenCalled();
@@ -415,7 +415,7 @@ describe("mountLayout send flow", () => {
     const deps = makeDeps();
     mountLayout(root, deps);
     await startSession(root);
-    ($(root, ".send-btn") as HTMLButtonElement).click();
+    ($(root, ".aux-send-btn") as HTMLButtonElement).click();
     onEvent(deps)({ kind: "user", text: "........." });
     expect($(root, ".session-user-text").textContent).toBe(".........");
   });
@@ -429,7 +429,7 @@ describe("mountLayout send flow", () => {
     select.value = "image";
     select.dispatchEvent(new Event("change"));
     await startSession(root);
-    ($(root, ".send-btn") as HTMLButtonElement).click();
+    ($(root, ".aux-send-btn") as HTMLButtonElement).click();
     await flush(); // let captureBoardImage resolve; send seeds userImageUrl
     const img = root.querySelector(".session-user-image") as HTMLImageElement;
     expect(img.hidden).toBe(false);
@@ -487,7 +487,7 @@ describe("mountLayout session lifecycle", () => {
     mountLayout(root, deps);
     await startSession(root);
     expect(alertSpy).toHaveBeenCalled();
-    expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
+    expect(($(root, ".aux-send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("closing a used session discards it after confirmation", async () => {
@@ -502,7 +502,7 @@ describe("mountLayout session lifecycle", () => {
     expect(confirmSpy).toHaveBeenCalled();
     // The Session is gone: the box hides, Send disables, the lock reopens.
     expect($(root, ".ai-session-box").style.display).toBe("none");
-    expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
+    expect(($(root, ".aux-send-btn") as HTMLButtonElement).disabled).toBe(true);
     expect(
       (root.querySelector(".input-mode-select") as HTMLSelectElement).disabled,
     ).toBe(false);
@@ -550,11 +550,11 @@ describe("mountLayout session lifecycle", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     mountLayout(root, deps);
     await startSession(root);
-    ($(root, ".send-btn") as HTMLButtonElement).click(); // running
+    ($(root, ".aux-send-btn") as HTMLButtonElement).click(); // running
 
     await closeSession(root);
     expect(deps.agentApi.interrupt).toHaveBeenCalledTimes(1);
-    expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
+    expect(($(root, ".aux-send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("a new game ends the session after confirmation", async () => {
@@ -572,7 +572,7 @@ describe("mountLayout session lifecycle", () => {
     difficulty.click();
     await flush();
     expect(confirmSpy).toHaveBeenCalled();
-    expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
+    expect(($(root, ".aux-send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("declining a new game keeps the game and the session", async () => {
@@ -590,7 +590,9 @@ describe("mountLayout session lifecycle", () => {
     difficulty.click();
     await flush();
     expect(confirmSpy).toHaveBeenCalled();
-    expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(false);
+    expect(($(root, ".aux-send-btn") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
   });
 
   it("the smiley starts a new game after confirmation", async () => {
@@ -605,7 +607,7 @@ describe("mountLayout session lifecycle", () => {
     const smiley = root.querySelector<HTMLButtonElement>(".smiley")!;
     smiley.click();
     await flush();
-    expect(($(root, ".send-btn") as HTMLButtonElement).disabled).toBe(true);
+    expect(($(root, ".aux-send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("a new game on an in-flight Run confirms and interrupts", async () => {
@@ -616,7 +618,7 @@ describe("mountLayout session lifecycle", () => {
     mountLayout(root, deps);
     await flush();
     await startSession(root);
-    ($(root, ".send-btn") as HTMLButtonElement).click(); // running, already used
+    ($(root, ".aux-send-btn") as HTMLButtonElement).click(); // running, already used
 
     const smiley = root.querySelector<HTMLButtonElement>(".smiley")!;
     smiley.click();
@@ -638,7 +640,7 @@ describe("mountLayout session lifecycle", () => {
     expect(layout.hasUsedSession()).toBe(false);
 
     // A Send makes it used before any reply lands.
-    ($(root, ".send-btn") as HTMLButtonElement).click();
+    ($(root, ".aux-send-btn") as HTMLButtonElement).click();
     expect(layout.hasUsedSession()).toBe(true);
     onEvent(deps)({ kind: "sse_done" });
     await flush();

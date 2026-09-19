@@ -10,8 +10,8 @@ import "../style.css";
 
 const ROOT = document.getElementById("app")!;
 const deps: AppDeps = {
-  // The binding's half: `/ai/begin` and `/ai/send` (the board's Send, whose
-  // SSE stream it consumes through the Agent's reader).
+  // The binding's half: `/ai/begin` and `/ai/aux-send` (the board's aux send,
+  // whose SSE stream it consumes through the Agent's reader).
   aiPlayerApi: createAiPlayerApi(),
   // The Agent's half: `/ai/messages` and `/ai/interrupt`.
   agentApi: createAgentApi(),

@@ -3,7 +3,7 @@
 //!
 //! [`AiPlayer`] renders the player-visible side of a `game::Game` into the board
 //! presentation (the [`InputMode`]), builds the system prompt (the shared core
-//! plus the mode's own section), and wires `AiPlayer::send_game_board` — the
+//! plus the mode's own section), and wires `AiPlayer::aux_send` — the
 //! AiPlayer's "ask the AI" entry point — to one Send of an `agent::Agent`.
 //!
 //! The Session is the Agent's (ADR-0021): the AiPlayer never names one. What
@@ -139,12 +139,12 @@ impl InputMode {
     }
 }
 
-/// The frontend's request: the Send's per-call settings only. The board is
+/// The frontend's request: the aux send's per-call settings only. The board is
 /// read by the backend from its own `Game`; **no model** is sent (the backend
 /// picks the DeepSeek default). The InputMode is not here — each Session
 /// carries the one it was created with.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SendRequest {
+pub struct AuxSendRequest {
     /// The reasoning depth; `low` default. `off` disables thinking mode.
     #[serde(default)]
     pub thinking_level: ThinkingLevel,
@@ -154,10 +154,10 @@ pub struct SendRequest {
     pub image_data_url: Option<String>,
 }
 
-/// Why a Send did not start. The AiPlayer's own refusal precedes the Agent's:
+/// Why an aux send did not start. The AiPlayer's own refusal precedes the Agent's:
 /// the body it was handed is incomplete for the live Session's InputMode.
 #[derive(Debug, PartialEq)]
-pub enum SendError {
+pub enum AuxSendError {
     /// The Session's InputMode sends a screenshot, and the request carries
     /// none.
     MissingScreenshot,
@@ -245,26 +245,26 @@ impl AiPlayer {
     /// the Run: the binding never reads it, it only relays it. A refusal
     /// (`NoSession` / `Busy`, or a missing screenshot for the image mode) is an
     /// `Err`, never a stream item.
-    pub async fn send_game_board(
+    pub async fn aux_send(
         &self,
         game: &Game,
-        req: SendRequest,
+        req: AuxSendRequest,
     ) -> Result<
         (
             String,
             impl Stream<Item = Result<RunEvent, RunError>> + Send + use<>,
         ),
-        SendError,
+        AuxSendError,
     > {
         // No mode means no live Session — the same refusal the Agent reports.
         let mode = self
             .mode
             .lock()
             .expect("mode lock poisoned")
-            .ok_or(SendError::Agent(AgentSendError::NoSession))?;
+            .ok_or(AuxSendError::Agent(AgentSendError::NoSession))?;
 
         if matches!(mode, InputMode::Image) && req.image_data_url.is_none() {
-            return Err(SendError::MissingScreenshot);
+            return Err(AuxSendError::MissingScreenshot);
         }
 
         let (user_text, user_message) = board_message(mode, game, &req);
@@ -272,7 +272,7 @@ impl AiPlayer {
             .agent
             .send(vec![user_message], req.thinking_level)
             .await
-            .map_err(SendError::Agent)?;
+            .map_err(AuxSendError::Agent)?;
         Ok((user_text, stream))
     }
 }
@@ -281,7 +281,7 @@ impl AiPlayer {
 /// the frontend shows as the player's own message (issue #124). The image
 /// mode's message is the screenshot alone, so its echo is empty — the frontend
 /// renders its own captured copy in the player's bubble.
-fn board_message(mode: InputMode, game: &Game, req: &SendRequest) -> (String, Message) {
+fn board_message(mode: InputMode, game: &Game, req: &AuxSendRequest) -> (String, Message) {
     let view = BoardView::from_game(game);
     let url = req.image_data_url.clone().unwrap_or_default();
 
@@ -391,7 +391,7 @@ fn render_emoji(view: &BoardView) -> String {
 /// Persists a `data:image/png;base64,<payload>` data URL to
 /// `<exe_dir>/base64_img/YYYYMMDD_HHMMSS_<seed>.png`, best-effort: a failure
 /// returns `Err` and must never block the send. This is an internal side
-/// effect of `AiPlayer::send_game_board`, not a public interface.
+/// effect of `AiPlayer::aux_send`, not a public interface.
 fn persist_image(data_url: &str) -> Result<(), String> {
     let payload = data_url
         .split_once("base64,")
@@ -662,9 +662,9 @@ mod tests {
 
     #[test]
     fn send_request_deserializes_the_optional_screenshot() {
-        let req: SendRequest = serde_json::from_str(r#"{}"#).unwrap();
+        let req: AuxSendRequest = serde_json::from_str(r#"{}"#).unwrap();
         assert_eq!(req.image_data_url, None);
-        let req: SendRequest =
+        let req: AuxSendRequest =
             serde_json::from_str(r#"{"image_data_url":"data:image/png;base64,AAAA"}"#).unwrap();
         assert_eq!(
             req.image_data_url.as_deref(),
@@ -675,10 +675,10 @@ mod tests {
     #[test]
     fn send_request_defaults_thinking_level_to_low() {
         // A wire body without `thinking_level` defaults to Low (issue #122).
-        let req: SendRequest = serde_json::from_str(r#"{}"#).unwrap();
+        let req: AuxSendRequest = serde_json::from_str(r#"{}"#).unwrap();
         assert_eq!(req.thinking_level, ThinkingLevel::Low);
         // And a present value parses.
-        let req: SendRequest = serde_json::from_str(r#"{"thinking_level":"off"}"#).unwrap();
+        let req: AuxSendRequest = serde_json::from_str(r#"{"thinking_level":"off"}"#).unwrap();
         assert_eq!(req.thinking_level, ThinkingLevel::Off);
     }
 
@@ -691,8 +691,8 @@ mod tests {
 
     /// A Send under the default thinking level. The InputMode is not part of
     /// the request: `begin` chose it when it created the Session.
-    fn default_request() -> SendRequest {
-        SendRequest {
+    fn default_request() -> AuxSendRequest {
+        AuxSendRequest {
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         }
@@ -701,13 +701,10 @@ mod tests {
     #[tokio::test]
     async fn send_without_a_live_session_is_no_session() {
         let (ai_player, _mock) = ai_player_with_mock();
-        let Err(err) = ai_player
-            .send_game_board(&fresh_game(), default_request())
-            .await
-        else {
+        let Err(err) = ai_player.aux_send(&fresh_game(), default_request()).await else {
             panic!("expected an error");
         };
-        assert_eq!(err, SendError::Agent(AgentSendError::NoSession));
+        assert_eq!(err, AuxSendError::Agent(AgentSendError::NoSession));
     }
 
     #[tokio::test]
@@ -715,7 +712,7 @@ mod tests {
         let (ai_player, mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Plain).await.unwrap();
         let (user_text, mut stream) = ai_player
-            .send_game_board(&fresh_game(), default_request())
+            .aux_send(&fresh_game(), default_request())
             .await
             .unwrap();
         // The verbatim player message is the board body, not the system prompt.
@@ -751,11 +748,11 @@ mod tests {
     async fn send_threads_off_into_the_request() {
         let (ai_player, mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Plain).await.unwrap();
-        let req = SendRequest {
+        let req = AuxSendRequest {
             thinking_level: ThinkingLevel::Off,
             image_data_url: None,
         };
-        let (_user_text, mut stream) = ai_player.send_game_board(&fresh_game(), req).await.unwrap();
+        let (_user_text, mut stream) = ai_player.aux_send(&fresh_game(), req).await.unwrap();
         while stream.next().await.is_some() {}
         let req = mock.last_request().expect("mock recorded a request");
         assert_eq!(req.reasoning_effort, None);
@@ -772,7 +769,7 @@ mod tests {
         let (ai_player, mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Emoji).await.unwrap();
         let (_user_text, mut stream) = ai_player
-            .send_game_board(&fresh_game(), default_request())
+            .aux_send(&fresh_game(), default_request())
             .await
             .unwrap();
         while stream.next().await.is_some() {}
@@ -792,10 +789,8 @@ mod tests {
         ai_player.begin(InputMode::Plain).await.unwrap();
         let game = fresh_game();
         for _ in 0..2 {
-            let (_user_text, mut stream) = ai_player
-                .send_game_board(&game, default_request())
-                .await
-                .unwrap();
+            let (_user_text, mut stream) =
+                ai_player.aux_send(&game, default_request()).await.unwrap();
             while stream.next().await.is_some() {}
         }
         // The second request was taken before its own reply streamed, so it is
@@ -820,10 +815,8 @@ mod tests {
         ai_player.begin(InputMode::Plain).await.unwrap();
         let game = fresh_game();
         {
-            let (_user_text, mut stream) = ai_player
-                .send_game_board(&game, default_request())
-                .await
-                .unwrap();
+            let (_user_text, mut stream) =
+                ai_player.aux_send(&game, default_request()).await.unwrap();
             // The first chunk arrived; the player then interrupts.
             assert!(stream.next().await.is_some());
             assert!(ai_player.agent().interrupt());
@@ -840,10 +833,7 @@ mod tests {
         }
         // The Interrupt cut only the assistant half: the next request carries
         // the player's message, and not the marker.
-        let (_user_text, mut stream) = ai_player
-            .send_game_board(&game, default_request())
-            .await
-            .unwrap();
+        let (_user_text, mut stream) = ai_player.aux_send(&game, default_request()).await.unwrap();
         while stream.next().await.is_some() {}
         let req = mock.last_request().unwrap();
         assert_eq!(req.messages.len(), 3);
@@ -860,14 +850,11 @@ mod tests {
         let (ai_player, _mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Plain).await.unwrap();
         let game = fresh_game();
-        let (_user_text, stream) = ai_player
-            .send_game_board(&game, default_request())
-            .await
-            .unwrap();
-        let Err(err) = ai_player.send_game_board(&game, default_request()).await else {
+        let (_user_text, stream) = ai_player.aux_send(&game, default_request()).await.unwrap();
+        let Err(err) = ai_player.aux_send(&game, default_request()).await else {
             panic!("expected an error");
         };
-        assert_eq!(err, SendError::Agent(AgentSendError::Busy));
+        assert_eq!(err, AuxSendError::Agent(AgentSendError::Busy));
         drop(stream);
     }
 
@@ -883,10 +870,7 @@ mod tests {
         let (ai_player, _mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Plain).await.unwrap();
         let game = fresh_game();
-        let (_user_text, mut stream) = ai_player
-            .send_game_board(&game, default_request())
-            .await
-            .unwrap();
+        let (_user_text, mut stream) = ai_player.aux_send(&game, default_request()).await.unwrap();
         ai_player.begin(InputMode::Plain).await.unwrap();
         // The displaced Send reports the caller's interrupt on its next poll...
         assert_eq!(stream.next().await, Some(Ok(RunEvent::Interrupted)));
@@ -898,13 +882,10 @@ mod tests {
         let (ai_player, _mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Plain).await.unwrap();
         ai_player.end();
-        let Err(err) = ai_player
-            .send_game_board(&fresh_game(), default_request())
-            .await
-        else {
+        let Err(err) = ai_player.aux_send(&fresh_game(), default_request()).await else {
             panic!("expected an error");
         };
-        assert_eq!(err, SendError::Agent(AgentSendError::NoSession));
+        assert_eq!(err, AuxSendError::Agent(AgentSendError::NoSession));
     }
 
     /// The two records of "a Session is live" — the binding's `mode` and the
@@ -927,12 +908,12 @@ mod tests {
     async fn image_mode_sends_the_screenshot_turn() {
         let (ai_player, mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Image).await.unwrap();
-        let req = SendRequest {
+        let req = AuxSendRequest {
             thinking_level: ThinkingLevel::Low,
             // Deliberately not valid base64: persist fails, and must not block.
             image_data_url: Some("data:image/png;base64,not-valid!!!".to_string()),
         };
-        let (user_text, mut stream) = ai_player.send_game_board(&fresh_game(), req).await.unwrap();
+        let (user_text, mut stream) = ai_player.aux_send(&fresh_game(), req).await.unwrap();
         // The image user turn is the screenshot alone, so the echo is empty;
         // the frontend renders its own captured copy in the player's bubble.
         assert_eq!(user_text, "");
@@ -955,13 +936,10 @@ mod tests {
     async fn image_mode_without_a_screenshot_is_refused() {
         let (ai_player, _mock) = ai_player_with_mock();
         ai_player.begin(InputMode::Image).await.unwrap();
-        let Err(err) = ai_player
-            .send_game_board(&fresh_game(), default_request())
-            .await
-        else {
+        let Err(err) = ai_player.aux_send(&fresh_game(), default_request()).await else {
             panic!("expected an error");
         };
-        assert_eq!(err, SendError::MissingScreenshot);
+        assert_eq!(err, AuxSendError::MissingScreenshot);
     }
 
     #[tokio::test]
@@ -1027,7 +1005,7 @@ mod tests {
         // accepted (not `NoSession`).
         assert!(
             ai_player
-                .send_game_board(&fresh_game(), default_request())
+                .aux_send(&fresh_game(), default_request())
                 .await
                 .is_ok()
         );
@@ -1052,7 +1030,7 @@ mod tests {
         });
         ai_player.begin(InputMode::Plain).await.unwrap();
         let (_user_text, mut stream) = ai_player
-            .send_game_board(&fresh_game(), default_request())
+            .aux_send(&fresh_game(), default_request())
             .await
             .unwrap();
         // The AiPlayer does not refract: the provider's own kind, code and
@@ -1081,10 +1059,7 @@ mod tests {
         game.reveal(Position::new(0, 0));
         assert_eq!(game.game_state(), GameState::Playing);
         ai_player.begin(InputMode::Plain).await.unwrap();
-        let (_user_text, mut stream) = ai_player
-            .send_game_board(&game, default_request())
-            .await
-            .unwrap();
+        let (_user_text, mut stream) = ai_player.aux_send(&game, default_request()).await.unwrap();
         while stream.next().await.is_some() {}
         let req = mock.last_request().expect("mock recorded a request");
         // The user turn is the plain board alone. The two hidden Mines (0,1)

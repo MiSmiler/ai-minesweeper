@@ -1,15 +1,15 @@
 // The ai-player binding's frontend half (issue #114, #131, #133): the two
 // things the binding owns in the browser — the InputMode a Session is created
-// under, and the Send that appends the current board to it. The other routes
-// address the Agent, not the binding (`agent/api.ts`).
+// under, and the aux send that appends the current board to it. The other
+// routes address the Agent, not the binding (`agent/api.ts`).
 //
-// `begin` POSTs `/ai/begin`; `send` POSTs `/ai/send` with the per-call
+// `begin` POSTs `/ai/begin`; `auxSend` POSTs `/ai/aux-send` with the per-call
 // settings and hands the response body to the Agent's `consumeSse`
-// (`agent/run.ts`), because the stream a Send produces is that Agent's Run. The
-// binding contributes the URL, the request body and the board rendering — never
-// the events.
+// (`agent/run.ts`), because the stream an aux send produces is that Agent's
+// Run. The binding contributes the URL, the request body and the board
+// rendering — never the events.
 //
-// `send` does not `abort` the SSE on interrupt: the backend emits the
+// `auxSend` does not `abort` the SSE on interrupt: the backend emits the
 // `interrupt` event on the open stream (issue #97, #119).
 
 import { asProviderError, consumeSse } from "../agent/run";
@@ -25,11 +25,11 @@ export type InputMode = "plain" | "emoji" | "image";
  * set the `reasoning_effort`. Mirrored from `ai_adapter::ThinkingLevel`. */
 export type ThinkingLevel = "off" | "low" | "high" | "max";
 
-/** The frontend's Send request: the per-call settings only (an optional
+/** The frontend's aux send request: the per-call settings only (an optional
  * `imageDataUrl` for the image mode). No model is sent — the backend picks its
  * DeepSeek default. The InputMode is not here: the Session carries the one it
  * was created under. */
-export interface SendRequest {
+export interface AuxSendRequest {
   /** #122 reasoning depth; the backend defaults to `low` when absent. */
   thinkingLevel?: ThinkingLevel;
   imageDataUrl?: string;
@@ -37,7 +37,7 @@ export interface SendRequest {
 
 /** The ai-player slice entry point, injected via `AppDeps`. The real
  * implementation (`createAiPlayerApi`) talks to the backend's binding routes:
- * `begin` POSTs `/ai/begin`, `send` POSTs `/ai/send` (issue #131, #133). */
+ * `begin` POSTs `/ai/begin`, `auxSend` POSTs `/ai/aux-send` (issue #131, #133). */
 export interface AiPlayerApi {
   /** Loads the AI runtime, then begins an AI Session under `mode` — `mode`'s
    * system prompt is the Session's, and `mode` stays this Session's for its
@@ -46,8 +46,8 @@ export interface AiPlayerApi {
   /** Appends the current board. A refusal or a provider failure before the
    * stream starts arrives on `onFailure`; a mid-stream failure arrives as a
    * `RunEvent`. */
-  send(
-    req: SendRequest,
+  auxSend(
+    req: AuxSendRequest,
     onEvent: (e: RunEvent) => void,
     onFailure: (f: RunFailure) => void,
   ): void;
@@ -74,31 +74,31 @@ export function createAiPlayerApi(): AiPlayerApi {
         throw providerError;
       }
     },
-    send(req, onEvent, onFailure) {
+    auxSend(req, onEvent, onFailure) {
       void consumeEvents(req, onEvent, onFailure);
     },
   };
 }
 
 /** The frontend request body on the wire. The frontend type keeps the
- * camelCase `imageDataUrl` (issue #114), but the backend
- * `ai_adapter::SendRequest` field is snake_case `image_data_url`. */
-function wireRequest(req: SendRequest): Record<string, unknown> {
+ * camelCase `imageDataUrl` (issue #114), but the backend's `AuxSendRequest`
+ * field is snake_case `image_data_url`. */
+function wireRequest(req: AuxSendRequest): Record<string, unknown> {
   return {
     thinking_level: req.thinkingLevel,
     image_data_url: req.imageDataUrl,
   };
 }
 
-/** POSTs the Send request and forwards the SSE stream to `onEvent`. */
+/** POSTs the aux send request and forwards the SSE stream to `onEvent`. */
 async function consumeEvents(
-  req: SendRequest,
+  req: AuxSendRequest,
   onEvent: (e: RunEvent) => void,
   onFailure: (f: RunFailure) => void,
 ): Promise<void> {
   let res: Response;
   try {
-    res = await fetch("/ai/send", {
+    res = await fetch("/ai/aux-send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(wireRequest(req)),
@@ -114,10 +114,10 @@ async function consumeEvents(
   await consumeSse(res, onEvent);
 }
 
-/** Parses a non-OK send response into a `RunFailure`: a `{kind,code,message}`
+/** Parses a non-OK aux send response into a `RunFailure`: a `{kind,code,message}`
  * body is the Provider's failure; a `{error}` body is the AiPlayer refusing the
- * Send before it started; anything else is a transport-level provider failure
- * keyed by the status. */
+ * aux send before it started; anything else is a transport-level provider
+ * failure keyed by the status. */
 async function readFailure(res: Response): Promise<RunFailure> {
   let body: unknown;
   try {

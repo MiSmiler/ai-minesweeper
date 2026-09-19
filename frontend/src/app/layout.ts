@@ -9,9 +9,9 @@
 // the `AgentMachine` to them. `main.ts` calls it once and keeps only the
 // `beforeunload` guard.
 //
-// The controls follow the AI Session (issue #133): Send is enabled exactly
-// while a Session is live and no Run is in flight, the Interrupt exactly while
-// a Run is in flight, the InputMode select locks for as long as one is live
+// The controls follow the AI Session (issue #133): the aux send is enabled
+// exactly while a Session is live and no Run is in flight, the Interrupt exactly
+// while a Run is in flight, the InputMode select locks for as long as one is live
 // (the mode is the Session's), and the discard confirms fire exactly when the
 // session is `used`. The SessionBox itself is hidden until a Session exists.
 //
@@ -20,9 +20,10 @@
 // the discard confirm when it is `used`. A live Session is closed, never
 // replaced in place.
 //
-// Send and the axis toggle are temporary manual-driver affordances (ADR-0019),
-// so they sit in `.aux-bar` below the Board; the dashboard keeps the session
-// button, the Interrupt and the two Send-strength settings, on one row.
+// The aux send and the axis toggle are temporary manual-driver affordances
+// (ADR-0019), so they sit in `.aux-bar` below the Board; the dashboard keeps the
+// session button, the Interrupt and the InputMode and ThinkingLevel selects, on
+// one row.
 
 import type { AgentApi } from "../agent/api";
 import type { ProviderError } from "../agent/run";
@@ -30,8 +31,8 @@ import { createAgentMachine, type SessionState } from "../agent/machine";
 import { createSessionBox } from "../agent/sessionBox";
 import type {
   AiPlayerApi,
+  AuxSendRequest,
   InputMode,
-  SendRequest,
   ThinkingLevel,
 } from "../ai-player/api";
 import type { CaptureBoardImage } from "../ai-player/screenshot";
@@ -40,7 +41,7 @@ import { createGameArea, type GameArea } from "../game/gameArea";
 
 /** What the layout needs from outside, injected by `main.ts`. */
 export interface AppDeps {
-  /** The binding's half: the InputMode and the Send (a stub under jsdom). */
+  /** The binding's half: the InputMode and the aux send (a stub under jsdom). */
   aiPlayerApi: AiPlayerApi;
   /** The Agent's half: the live Session's message list and its Interrupt. */
   agentApi: AgentApi;
@@ -156,7 +157,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   axis = createBoardAxis(gameArea.boardEl);
 
   // The aux bar: the controls a human uses to drive the AiPlayer by hand.
-  // Both are temporary — the Send goes when the tool loop lands — so they sit
+  // Both are temporary — the aux send goes when the tool loop lands — so they sit
   // below the Board instead of in the dashboard.
   const auxBar = document.createElement("div");
   auxBar.className = "aux-bar";
@@ -171,18 +172,18 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   dashboard.className = "ai-dashboard";
   aiColumn.appendChild(dashboard);
 
-  // The dashboard row: the session button and the two Send-strength settings
-  // side by side.
+  // The dashboard row: the session button and the InputMode and ThinkingLevel
+  // selects side by side.
   const dashRow = document.createElement("div");
   dashRow.className = "dashboard-row";
   dashboard.appendChild(dashRow);
 
-  // The Send (user story #34) rides in the aux bar below the Board, not here.
-  const sendBtn = document.createElement("button");
-  sendBtn.type = "button";
-  sendBtn.className = "send-btn";
-  sendBtn.textContent = "发送";
-  sendBtn.disabled = true; // no AI Session yet
+  // The aux send (user story #34) rides in the aux bar below the Board, not here.
+  const auxSendBtn = document.createElement("button");
+  auxSendBtn.type = "button";
+  auxSendBtn.className = "aux-send-btn";
+  auxSendBtn.textContent = "发送";
+  auxSendBtn.disabled = true; // no AI Session yet
 
   // Its two faces ("启动AI会话" / "关闭AI会话") are drawn by `syncSessionBtn`.
   const sessionBtn = document.createElement("button");
@@ -217,7 +218,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   });
 
   // Thinking-level dropdown (issue #122: off/low/high/max, default low). The
-  // level is a Send-strength setting, not a board view — changing it never
+  // level is a per-call setting, not a board view — changing it never
   // invalidates a session (unlike the mode select).
   const levelSelect = document.createElement("select");
   levelSelect.className = "level-select";
@@ -240,9 +241,9 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   const axisToggle = document.createElement("label");
   axisToggle.className = "axis-toggle";
   axisToggle.append(axisCheckbox, document.createTextNode("行列号"));
-  // Axis toggle left, Send right; the bar hugs its content and sits at the
-  // column's right edge.
-  auxBar.append(axisToggle, sendBtn);
+  // Axis toggle left, the aux send right; the bar hugs its content and sits at
+  // the column's right edge.
+  auxBar.append(axisToggle, auxSendBtn);
   axisCheckbox.addEventListener("change", () => {
     axis.setVisible(axisCheckbox.checked);
   });
@@ -268,10 +269,10 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   const sessionStatus = (): SessionState => machine.getState().session.status;
   const hasSession = (): boolean => sessionStatus() !== "none";
   const isRunning = (): boolean => machine.getState().run.phase === "running";
-  /** Whether a Send may start: over a live Session, with no Run in flight. The
-   * button's enabled state and `startSend`'s entry are this one rule, so a rule
-   * change cannot update one and miss the other. */
-  const canSend = (): boolean => hasSession() && !isRunning();
+  /** Whether an aux send may start: over a live Session, with no Run in flight.
+   * The button's enabled state and `startAuxSend`'s entry are this one rule, so a
+   * rule change cannot update one and miss the other. */
+  const canAuxSend = (): boolean => hasSession() && !isRunning();
 
   /** The session button's two faces: the text follows the live Session, the
    * disabled state follows the pending `begin()`. Single writer of both. */
@@ -287,7 +288,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
     // New Game (`machine.end()`) drops back to `none` and hides the box again.
     boxEl.style.display = hasSession() ? "" : "none";
     syncSessionBtn();
-    sendBtn.disabled = !canSend();
+    auxSendBtn.disabled = !canAuxSend();
     interruptBtn.disabled = !isRunning();
     // The InputMode belongs to the Session: the player picks it at 启动AI会话 and
     // can change it only by closing the Session.
@@ -302,8 +303,8 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
     }
   });
 
-  async function startSend(): Promise<void> {
-    if (!canSend()) return;
+  async function startAuxSend(): Promise<void> {
+    if (!canAuxSend()) return;
     // The Session's InputMode is `currentMode`: the select is locked for as
     // long as a Session is live, so it still holds the value `begin` was given.
     let imageDataUrl: string | undefined;
@@ -321,11 +322,11 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
     // The composition root builds the request; the machine only starts the run
     // over the Session it holds.
     machine.beginSend(imageDataUrl, (onEvent, onFailure) => {
-      const req: SendRequest = {
+      const req: AuxSendRequest = {
         thinkingLevel: currentLevel,
         imageDataUrl,
       };
-      deps.aiPlayerApi.send(req, onEvent, onFailure);
+      deps.aiPlayerApi.auxSend(req, onEvent, onFailure);
     });
   }
 
@@ -366,7 +367,7 @@ export function mountLayout(root: HTMLElement, deps: AppDeps): LayoutHandle {
   // The Interrupt addresses the Agent, not the binding, so it skips the machine
   // entirely.
   interruptBtn.addEventListener("click", () => void deps.agentApi.interrupt());
-  sendBtn.addEventListener("click", () => void startSend());
+  auxSendBtn.addEventListener("click", () => void startAuxSend());
   sessionBtn.addEventListener("click", () => {
     if (hasSession()) void closeSession();
     else void startSession();

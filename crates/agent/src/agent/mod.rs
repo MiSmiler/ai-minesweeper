@@ -26,7 +26,7 @@ pub use message::Message;
 /// The reasoning depth the agent should use for one Send (issue #122), mapped
 /// onto the `ChatRequest` fields (`reasoning_effort` / `thinking`). It is per
 /// Send — the model is fixed at construction, the depth is not — and it is
-/// also the `SendRequest.thinking_level` wire value. `Off` disables thinking
+/// also the per-call `thinking_level` wire value. `Off` disables thinking
 /// mode; the rest set the effort. `low` is the default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

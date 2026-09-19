@@ -9,8 +9,12 @@ ADRs (0016, 0017).
 ## Language
 
 **AiPlayer**:
-A Player that plays a Game by deciding its moves with an Agent. One AiPlayer exists per app instance and holds one Agent; it begins and ends a Session through the Agent and never names one. Today it is driven by the HumanPlayer, who sends the Board and applies the reply.
+A Player that plays a Game by deciding its moves with an Agent. One AiPlayer exists per app instance and holds one Agent; it begins and ends a Session through the Agent and never names one. Today it is driven by the HumanPlayer through the aux send.
 _Avoid_: AI, agent, bot, AI opponent, guide, advisor
+
+**aux send**:
+The human-driven way to put the current Board in front of the model: the HumanPlayer presses Send in the aux bar and applies the reply by hand. It is ADR-0019's temporary driver — it exists because the AiPlayer has no tools yet — and it is not the Agent's **Send**, the trigger it starts.
+_Avoid_: manual send, driver send
 
 **InputMode**:
 The way the Board is put in front of DeepSeek: `Plain` (the character grid), `Emoji`, or `Image` (a screenshot of the Board). The AiPlayer picks one at session creation: it decides the Session's system prompt, and it stays fixed until the Session ends.

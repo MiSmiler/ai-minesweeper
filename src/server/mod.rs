@@ -156,7 +156,7 @@ mod tests {
     use crate::server::wire::{ActionDto, ActionKind, GameSnapshot, PositionDto};
     use agent::MockProvider;
     use agent::{Agent, ProviderSet, SendError as AgentSendError, ThinkingLevel};
-    use ai_player::{AiPlayer, InputMode, SendError, SendRequest};
+    use ai_player::{AiPlayer, AuxSendError, AuxSendRequest, InputMode};
     use game::{Difficulty, Features, Game, GameConfig, GameState, Position};
 
     /// An `AppState` whose `AiPlayer` runs against the offline mock provider.
@@ -174,8 +174,8 @@ mod tests {
         Arc::new(AppState { game, ai_player })
     }
 
-    fn send_request() -> SendRequest {
-        SendRequest {
+    fn aux_send_request() -> AuxSendRequest {
+        AuxSendRequest {
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         }
@@ -189,7 +189,7 @@ mod tests {
         assert!(
             state
                 .ai_player
-                .send_game_board(&game, send_request())
+                .aux_send(&game, aux_send_request())
                 .await
                 .is_ok()
         );
@@ -202,11 +202,11 @@ mod tests {
         assert!(resp.is_ok());
 
         // The Session is gone: a Send is refused with no live Session.
-        let err = match state.ai_player.send_game_board(&game, send_request()).await {
+        let err = match state.ai_player.aux_send(&game, aux_send_request()).await {
             Err(err) => err,
             Ok(_) => panic!("expected the session to be ended"),
         };
-        assert_eq!(err, SendError::Agent(AgentSendError::NoSession));
+        assert_eq!(err, AuxSendError::Agent(AgentSendError::NoSession));
     }
 
     fn action(

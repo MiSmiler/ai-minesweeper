@@ -3,14 +3,14 @@
 //! A thin transport layer over the `ai_player::AiPlayer` seam: it begins an AI
 //! Session under an InputMode (`POST /ai/begin`), appends one board to it and
 //! forwards the reply as an SSE stream terminated by `[DONE]`
-//! (`POST /ai/send`), and cancels the in-flight Run
+//! (`POST /ai/aux-send`), and cancels the in-flight Run
 //! (`POST /ai/interrupt`). The live Session's message list is read back through
 //! the `Agent` the binding holds (`GET /ai/messages`): the list is the Session's
 //! — the binding keeps no copy of it — so that route addresses the Agent.
 //!
 //! This module never reaches into `ai_player` internals and never writes to
 //! the `Game` — it only takes a player-visible board snapshot (cloned under a
-//! short lock) to hand to `AiPlayer::send_game_board`. The Session (its messages
+//! short lock) to hand to `AiPlayer::aux_send`. The Session (its messages
 //! and its cancel token) is owned by the `Agent` behind the `AiPlayer`; the
 //! transport addresses the AiPlayer and carries no id.
 
@@ -30,7 +30,7 @@ use agent::{
     ProviderError, ProviderErrorKind, RunError as AgentRunError, RunEvent as AgentRunEvent,
     SendError as AgentSendError,
 };
-use ai_player::{InputMode, SendError, SendRequest};
+use ai_player::{AuxSendError, AuxSendRequest, InputMode};
 
 use super::AppState;
 use super::wire::MessagesDto;
@@ -77,7 +77,7 @@ struct ErrorDto {
 pub(crate) fn ai_routes(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/ai/begin", post(handle_begin))
-        .route("/ai/send", post(handle_send))
+        .route("/ai/aux-send", post(handle_aux_send))
         .route("/ai/interrupt", post(handle_interrupt))
         .route("/ai/messages", get(handle_messages))
         .with_state(state)
@@ -106,9 +106,12 @@ async fn handle_begin(
     }
 }
 
-/// `POST /ai/send`: appends the current board to the live AI Session and
+/// `POST /ai/aux-send`: appends the current board to the live AI Session and
 /// downstreams the reply as SSE.
-async fn handle_send(State(state): State<Arc<AppState>>, Json(req): Json<SendRequest>) -> Response {
+async fn handle_aux_send(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AuxSendRequest>,
+) -> Response {
     // `/ai/...` is read-only: clone a player-visible snapshot under a *short*
     // lock, then drop the lock before the (potentially long) network round trip
     // so `/state` and `/action` stay responsive during the Send. The clone
@@ -116,7 +119,7 @@ async fn handle_send(State(state): State<Arc<AppState>>, Json(req): Json<SendReq
     // is built from the visible-only `BoardView`), so privacy is preserved.
     let game = state.game.lock().expect("game state poisoned").clone();
 
-    match state.ai_player.send_game_board(&game, req).await {
+    match state.ai_player.aux_send(&game, req).await {
         Ok((user_text, stream)) => {
             // Emit the player's message first, then the agent's stream (issue
             // #124). `once` and `map(to_event)` share the same item type
@@ -126,7 +129,7 @@ async fn handle_send(State(state): State<Arc<AppState>>, Json(req): Json<SendReq
             let sse = stream::once(async move { user_event }).chain(stream.map(to_event));
             Sse::new(sse).into_response()
         }
-        Err(err) => send_error_response(err),
+        Err(err) => aux_send_error_response(err),
     }
 }
 
@@ -139,7 +142,8 @@ async fn handle_interrupt(State(state): State<Arc<AppState>>) -> Response {
 }
 
 /// `GET /ai/messages`: the live AI Session's message list, oldest first, in the
-/// [`MessagesDto`] envelope. No live Session is the same 409 `send` refuses on.
+/// [`MessagesDto`] envelope. No live Session is the same 409 the aux send refuses
+/// on.
 /// The list is read off the `Agent`, which owns it.
 async fn handle_messages(State(state): State<Arc<AppState>>) -> Response {
     match state.ai_player.agent().messages() {
@@ -169,24 +173,24 @@ fn to_event(item: Result<AgentRunEvent, AgentRunError>) -> Result<Event, axum::E
     Ok(event)
 }
 
-/// Maps a [`SendError`] to a status + body. The AiPlayer's own refusal is a
+/// Maps a [`AuxSendError`] to a status + body. The AiPlayer's own refusal is a
 /// missing screenshot; the agent's `NoSession` / `Busy` refusals carry
 /// `{"error": "..."}` (the status code is the machine signal). A Provider
 /// failure at delivery keeps the `{kind,code,message}` body.
-fn send_error_response(err: SendError) -> Response {
+fn aux_send_error_response(err: AuxSendError) -> Response {
     match err {
-        SendError::MissingScreenshot => error_response(
+        AuxSendError::MissingScreenshot => error_response(
             StatusCode::BAD_REQUEST,
             "image mode requires image_data_url".to_string(),
         ),
-        SendError::Agent(AgentSendError::NoSession) => {
+        AuxSendError::Agent(AgentSendError::NoSession) => {
             error_response(StatusCode::CONFLICT, "no live AI session".to_string())
         }
-        SendError::Agent(AgentSendError::Busy) => error_response(
+        AuxSendError::Agent(AgentSendError::Busy) => error_response(
             StatusCode::CONFLICT,
             "a send is already in flight".to_string(),
         ),
-        SendError::Agent(AgentSendError::Provider(error)) => provider_error_response(error),
+        AuxSendError::Agent(AgentSendError::Provider(error)) => provider_error_response(error),
     }
 }
 
@@ -223,8 +227,8 @@ mod tests {
     use game::{Difficulty, Features, Game, GameConfig};
     use std::sync::Mutex;
 
-    // The `send` future is held across a network await; this pins that it stays
-    // `Send` so axum accepts the route.
+    // The `aux_send` future is held across a network await; this pins that it
+    // stays `Send` so axum accepts the route.
     fn require_send<T: Send>(_: T) {}
 
     fn app_state() -> (Arc<AppState>, MockProvider) {
@@ -273,8 +277,8 @@ mod tests {
         Arc::new(AppState { game, ai_player })
     }
 
-    fn plain_request() -> SendRequest {
-        SendRequest {
+    fn plain_request() -> AuxSendRequest {
+        AuxSendRequest {
             thinking_level: ThinkingLevel::Low,
             image_data_url: None,
         }
@@ -291,11 +295,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_future_is_send() {
+    async fn aux_send_future_is_send() {
         let (state, _mock) = app_state();
         state.ai_player.begin(InputMode::Plain).await.unwrap();
         let game = state.game.lock().unwrap().clone();
-        let fut = state.ai_player.send_game_board(&game, plain_request());
+        let fut = state.ai_player.aux_send(&game, plain_request());
         require_send(fut);
     }
 
@@ -410,12 +414,12 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
-    // --- POST /ai/send ---
+    // --- POST /ai/aux-send ---
 
     #[tokio::test]
     async fn send_without_a_live_session_is_409() {
         let (state, _mock) = app_state();
-        let resp = handle_send(State(state.clone()), Json(plain_request())).await;
+        let resp = handle_aux_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(resp.status(), StatusCode::CONFLICT);
         let body = body_as_string(resp).await;
         assert!(body.contains("\"error\""));
@@ -426,7 +430,7 @@ mod tests {
     async fn send_streams_reasoning_content_and_done() {
         let (state, _mock) = app_state();
         state.ai_player.begin(InputMode::Plain).await.unwrap();
-        let resp = handle_send(State(state.clone()), Json(plain_request())).await;
+        let resp = handle_aux_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_as_string(resp).await;
         assert!(body.contains("\"kind\":\"reasoning\""));
@@ -450,7 +454,7 @@ mod tests {
             message: "rate limited".into(),
         })));
         state.ai_player.begin(InputMode::Plain).await.unwrap();
-        let resp = handle_send(State(state.clone()), Json(plain_request())).await;
+        let resp = handle_aux_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_as_string(resp).await;
         // The provider's own kind, code and message reach the wire intact — a
@@ -465,10 +469,10 @@ mod tests {
     async fn a_second_send_while_in_flight_is_409() {
         let (state, _mock) = app_state();
         state.ai_player.begin(InputMode::Plain).await.unwrap();
-        let first = handle_send(State(state.clone()), Json(plain_request())).await;
+        let first = handle_aux_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(first.status(), StatusCode::OK);
         // `first`'s body is still unread, so its Send is still in flight.
-        let second = handle_send(State(state.clone()), Json(plain_request())).await;
+        let second = handle_aux_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(second.status(), StatusCode::CONFLICT);
         drop(first);
     }
@@ -477,7 +481,7 @@ mod tests {
     async fn image_mode_without_a_data_url_is_400() {
         let (state, _mock) = app_state();
         state.ai_player.begin(InputMode::Image).await.unwrap();
-        let resp = handle_send(State(state.clone()), Json(plain_request())).await;
+        let resp = handle_aux_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         // The Send never started, so there is nothing to interrupt.
         assert!(!state.ai_player.agent().interrupt());
@@ -489,7 +493,7 @@ mod tests {
     async fn interrupt_cancels_and_drives_the_sse_event() {
         let (state, _mock) = app_state();
         state.ai_player.begin(InputMode::Plain).await.unwrap();
-        let send_resp = handle_send(State(state.clone()), Json(plain_request())).await;
+        let send_resp = handle_aux_send(State(state.clone()), Json(plain_request())).await;
         assert_eq!(send_resp.status(), StatusCode::OK);
 
         // The interrupt route cancels the in-flight Run.

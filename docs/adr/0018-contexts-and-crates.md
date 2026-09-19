@@ -2,7 +2,7 @@
 
 > Amended by ADR-0021: #136 landed — the Agent owns the Session lifecycle, the
 > binding keeps only policy, and the `/ai/session/{id}/...` routes lose the id
-> (`/ai/begin`, `/ai/send`, `/ai/interrupt`).
+> (`/ai/begin`, `/ai/aux-send`, `/ai/interrupt`).
 
 > Renamed by ADR-0019: the renames this record left to #129 have landed — `Guide` is now `AiPlayer`, the `/ai/guide/...` routes are now `/ai/session/...`, and the second PlayMode is `AiPlay` (was `AiGuide`).
 

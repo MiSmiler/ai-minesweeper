@@ -1,6 +1,6 @@
 // Tests for the binding's frontend half (issue #119, #133): `begin` POSTs
-// `/ai/begin`, and `send` POSTs `/ai/send` and hands the response body to the
-// Agent's Run reader (`agent/run.test.ts`), with a non-2xx handed to
+// `/ai/begin`, and `auxSend` POSTs `/ai/aux-send` and hands the response body
+// to the Agent's Run reader (`agent/run.test.ts`), with a non-2xx handed to
 // `onFailure`. The routes that address the Agent are `agent/api.test.ts`.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -51,12 +51,12 @@ function errorResponse(status: number, payload: ProviderError): Response {
  * `send` is fire-and-forget, so this bridges the async work for tests. */
 function collect(
   api: ReturnType<typeof createAiPlayerApi>,
-  req: Parameters<ReturnType<typeof createAiPlayerApi>["send"]>[0],
+  req: Parameters<ReturnType<typeof createAiPlayerApi>["auxSend"]>[0],
   failures: RunFailure[] = [],
 ): Promise<RunEvent[]> {
   return new Promise((resolve) => {
     const events: RunEvent[] = [];
-    api.send(
+    api.auxSend(
       req,
       (e) => {
         events.push(e);
@@ -82,8 +82,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("createAiPlayerApi.send (request)", () => {
-  it("POSTs /ai/send and hands the response body to the Run reader", async () => {
+describe("createAiPlayerApi.auxSend (request)", () => {
+  it("POSTs /ai/aux-send and hands the response body to the Run reader", async () => {
     const api = createAiPlayerApi();
     vi.stubGlobal(
       "fetch",
@@ -108,7 +108,7 @@ describe("createAiPlayerApi.send (request)", () => {
     // The request POSTs to the session route; the InputMode is the Session's,
     // so it is not in the body.
     const [url, init] = vi.mocked(fetch).mock.calls[0]!;
-    expect(url).toBe("/ai/send");
+    expect(url).toBe("/ai/aux-send");
     expect(JSON.parse(init!.body as string)).toEqual({});
   });
 
